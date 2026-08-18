@@ -1,0 +1,23 @@
+name = "one-mail"
+main = "src/worker.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = [ "nodejs_compat" ]
+keep_vars = true
+
+[vars]
+PREFIX = ""
+DEFAULT_DOMAINS = ["mangoqwq.com"]
+DOMAINS = ["mangoqwq.com"]
+JWT_SECRET = "<REDACTED>"
+ADMIN_PASSWORDS = ["<REDACTED>"]
+ENABLE_USER_CREATE_EMAIL = true
+ENABLE_USER_DELETE_EMAIL = true
+ENABLE_AUTO_REPLY = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "one_mail_db"
+database_id = "<REDACTED>"
+
+[triggers]
+crons = [ "*/10 * * * *" ]
