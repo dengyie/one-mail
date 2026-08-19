@@ -1,6 +1,7 @@
 import { Context, Hono } from "hono";
 import { handleListQuery } from "../common";
 import { buildEmailFilters } from "./unified_query";
+import { ingestHandler } from "./ingest";
 
 const api = new Hono<HonoCustomType>();
 
@@ -22,5 +23,6 @@ const getEmail = async (c: Context<HonoCustomType>) => {
 
 api.get("/api/unified/emails", listEmails);
 api.get("/api/unified/emails/:id", getEmail);
+api.post("/admin/unified/ingest", ingestHandler);
 
 export default api;
