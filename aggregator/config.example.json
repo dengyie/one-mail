@@ -1,0 +1,11 @@
+{
+  "worker_base_url": "https://one-mail.<subdomain>.workers.dev",
+  "admin_token": "<wrangler.toml 里的 ADMIN_PASSWORDS[0]>",
+  "state_path": "./sync_state.json",
+  "accounts": [
+    {"id": "qq-main", "source": "imap_qq", "host": "imap.qq.com", "port": 993,
+     "username": "you@qq.com", "password": "<QQ授权码>", "folders": ["INBOX"], "use_ssl": true},
+    {"id": "163-main", "source": "imap_163", "host": "imap.163.com", "port": 993,
+     "username": "you@163.com", "password": "<163授权码>", "folders": ["INBOX"], "use_ssl": true}
+  ]
+}

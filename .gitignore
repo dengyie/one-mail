@@ -150,6 +150,7 @@ smtp_proxy_server/data/
 worker/wrangler.toml
 .venv/
 aggregator/config.json
+aggregator/src/*.egg-info/
 sync_state.json
 __pycache__/
 *.pyc
