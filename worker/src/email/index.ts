@@ -12,6 +12,7 @@ import { forwardEmail } from "./forward";
 import { EmailRuleSettings } from "../models";
 import { CONSTANTS } from "../constants";
 import { compressText } from "../gzip";
+import { saveUnifiedEmail } from "../unified/unified_store";
 
 
 async function email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
@@ -117,6 +118,13 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
     }
     catch (error) {
         console.error("save email error", error);
+    }
+
+    // one-mail: mirror into unified emails table (never block base ingest)
+    try {
+        await saveUnifiedEmail(env, parsedEmailContext.rawEmail, message.from, toAddress);
+    } catch (error) {
+        console.warn("save unified email error", error);
     }
 
     // forward email
