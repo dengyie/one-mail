@@ -140,6 +140,12 @@ type Variables = {
     userRolePayload: string | undefined | null,
     jwtPayload: JwtPayload,
     lang: string | undefined | null
+    // API-key auth on unified routes (Task 12). Structurally matches ApiKeyRow
+    // from unified/api_keys.ts; kept inline so this global script stays a module-free file.
+    apiKey?: {
+        id: string, name: string, key_hash: string, role: string,
+        allowed_sources: string | null, allowed_accounts: string | null, enabled: number,
+    }
 }
 
 type HonoCustomType = {
