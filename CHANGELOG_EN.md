@@ -12,6 +12,7 @@
 
 - feat: |Worker| Add Bearer API-key authentication for the unified mailbox API, including readonly source/account scoping and admin access
 - feat: |Worker| Add complete unified inbox query endpoints: `GET /api/unified/search`, `GET /api/unified/count?source=&unread=`, `GET /api/unified/verifcodes?addr=&fresh=`, and `POST /api/unified/emails/:id/read` (admin API-key only), plus a verification-code extraction pure function and verifcode mail lookup; add `POST /admin/unified/keys` (x-admin-auth protected) to create API keys with an optional role and source/account whitelists, returning the plaintext key only once at creation (one-mail unified inbox)
+- feat: |Worker| Add 90-day read-email retention cleanup to the one-mail unified inbox: each `scheduled` run deletes `is_read=1` emails whose `received_at` is older than 90 days, and deletes their associated R2 attachment keys when an `ATTACHMENTS` bucket is configured (one-mail M5 retention)
 
 ### Bug Fixes
 

@@ -4,6 +4,7 @@ import { CONSTANTS } from './constants'
 import { getJsonSetting } from './utils';
 import { CleanupSettings } from './models';
 import { executeCustomSqlCleanup } from './admin_api/cleanup_api';
+import { cleanupReadEmails } from './unified/retention';
 
 export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) {
     console.log("Scheduled event: ", event);
@@ -78,5 +79,12 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
                 }
             }
         }
+    }
+    // one-mail: 清理 90 天前已读的统一邮件
+    try {
+        const r = await cleanupReadEmails(env, 90);
+        console.log("one-mail retention cleanup:", JSON.stringify(r));
+    } catch (e) {
+        console.error("one-mail retention cleanup error", e);
     }
 }
