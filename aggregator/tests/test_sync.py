@@ -3,6 +3,7 @@ from imapclient.exceptions import IMAPClientError
 
 import one_mail_agg.sync as sync_mod
 from one_mail_agg.config import AccountConfig, Config
+from one_mail_agg.imap_base import RawMessage
 from one_mail_agg.state import SyncState
 
 
@@ -81,6 +82,124 @@ def test_sync_imap_success_returns_protocol_imap(tmp_path, monkeypatch):
     assert res["protocol"] == "imap"
     assert res["synced"] == 0
     assert calls == []            # 空收件箱不触发上传
+
+
+class _ImapMsgs:
+    """带真实 fetch 语义的 IMAP 桩：窗口选择交给 fetch_new_messages，
+    返回固定 uid 列表的 RawMessage（大小统一小字节）。"""
+    def __init__(self, uids, sizes=None, uidvalidity=7):
+        self._uids = uids
+        self._sizes = sizes or {}
+        self._uidvalidity = uidvalidity
+    def select_folder(self, folder, readonly=True):
+        return {b"UIDVALIDITY": self._uidvalidity}
+    def search(self, criteria, charset=None):
+        lo = int(criteria[1].split(":")[0])
+        return [u for u in self._uids if u >= lo]
+    def fetch(self, uids, data):
+        out = {}
+        for u in uids:
+            if b"RFC822.SIZE" in data:
+                out[u] = {b"RFC822.SIZE": self._sizes.get(u, 100)}
+            elif b"RFC822" in data:
+                out[u] = {b"RFC822": b"From: a@b\r\nSubject: x\r\n\r\nbody\r\n",
+                          b"INTERNALDATE": None}
+            else:
+                out[u] = {}
+        return out
+    def logout(self):
+        pass
+
+
+def _imap_msgs_factory(uids):
+    return lambda acc: _ImapMsgs(uids)
+
+
+def test_sync_imap_skips_bad_single_message_others_uploaded(tmp_path, monkeypatch):
+    """C3 hardening：窗口里单封 normalize 抛错（坏附件/坏头）绝不整批崩掉。
+    正常的两封上传，坏的那封跳过，watermark 仍推进到这封之后（否则下轮重拉）。"""
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    real = sync_mod.normalize_message
+
+    def flaky_norm(raw, account, folder, uidvalidity, uid, internal_date_ms, **kw):
+        if uid == 102:                     # uid=102 是坏邮件
+            raise ValueError("simulated normalize crash")
+        return real(raw, account, folder, uidvalidity, uid, internal_date_ms, **kw)
+
+    monkeypatch.setattr(sync_mod, "normalize_message", flaky_norm)
+    res = sync_mod.sync_account(_imap_msgs_factory([101, 102, 103]), _cfg([acc]), acc, state)
+
+    assert res["protocol"] == "imap"
+    assert res["synced"] == 2                       # 幸存的 101,103 才计数
+    assert len(calls) == 1 and len(calls[0]) == 2   # 只上传正常的两封
+    assert [e["imap_uid"] for e in calls[0]] == [
+        "imap.163.com:INBOX:7:101",
+        "imap.163.com:INBOX:7:103",
+    ]
+    # watermark 推进到窗口最大 uid（103），哪怕中间那封 skip 也不再重拉
+    assert state.get_last_uid("163-main", "INBOX") == 103
+
+
+def test_sync_imap_all_bad_still_advances_watermark(tmp_path, monkeypatch):
+    """C3 hardening 边界：整个窗口每封 normalize 都失败也不得卡死——
+    watermark 照常推进，否则每轮都重拉同一个坏窗口（与 MAX_SINGLE_BYTES 口径一致）。"""
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    def all_bad(*a, **k):
+        raise ValueError("everything broke")
+
+    monkeypatch.setattr(sync_mod, "normalize_message", all_bad)
+    res = sync_mod.sync_account(_imap_msgs_factory([101, 102]), _cfg([acc]), acc, state)
+
+    assert res["protocol"] == "imap"
+    assert res["synced"] == 0
+    assert calls == []                              # 无任何上传
+    assert state.get_last_uid("163-main", "INBOX") == 102   # 水印照进
+
+
+def test_sync_pop3_skips_bad_uidl_retries_next_round(tmp_path, monkeypatch):
+    """C3 hardening：POP3 路径坏 UIDL 归一整崩掉时跳过上传且**不标记 seen**，
+    下一轮 fetch 会重新拉它；只有成功归一化的 UIDL 被 seen。"""
+    calls = _stub_upload(monkeypatch)
+    real = sync_mod.normalize_message
+
+    gate = {"bad": True}   # 第一轮 UL-BAD 抛错；第二轮恢复
+
+    def flaky_norm(raw, account, folder, uidvalidity=0, uid=0,
+                   internal_date_ms=None, imap_uid_override=None):
+        if gate["bad"] and imap_uid_override and imap_uid_override.endswith("UL-BAD"):
+            raise ValueError("simulated pop3 normalize crash")
+        return real(raw, account, folder, uidvalidity, uid,
+                    internal_date_ms, imap_uid_override=imap_uid_override)
+
+    monkeypatch.setattr(sync_mod, "normalize_message", flaky_norm)
+
+    # 第一轮：UL-1 正常、UL-BAD 坏
+    pop_f = _PopFactory([("UL-1", b"From: a@b\r\nSubject: ok\r\n\r\n1\r\n"),
+                         ("UL-BAD", b"broken-raw-does-not-matter")])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+    res = sync_mod.sync_account(None, _cfg([acc]), acc, state)
+    assert res["protocol"] == "pop3"
+    assert res["synced"] == 1                    # 只有成功的那封
+    assert len(calls) == 1 and len(calls[0]) == 1
+    # UL-BAD 未标记 seen：下一轮会重试
+    assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1"}
+
+    # 第二轮：UL-BAD 修好了 → 命中，被 seen
+    gate["bad"] = False
+    pop_f2 = _PopFactory([("UL-1", b"From: a@b\r\nSubject: ok\r\n\r\n1\r\n"),
+                          ("UL-BAD", b"From: c@d\r\nSubject: fixed\r\n\r\n2\r\n")])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f2)
+    res2 = sync_mod.sync_account(None, _cfg([acc]), acc, state)
+    assert res2["synced"] == 1
+    assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1", "UL-BAD"}
 
 
 def test_sync_auto_falls_back_to_pop3_on_select_failure(tmp_path, monkeypatch):

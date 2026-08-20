@@ -28,11 +28,29 @@ def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) 
         msgs = fetch_new_messages(client, account, folder, state)
         if not msgs:
             continue
-        batch = [normalize_message(m.raw_bytes, account, folder, uidvalidity,
-                                   m.uid, m.internal_date_ms) for m in msgs]
-        upload_emails(config, batch)
+        # 逐封归一化，单封畸形绝不卡死整批（C3 hardening）：
+        # normalize_message 对坏附件/坏头仍可能抛错，原先整批 list comprehension
+        # 会让整体在 set_last_uid 之前崩掉——水印不推进，账号反复卡在同一窗口
+        # （C3 死锁症状）。这里 try/except 跳过坏单封，其余照常上传。
+        batch = []
+        for m in msgs:
+            try:
+                batch.append(normalize_message(
+                    m.raw_bytes, account, folder, uidvalidity,
+                    m.uid, m.internal_date_ms))
+            except Exception as e:
+                log.warning("skip imap message uid=%s folder=%s account=%s: %r",
+                            m.uid, folder, account.id, e)
+        if batch:
+            upload_emails(config, batch)
+            total += len(batch)
+        # 水印始终推进到本窗口最大 uid（含被跳过的畸形单封）——即便整个窗口
+        # 都是坏件也要推进，否则账号每轮都重拉同一个坏窗口（与 MAX_SINGLE_BYTES
+        # 推水印语义一致）。被跳过的 uid 就此放弃，仅以 warning 日志留痕（与
+        # MAX_SINGLE_BYTES 主动跳过的取舍口径一致；真要 100% 留到底只能人工从
+        # 日志捞出来单测复现）。若 upload 失败，上面的 upload_emails 已抛错，
+        # 此处不执行，水印留在本窗口最大 uid 之下，下一轮续传。
         state.set_last_uid(account.id, folder, max(m.uid for m in msgs))
-        total += len(batch)
     return total
 
 
@@ -49,15 +67,29 @@ def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> int:
         msgs = fetch_new_pop3_messages(conn, account, "INBOX", state)
         if not msgs:
             return 0
-        batch = [normalize_message(
-            m.raw_bytes, account, "INBOX", uidvalidity=0, uid=0,
-            internal_date_ms=m.internal_date_ms,
-            imap_uid_override=uidl_to_key(account, "INBOX", m.uidl)) for m in msgs]
+        # 逐封归一化，单封畸形绝不卡死整批（C3 hardening）：
+        # 归一化失败的 UIDL 跳过上传、**不标记 seen**，下一轮 fetch 会重试；
+        # 成功归一化的照常批量 mark seen。POP3 的 watermark 就是 seen 集合，
+        # 所以跳过的 UIDL 不得标记，留给下一轮（IMAP 多 folder 窗口可以推进
+        # last_uid 放弃，POP3 没有对称概念）。
+        batch, uploaded_uidls = [], []
+        for m in msgs:
+            try:
+                batch.append(normalize_message(
+                    m.raw_bytes, account, "INBOX", uidvalidity=0, uid=0,
+                    internal_date_ms=m.internal_date_ms,
+                    imap_uid_override=uidl_to_key(account, "INBOX", m.uidl)))
+                uploaded_uidls.append(m.uidl)
+            except Exception as e:
+                log.warning("skip pop3 message uidl=%s account=%s: %r",
+                            m.uidl, account.id, e)
+        if not batch:
+            return 0
         result = upload_emails(config, batch)
         inserted = result.get("inserted", len(batch))
-        # 上传成功（200）后批量标记 seen。如果上传在中间失败会抛出，此处不标记，
-        # UIDL 留到下一轮重试。
-        state.add_pop3_seen_many(account.id, "INBOX", [m.uidl for m in msgs])
+        # 上传成功（200）后批量 seen——只标记**成功上传的这批**（已归一化的），
+        # 被跳过的坏 UIDL 不在此列。如果上传失败会抛出，此处不执行，留到下一轮。
+        state.add_pop3_seen_many(account.id, "INBOX", uploaded_uidls)
         return inserted
     finally:
         try:

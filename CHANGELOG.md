@@ -18,7 +18,8 @@
 ### Bug Fixes
 
 - fix: |Worker| 统一收件箱 scoped readonly key 越权读（C1 [安全]）：`inWhitelist` 原先对白名单已配置但行 `account_id`/`source` 为 `NULL`（或逗号拆后为空）直接放行（fail-open），可绕过 `allowed_accounts`/`allowed_sources` 读到非白名单行。改为 fail-closed：NULL/空行值一律拒绝；仅 `undefined`（请求未携带该维度参数）放行并交由 `scopeQuery` 注入白名单限定范围。`ingest.ts` 同步要求 `account_id` 非空，杜绝权重空 account 行再产生（commit `f574b04`）
-- fix: |Aggregator| `normalize._attachments` 对 `get_payload(decode=True)` 的异常无兜底，畸形 base64 附件的单封邮件可致整批 sync 崩溃、水印不推进、账号永久死锁（C3 [可靠性]）。与 `_bodies` 一致新增 `try/except` 容错跳过坏附件 + 回归测试（commit `f574b04`）
+- fix: |Aggregator| `normalize._attachments` 对 `get_payload(decode=True)` 的异常无兜底，畸形 base64 附件的单条邮件可致整批 sync 崩溃、水印不推进、账号永久死锁（C3 [可靠性]）。与 `_bodies` 一致新增 `try/except` 容错跳过附件 + 回归测试（commit `f574b04`）
+- fix: |Aggregator| sync 层 per-message 单封守护（C3 [可靠性] hardening）：`sync_imap` 与 `sync_pop3` 的 batch 构建从整批 list comprehension 改为逐封 `try/except`，单封 `normalize_message` 抛错（坏附件/坏头/其他意外）不再 abort 整批。IMAP 路径跳过坏件并推进 `last_uid` 到窗口最大 uid（含坏件，避免每轮重拉同一窗口，与 `MAX_SINGLE_BYTES` 推进口径一致）；POP3 路径跳过坏件但不标记 seen，留待下一轮重试。覆盖边界测试：坏单封被跳过、其余正常上传、整窗全坏时水印仍推进
 - fix: |Worker| 修复 one-mail `api_keys` readonly key 的 `allowed_sources`/`allowed_accounts` 若以逗号字符串创建时（`/admin/unified/keys` 传字符串）被 `JSON.stringify` 存成带引号字符串，`scopeQuery` 调用 `join` 崩溃（`accounts.join is not a function`）：`parseList` 现对 JSON 解析结果为字符串时回退按逗号拆分（one-mail 统一收件箱 M4）
 - fix: |Worker| 修复 one-mail 统一收件箱 90 天保留清理仅在配置了 legacy `auto_cleanup` 时才执行的问题：`scheduled` 每次触发都运行已读邮件清理，不再依赖该设置（one-mail M5 保留清理）
 - fix: |Aggregator| IMAP 同步分批拉取：`fetch_new_messages` 单轮最多处理 `BATCH_SIZE`（默认 200）封最新邮件，避免大收件箱首次全量一次 `fetch` 卡死超时（QQ 收件箱 9000+ 封场景实测超时）（one-mail 聚合器 M3）
