@@ -4,8 +4,11 @@ from email.utils import parsedate_to_datetime
 from .config import AccountConfig
 from .state import SyncState
 
-# 单轮最多拉取的邮件数：明显小于远程邮箱总量，避免首次全量一次 fetch 卡死。
+# 单轮最多拉取的邮件数：明显小于远程邮箱总量，避免首次全量同步 fetch 卡死。
 BATCH_SIZE = 200
+# 单轮累计原始字节预算：超大附件邮箱（QQ 常见几十 MB 大邮件）一轮抓太多
+# 会把 RFC822 全塞内存触发 OOM（pxed 实测：66MB+65MB 单封在窗口内直接 500MB+）。
+BATCH_BYTES = 64 * 1024 * 1024
 
 
 @dataclass
@@ -51,11 +54,29 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
     uids = [u for u in uids if u > last_uid]
     if not uids:
         return []
-    # 大批量收件箱：一次只取一个"窗口"（此处为最小的 BATCH_SIZE 个），
-    # 由落库端把 last_uid 推进到该窗口内最大 uid；下一轮再取下一窗口。
-    # 避免首次同步 last_uid=0 时一次 fetch 整个收件箱导致超时；
-    # 且保证海量邮箱最终收敛，不会永久丢弃最早的一批。
-    uids = uids[:BATCH_SIZE]
+    # 大批量收件箱：一次只取一个"窗口"。数量上限 BATCH_SIZE，
+    # 另有累计字节上限 BATCH_BYTES——超大附件邮箱（几十 MB 单封）若按数量
+    # 取满会把整批 RFC822 全塞内存触发 OOM。先探测 SIZE 再挑最小的 uid
+    # 填充窗口；单封超过预算也会被包含（宁慢勿永久卡死）。
+    sizes = client.fetch(uids, [b"RFC822.SIZE"])
+    budget = BATCH_BYTES
+    picked = []
+    total = 0
+    for u in uids:
+        if len(picked) >= BATCH_SIZE:
+            break
+        raw_size = sizes.get(u, {})
+        size = 0
+        if isinstance(raw_size, dict):            # imapclient: {b"RFC822.SIZE": int}
+            size = raw_size.get(b"RFC822.SIZE", 0) or 0
+        elif isinstance(raw_size, int):           # 个别服务器/库直接返回 int
+            size = raw_size
+        total += size
+        # 超出预算即截断；但若窗口尚空（首封就超大）仍收下，避免永久卡死
+        if total > budget and picked:
+            break
+        picked.append(u)
+    uids = picked
     data = client.fetch(uids, [b"RFC822", b"INTERNALDATE"])
     out = []
     for u in uids:

@@ -22,9 +22,10 @@ def test_state_roundtrip(tmp_path):
 
 
 class FakeClient:
-    def __init__(self, uids, uidvalidity=1):
+    def __init__(self, uids, uidvalidity=1, sizes=None):
         self._uids = uids
         self._uidvalidity = uidvalidity
+        self._sizes = sizes or {}          # uid -> int bytes（RFC822.SIZE 响应）
     def select_folder(self, folder, readonly=True):
         return {b"UIDVALIDITY": self._uidvalidity}
     def search(self, criteria, charset=None):
@@ -32,7 +33,15 @@ class FakeClient:
         lo = int(criteria[1].split(":")[0])
         return [u for u in self._uids if u >= lo]
     def fetch(self, uids, data):
-        return {u: {b"RFC822": b"raw-%d" % u, b"INTERNALDATE": None} for u in uids}
+        out = {}
+        for u in uids:
+            if b"RFC822.SIZE" in data:
+                out[u] = {b"RFC822.SIZE": self._sizes.get(u, 100)}
+            elif b"RFC822" in data:
+                out[u] = {b"RFC822": b"raw-%d" % u, b"INTERNALDATE": None}
+            else:
+                out[u] = {}
+        return out
 
 
 def test_fetch_new_messages_only_after_last_uid(tmp_path):
@@ -77,3 +86,28 @@ def test_fetch_batches_large_mailbox(tmp_path):
     state.set_last_uid("qq", "INBOX", max(m.uid for m in msgs3))
     # 全部收敛后再跑一轮：无新邮件
     assert fetch_new_messages(client, acc(), "INBOX", state) == []
+
+
+def test_fetch_byte_budget_caps_window(tmp_path, monkeypatch):
+    """超大附件窗口按字节预算截断，而不是一窗塞满 BATCH_SIZE——防 OOM。"""
+    from one_mail_agg import imap_base
+    monkeypatch.setattr(imap_base, "BATCH_BYTES", 1000)   # 预算 1KB
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    # uid 1..4：size 300,400,500,200
+    sizes = {1: 300, 2: 400, 3: 500, 4: 200}
+    client = FakeClient([1, 2, 3, 4], sizes=sizes)
+    msgs = fetch_new_messages(client, acc(), "INBOX", state)
+    # 300+400=700 → 加 500 会超 1000，故只取 1,2
+    assert [m.uid for m in msgs] == [1, 2]
+
+
+def test_fetch_huge_single_message_included(tmp_path, monkeypatch):
+    """单封就超预算（如 66MB QQ 附件）：为保证不永久卡死，也必须包含。"""
+    from one_mail_agg import imap_base
+    monkeypatch.setattr(imap_base, "BATCH_BYTES", 1000)
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    client = FakeClient([1], sizes={1: 999999})   # 单封 1MB+ 超预算
+    msgs = fetch_new_messages(client, acc(), "INBOX", state)
+    assert [m.uid for m in msgs] == [1]
