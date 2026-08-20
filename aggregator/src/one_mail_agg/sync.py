@@ -68,7 +68,12 @@ def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) 
         # 100% 留到底只能人工从日志捞出来单测复现）。若 upload 失败，上面的
         # upload_emails 抛错，此处不执行，水印留在窗口之下，下一轮续传（boundary
         # test：upload 抛错 → 水印不推进、下轮重拉同一窗口）。
-        state.set_last_uid(account.id, folder, max(m.uid for m in msgs))
+        # 水印按 state 当前值（fetch 层可能已推过整窗内被跳过的超限 uid）与窗口
+        # 最大 uid 的较大者写入，保证单调不回落——否则窗口内混入「最大 uid 是超限
+        # 单封」时（如 [1,2,3,1000_超限] 只挑 [1,2,3]），此处会把它从 1000 拉回 3，
+        # 下轮又重拉 4..1000 死循环（review 新发现；原 `max(m.uid for m in msgs)` 缺失）。
+        state.set_last_uid_max(
+            account.id, folder, max(m.uid for m in msgs))
     return _account_result(total, dropped, "imap")
 
 
@@ -116,7 +121,7 @@ def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> dict:
             n_pending = len(msgs)
             raise RuntimeError(
                 f"pop3 {account.id}: all {n_pending} pending messages failed to "
-                f"normalize, nothing uploaded and nothing marked seen")
+                f"normalize (dropped={dropped}), nothing uploaded and nothing marked seen")
         result = upload_emails(config, batch)
         inserted = result.get("inserted", len(batch))
         # 上传成功（200）后批量 seen——只标记**成功归一化的这批**，被跳过的坏
@@ -187,5 +192,4 @@ def _fallback_to_pop3(config: Config, account: AccountConfig, state: SyncState) 
     state.set_fallback_pinned(account.id, True)
     log.info("account=%s pinned to POP3 after IMAP failure (synced=%d, dropped=%d)",
              account.id, res["synced"], res["dropped"])
-    res["protocol"] = "pop3"     # sync_pop3 已返回 pop3; 保底显式
     return res

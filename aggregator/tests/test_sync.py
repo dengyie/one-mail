@@ -208,6 +208,26 @@ def test_sync_imap_all_oversize_window_still_counts_dropped(tmp_path, monkeypatc
     assert state.get_last_uid("163-main", "INBOX") == 11   # 水印推过全部大封
 
 
+def test_sync_imap_oversize_above_picked_does_not_regress_watermark(tmp_path, monkeypatch):
+    """整窗包含「最大 uid 是超限单封」时（[1,2,3,1000_超限]），最终水印必须取
+    fetch 层已推过的超限值（1000），不能用已挑出的较小 max（3）使它回落——
+    否则下轮重拉 4..1000 含 1000 的死循环。"""
+    from one_mail_agg import imap_base
+    monkeypatch.setattr(imap_base, "BATCH_BYTES", 10 ** 9)
+    monkeypatch.setattr(imap_base, "MAX_SINGLE_BYTES", 1000)
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    client = _ImapMsgs([1, 2, 1000], sizes={1: 100, 2: 200, 1000: 99_999})  # 1000 超限
+    res = sync_mod.sync_account(lambda acc: client, _cfg([acc]), acc, state)
+
+    assert res["synced"] == 2                 # 只上传 1,2
+    assert res["dropped"] == 1                # 1000 超限被跳过 → dropped
+    # 不得回落到 3（1,2 的最大），必须保持 1000（fetch 层已推过超限封）
+    assert state.get_last_uid("163-main", "INBOX") == 1000
+
+
 def test_sync_pop3_skips_bad_uidl_retries_next_round(tmp_path, monkeypatch):
     """C3 hardening：POP3 路径坏 UIDL 归一整崩掉时跳过上传且**不标记 seen**，
     下一轮 fetch 会重新拉它；只有成功归一化的 UIDL 被 seen。"""
@@ -289,6 +309,29 @@ def test_sync_pop3_oversize_skips_count_in_dropped(tmp_path, monkeypatch):
     assert res["dropped"] == 1                     # UL-A 超限 → dropped
     # 超限的 UL-A 被标记 seen（下轮不重拉），其余成功上传的也 seen
     assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1", "UL-2", "UL-A"}
+
+
+def test_sync_pop3_all_oversize_window_counts_dropped_not_error(tmp_path, monkeypatch):
+    """审查 Important：#2 —— POP3 整窗全超限（fetch 全部返回空、全部标记 seen）
+    必须返回 `synced=0, dropped=N` 且**不抛错**。这一语义随时会被改坏：若未来
+    把「全超限」当成 all-bad（抛 RuntimeError），`_fallback_to_pop3` 就会在
+    `dropped` 全被永久丢弃时把账号**钉住**并报错。测试钉死行为。"""
+    from one_mail_agg import pop3_source
+    monkeypatch.setattr(pop3_source, "BATCH_BYTES", 10 ** 9)
+    monkeypatch.setattr(pop3_source, "MAX_SINGLE_BYTES", 1000)   # 单封 1KB 上限
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+    huge = b"From: b@c\r\nSubject: huge\r\n\r\n" + b"X" * 2000   # > 1KB 大封
+    pop_f = _PopFactory([("UL-A", huge), ("UL-B", huge)])        # 整窗全超限
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    res = sync_mod.sync_account(None, _cfg([acc]), acc, state)
+    assert res["protocol"] == "pop3"
+    assert res["synced"] == 0
+    assert res["dropped"] == 2                # 两封都超限 → 都计入 dropped
+    assert calls == []                        # 无任何上传
+    # 超限 UIDL 都被标记 seen（懒弃置），但不是 all-bad → 不抛 RuntimeError
+    assert state.get_pop3_seen("163-main", "INBOX") == {"UL-A", "UL-B"}
 
 
 def test_sync_explicit_imap_does_not_fallback(tmp_path, monkeypatch):

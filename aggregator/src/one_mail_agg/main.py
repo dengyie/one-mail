@@ -22,7 +22,7 @@ def run_once(config_path: str) -> dict:
             results[account.id] = sync_account(factory, config, account, state)
             r = results[account.id]
             log.info("synced %s: protocol=%s synced=%d dropped=%d",
-                     account.id, r.get("protocol"), r.get("synced", 0), r.get("dropped", 0))
+                     account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
         except Exception as e:
             results[account.id] = {"error": str(e)}
             log.error("sync %s failed: %s", account.id, e)

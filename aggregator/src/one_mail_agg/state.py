@@ -25,6 +25,17 @@ class SyncState:
         self._data["last_uid"][self._key(account_id, folder)] = int(uid)
         self.save()
 
+    def set_last_uid_max(self, account_id: str, folder: str, uid: int) -> None:
+        """水印单调推进：只接受更大的值，绝不回落。
+
+        fetch 层把超限单封推进过水印后，sync 层不能拿「已挑出邮件」的较小 max
+        把水位拉回来，否则下轮会重拉含超限封的整个窗口。见 sync_imap 的
+        `max(oversize 推过的水位, 窗口 max uid)`。无副作用：如果 uid 不大于
+        当前水位则不动，避免无谓的磁盘写。
+        """
+        if uid > self.get_last_uid(account_id, folder):
+            self.set_last_uid(account_id, folder, uid)
+
     def get_uidvalidity(self, account_id: str, folder: str) -> int | None:
         v = self._data["uidvalidity"].get(self._key(account_id, folder))
         return int(v) if v is not None else None
