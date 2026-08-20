@@ -319,3 +319,45 @@ def test_sync_pop3_failure_does_not_pin(tmp_path, monkeypatch):
                               _cfg([acc]), acc, state)
     assert not state.is_fallback_pinned("163-main")   # 未钉住
     assert calls == []                                 # 未上传任何邮件
+
+
+def test_sync_imap_upload_failure_does_not_advance_watermark(tmp_path, monkeypatch):
+    """upload 失败（worker 挂 / 网络断）→ 异常上抛，水印**不**推进。
+
+    回归：set_last_uid 必须留在 upload 之后。若先推进水印再 upload，整批丢了却
+    无处可查，下轮直接跳过这一窗口（C3 类似死锁的镜像问题）；正确行为是 upload
+    抛错 → 水印留在原窗口 → 下轮从同一窗口重试续传。
+    """
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    def failing_upload(cfg, emails):
+        raise RuntimeError("worker ingest 500")
+
+    monkeypatch.setattr(sync_mod, "upload_emails", failing_upload)
+    with pytest.raises(RuntimeError, match="worker ingest 500"):
+        sync_mod.sync_account(_imap_msgs_factory([101, 102]), _cfg([acc]), acc, state)
+    # 水印未推进：下轮 fetch_new_messages 仍从 0 拉同样 [101,102]
+    assert state.get_last_uid("163-main", "INBOX") == 0
+
+
+def test_sync_pop3_upload_failure_marks_nothing_seen(tmp_path, monkeypatch):
+    """POP3 upload 失败 → 异常上抛，**不**标记任何 UIDL seen。
+
+    上传失败时 add_pop3_seen_many 不能执行，否则已上传/未上传混同；下轮重新拉
+    同批 UIDL 重试续传。上传成功后正常标记，见 test_sync_pop3_skips_..., 唯一
+    区别是这里 upload 中途失败。
+    """
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+    pop_f = _PopFactory([("UL-1", b"From: a@b\r\nSubject: ok\r\n\r\n1\r\n")])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+
+    def failing_upload(cfg, emails):
+        raise RuntimeError("worker ingest 500")
+
+    monkeypatch.setattr(sync_mod, "upload_emails", failing_upload)
+    with pytest.raises(RuntimeError, match="worker ingest 500"):
+        sync_mod.sync_account(None, _cfg([acc]), acc, state)
+    # 什么都没标记 seen：下轮重新拉 UL-1 再试
+    assert state.get_pop3_seen("163-main", "INBOX") == set()

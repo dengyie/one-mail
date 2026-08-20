@@ -84,7 +84,15 @@ def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> int:
                 log.warning("skip pop3 message uidl=%s account=%s: %r",
                             m.uidl, account.id, e)
         if not batch:
-            return 0
+            # 全部归一化失败：不能静默返回 0。`_fallback_to_pop3` 把任何返回值
+            # （含 0）当「POP3 同步成功」并永久钉住账号到 POP3；这里抛错让调用
+            # 层按「POP3 失败」处理——auto 账号下轮重试 IMAP，显式 pop3 账号
+            # 由 run_once 捕获、下轮重试同批未 seen 的 UIDL（review Important-1
+            # 回归修复：改动前整批 list-comprehension 崩到这里不执行钉住）。
+            n_pending = len(msgs)
+            raise RuntimeError(
+                f"pop3 {account.id}: all {n_pending} pending messages failed to "
+                f"normalize, nothing uploaded and nothing marked seen")
         result = upload_emails(config, batch)
         inserted = result.get("inserted", len(batch))
         # 上传成功（200）后批量 seen——只标记**成功上传的这批**（已归一化的），
