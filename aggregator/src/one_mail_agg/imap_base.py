@@ -7,8 +7,11 @@ from .state import SyncState
 # 单轮最多拉取的邮件数：明显小于远程邮箱总量，避免首次全量同步 fetch 卡死。
 BATCH_SIZE = 200
 # 单轮累计原始字节预算：超大附件邮箱（QQ 常见几十 MB 大邮件）一轮抓太多
-# 会把 RFC822 全塞内存触发 OOM（pxed 实测：66MB+65MB 单封在窗口内直接 500MB+）。
+# 会把 RFC822 全塞进内存触发 OOM（pxed 实测：66MB+65MB 单封在窗口内直接 500MB+）。
 BATCH_BYTES = 64 * 1024 * 1024
+# 单封原始大小上限：超过即跳过该封并把 last_uid 推过它，避免一封信把
+# 容器内存顶爆（pxed 为 K8s cgroup，56MB 附件就足够触发 OOM）。
+MAX_SINGLE_BYTES = 30 * 1024 * 1024
 
 
 @dataclass
@@ -69,8 +72,14 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
         size = 0
         if isinstance(raw_size, dict):            # imapclient: {b"RFC822.SIZE": int}
             size = raw_size.get(b"RFC822.SIZE", 0) or 0
-        elif isinstance(raw_size, int):           # 个别服务器/库直接返回 int
+        elif isinstance(raw_size, int):           # 其他服务器/库直接返回 int
             size = raw_size
+        if size > MAX_SINGLE_BYTES:
+            # 单封超限：跳过该封并把 water mark 推过它，否则每次窗口都卡在这封
+            # （该封极可能是超大附件，整体拉取会顶爆容器内存）
+            if u > state.get_last_uid(account.id, folder):
+                state.set_last_uid(account.id, folder, u)
+            continue
         total += size
         # 超出预算即截断；但若窗口尚空（首封就超大）仍收下，避免永久卡死
         if total > budget and picked:

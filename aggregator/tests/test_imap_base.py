@@ -102,12 +102,18 @@ def test_fetch_byte_budget_caps_window(tmp_path, monkeypatch):
     assert [m.uid for m in msgs] == [1, 2]
 
 
-def test_fetch_huge_single_message_included(tmp_path, monkeypatch):
-    """单封就超预算（如 66MB QQ 附件）：为保证不永久卡死，也必须包含。"""
+def test_fetch_huge_single_message_skipped(tmp_path, monkeypatch):
+    """单封超预算（66MB QQ 附件）拉取会撑爆容器内存（pxed K8s cgroup）：
+    必须跳过该封并已推过水印，避免反复卡在同一封。"""
     from one_mail_agg import imap_base
-    monkeypatch.setattr(imap_base, "BATCH_BYTES", 1000)
+    monkeypatch.setattr(imap_base, "BATCH_BYTES", 1000 ** 2)   # 1MB 预算
+    monkeypatch.setattr(imap_base, "MAX_SINGLE_BYTES", 20 * 1024)  # 20KB 单封上限
     state = SyncState(str(tmp_path / "st.json"))
     state.set_last_uid("qq", "INBOX", 0)
-    client = FakeClient([1], sizes={1: 999999})   # 单封 1MB+ 超预算
+    # uid=1 超限大封，uid=2,3 正常
+    client = FakeClient([1, 2, 3], sizes={1: 99_999, 2: 200, 3: 300})
     msgs = fetch_new_messages(client, acc(), "INBOX", state)
-    assert [m.uid for m in msgs] == [1]
+    # 大封(uid 1)被跳过，但同窗口 uid2/3 仍会返回
+    assert [m.uid for m in msgs] == [2, 3]
+    # 水印至少推进到 1（跳过内容不丢水位，不会再卡在 uid1）
+    assert state.get_last_uid("qq", "INBOX") >= 1
