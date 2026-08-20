@@ -22,6 +22,7 @@
 - fix: |Aggregator| IMAP batching now drains from the oldest window (`uids[:BATCH_SIZE]`) and advances `last_uid` to the window's max UID, converging over multiple runs across the entire mailbox — fixes the previous new-first window permanently dropping the oldest batch of large mailboxes; also makes `state.py` tolerant of a missing `uidvalidity` key (review fix)
 - fix: |Worker| Unified inbox `verifcodes` and `GET /api/unified/emails/:id` no longer leak across scopes: a readonly key is forced into `allowed_sources`/`allowed_accounts` via injected WHERE (verifcodes) or row source/account validation (getEmail), returning 403 for out-of-scope reads (review fix)
 - fix: |Worker| `unread` is now a three-state filter (`1`→unread, `0`→read); `verifcodes` validates `fresh` (400 on non-numeric) and returns up to `LIMIT 50`; `markRead` checks existence before updating so re-marking a read email is idempotent instead of a false 404; retention cleanup deletes in pages (≤1000/batch) and guards R2 attachment keys (review fix)
+- fix: |Aggregator| IMAP sync crashed with `TypeError: Object of type Header is not JSON serializable` when a mail header parsed into a `email.header.Header` object (`headers_json` did a bare `json.dumps(dict(msg.items()))`), stalling a large-mailbox re-crawl mid-way: added `_header_json_stringify` to coerce every header value to str (bytes→decode, `Header`→str) before serializing (review fix round 2, commit `068e462`)
 
 ### Improvements
 
