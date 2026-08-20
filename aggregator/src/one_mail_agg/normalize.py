@@ -60,7 +60,13 @@ def _attachments(msg) -> list[dict]:
         disp = str(p.get("Content-Disposition", ""))
         if "attachment" not in disp:
             continue
-        payload = p.get_payload(decode=True) or b""
+        # 附件 base64/quoted-printable 损坏时 get_payload(decode=True) 会抛
+        # binascii.Error/ValueError；这里与 _bodies 一样容错跳过，避免单封畸形
+        # 附件让整批 sync 崩溃、水印不推进导致账号永久死锁（C3，与 from_addr 兜底同类）。
+        try:
+            payload = p.get_payload(decode=True) or b""
+        except Exception:
+            continue
         out.append({"name": _dec(p.get_filename() or ""), "size": len(payload),
                     "mimeType": p.get_content_type()})
     return out

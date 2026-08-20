@@ -27,13 +27,17 @@ test("readonly source whitelist enforced", () => {
   assert.equal(canAccess(roQq, "GET", "imap_qq", "qq-main"), true);
   assert.equal(canAccess(roQq, "GET", "imap_gmail", "qq-main"), false);
   assert.equal(canAccess(roQq, "GET", "imap_qq", "gmail-1"), false);
-  // 不带过滤的 GET：允许（由 scopeQuery 注入白名单）
-  assert.equal(canAccess(roQq, "GET"), true);
+  // C1 fail-closed：白名单 key 缺 source/account 参数时必须拒绝（对应的行作用域 NULL
+  // 或未注入白名单时，不能放行）。顶层 middleware 靠 scopeQuery 注入白名单来约束实际查询。
+  assert.equal(canAccess(roQq, "GET"), false);
+  assert.equal(canAccess(roQq, "GET", "imap_qq"), false);
+  assert.equal(canAccess(roQq, "GET", undefined, "qq-main"), false);
 });
 
 test("readonly multi-value query: every value must be in whitelist", () => {
-  assert.equal(canAccess(roQq, "GET", "imap_qq,imap_qq"), true);       // 全部在白名单
-  assert.equal(canAccess(roQq, "GET", "imap_qq,imap_gmail"), false);   // 含越权来源
+  // 显式传 account（与 middleware 注入白名单后的行检查对齐），两个来源都在白名单 → 放行
+  assert.equal(canAccess(roQq, "GET", "imap_qq,imap_qq", "qq-main"), true);       // 全部在白名单
+  assert.equal(canAccess(roQq, "GET", "imap_qq,imap_gmail", "qq-main"), false);   // 含越权来源
 });
 
 test("scopeQuery injects multi-value whitelist as comma-separated (feeds IN clause)", () => {

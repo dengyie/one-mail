@@ -17,3 +17,15 @@ test("toEmailInsertParams fills defaults and keeps imap_uid", () => {
 test("toEmailInsertParams throws when from/to missing", () => {
   assert.throws(() => toEmailInsertParams({ source: "imap_qq" }, "id", 1));
 });
+
+test("C1: toEmailInsertParams rejects missing account_id (fail-closed)", () => {
+  assert.throws(
+    () => toEmailInsertParams({ source: "imap_qq", from_addr: "a@b.com", to_addr: "me@qq.com" }, "id", 1),
+    /account_id required/,
+  );
+  // 全字段齐了才通过
+  const ok = toEmailInsertParams({
+    source: "imap_qq", account_id: "qq", from_addr: "a@b.com", to_addr: "me@qq.com",
+  }, "id", 1);
+  assert.equal(ok[2], "qq");
+});

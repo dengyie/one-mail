@@ -1,11 +1,16 @@
 import { Context } from "hono";
 
 export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowMs: number): unknown[] {
-    if (!e.from_addr || !e.to_addr) throw new Error("from_addr/to_addr required");
+    // from_addr/to_addr/account_id 必须非空：account_id=NULL 的行会被
+    // fail-closed 白名单挡在所有的 readonly key 之外，等同于不可见/不可管理
+    // （C1 相关）。CF 双写路径 account_id=toAddress 恒非空，不受影响。
+    if (!e.from_addr || !e.to_addr || !e.account_id) {
+        throw new Error("from_addr/to_addr/account_id required");
+    }
     return [
         id,
         e.source ?? "imap_unknown",
-        e.account_id ?? null,
+        e.account_id,
         e.from_addr, e.to_addr,
         e.subject ?? "",
         e.text_body ?? "",

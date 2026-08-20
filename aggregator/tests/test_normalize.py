@@ -2,6 +2,7 @@ import json
 
 from one_mail_agg.normalize import normalize_message
 from one_mail_agg.config import AccountConfig
+from email import message_from_bytes
 
 RAW = (b"From: Alice <alice@ex.com>\r\nTo: me@qq.com\r\n"
        b"Subject: Code 123456\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
@@ -99,3 +100,44 @@ def test_normalize_from_without_address_falls_back():
     e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1000, internal_date_ms=None)
     assert e["from_addr"]  # 非空
     assert e["from_addr"] == "just a name"
+
+
+def _raw_with_bad_attachment(binary: bytes) -> bytes:
+    return (b"From: alice@ex.com\r\nTo: me@qq.com\r\nSubject: has bad attach\r\n"
+            b"Content-Type: multipart/mixed; boundary=b\r\n\r\n"
+            b"--b\r\nContent-Type: application/octet-stream\r\n"
+            b"Content-Disposition: attachment; filename=x.bin\r\n"
+            b"Content-Transfer-Encoding: base64\r\n\r\n"
+            + binary + b"\r\n--b--\r\n")
+
+
+def test_normalize_corrupt_attachment_does_not_wedge_sync():
+    """C3 goal: 畸形附件（base64 垃圾/二进制乱码）不能毁掉整批 sync。
+    Py3.11 a2b_base64 对坏字节宽松忽略（解码出垃圾 bytes）——所以不抛错，
+    但这正是危险之处：不同 Python 版本/VPS 与本地解释器行为不同，
+    一旦解码从宽松变严格（3.13+ 曾讨论收紧），单封坏件会让
+    normalize_message 抛错、水印不推进、账号死锁。因此：消息必须
+    仍能被规范化成一行、imap_uid 可用，attachments_json 是合法数组。"""
+    raw = _raw_with_bad_attachment(b"@@@@@@not-valid-base64@@@@@@")
+    e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1001, internal_date_ms=None)
+    assert e["imap_uid"] == "imap.qq.com:INBOX:7:1001"  # 水印照常，同步不卡死
+    atts = json.loads(e["attachments_json"])
+    assert isinstance(atts, list)                     # attachments_json 恒为合法数组
+    assert all({"name", "size", "mimeType"} <= set(a) for a in atts)  # 条目结构完整
+
+
+def test_attachments_guard_skips_part_whose_decode_raises():
+    """C3 mechanism: _attachments 对 get_payload(decode=True) 的 except 分支。
+    直接打桩让该调用抛错，证明异常被吞掉、附件被跳过，而不是传给整批 sync。
+    （当前解释器上真实坏 base64 不会抛，此测试用桩显式覆盖守卫分支。）"""
+    from one_mail_agg import normalize as N
+
+    msg = message_from_bytes(_raw_with_bad_attachment(b"x"))
+    part = next((p for p in msg.walk() if p.get_content_disposition() == "attachment"), None)
+    assert part is not None
+
+    def bomb(_dc=None, **kw):
+        raise ValueError("simulated strict base64 decode crash")
+
+    part.get_payload = bomb                      # 桩：模拟严格模式下解码头抛错
+    assert N._attachments(msg) == []             # 守卫吞掉、跳过该附件

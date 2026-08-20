@@ -35,14 +35,21 @@ const parseList = (s: string | null): string[] | null => {
     } catch { return null; }
 };
 
-const inWhitelist = (list: string[] | null, val?: string): boolean => {
-    if (!val || !list) return true;
+const inWhitelist = (list: string[] | null, val?: string | null): boolean => {
+    // fail-closed：配置了白名单（list 非空）时，缺失/空的值一律拒绝。
+    // 之前的 `if (!val || !list) return true` 是 fail-open——account_id 为
+    // NULL 的行会绕过 allowed_accounts 作用域被 readonly key 读到（C1）。
+    if (!list || list.length === 0) return true;
+    if (val === undefined) return true;         // 请求未携带该维度：放行，交由 scopeQuery 注入白名单
+    if (!val) return false;                     // 显式空值 / NULL 行：fail-closed
+    const parts = (val || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length === 0) return false;
     // 逗号分隔多值：每个值都必须在白名单内
-    return val.split(",").map((s) => s.trim()).filter(Boolean).every((v) => list.includes(v));
+    return parts.every((v) => list.includes(v));
 };
 
 export function canAccess(key: Pick<ApiKeyRow, "role" | "allowed_sources" | "allowed_accounts">,
-                          method: string, source?: string, accountId?: string): boolean {
+                          method: string, source?: string | null, accountId?: string | null): boolean {
     if (key.role === "admin") return true;
     if (method !== "GET") return false;
     if (!inWhitelist(parseList(key.allowed_sources), source)) return false;
