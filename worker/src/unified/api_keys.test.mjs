@@ -43,3 +43,10 @@ test("scopeQuery injects multi-value whitelist as comma-separated (feeds IN clau
   const kept = scopeQuery({ role: "readonly", allowed_sources: '["imap_qq"]', allowed_accounts: null }, { source: "imap_qq" });
   assert.equal(kept.source, "imap_qq");
 });
+
+test("parseList survives JSON.stringify of a comma string (key_admin normalization)", () => {
+  // key_admin JSON.stringify 的入参若是逗号字符串，会存成 "\"imap_qq,imap_163\""；
+  // parseList 需回退按逗号拆分，scopeQuery 才能 join（回归 accounts.join is not a function）
+  const scoped = scopeQuery({ role: "readonly", allowed_sources: JSON.stringify("imap_qq,imap_163"), allowed_accounts: null }, {});
+  assert.equal(scoped.source, "imap_qq,imap_163");
+});

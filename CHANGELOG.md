@@ -16,7 +16,9 @@
 
 ### Bug Fixes
 
+- fix: |Worker| 修复 one-mail `api_keys` readonly key 的 `allowed_sources`/`allowed_accounts` 若以逗号字符串创建时（`/admin/unified/keys` 传字符串）被 `JSON.stringify` 存成带引号字符串，`scopeQuery` 调用 `join` 崩溃（`accounts.join is not a function`）：`parseList` 现对 JSON 解析结果为字符串时回退按逗号拆分（one-mail 统一收件箱 M4）
 - fix: |Worker| 修复 one-mail 统一收件箱 90 天保留清理仅在配置了 legacy `auto_cleanup` 时才执行的问题：`scheduled` 每次触发都运行已读邮件清理，不再依赖该设置（one-mail M5 保留清理）
+- fix: |Aggregator| IMAP 同步分批拉取：`fetch_new_messages` 单轮最多处理 `BATCH_SIZE`（默认 200）封最新邮件，避免大收件箱首次全量一次 `fetch` 卡死超时（QQ 收件箱 9000+ 封场景实测超时）（one-mail 聚合器 M3）
 
 ### Improvements
 

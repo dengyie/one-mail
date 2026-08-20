@@ -24,7 +24,15 @@ export async function lookupKey(env: Bindings, key: string): Promise<ApiKeyRow |
 
 const parseList = (s: string | null): string[] | null => {
     if (!s) return null;
-    try { return JSON.parse(s); } catch { return null; }
+    try {
+        const v: unknown = JSON.parse(s);
+        if (Array.isArray(v)) return v;
+        if (typeof v === "string") {
+            // key_admin 可能收到逗号分隔字符串并 JSON.stringify 成带引号的字符串
+            return v.split(",").map((x) => x.trim()).filter(Boolean);
+        }
+        return null;
+    } catch { return null; }
 };
 
 const inWhitelist = (list: string[] | null, val?: string): boolean => {

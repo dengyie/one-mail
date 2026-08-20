@@ -16,7 +16,9 @@
 
 ### Bug Fixes
 
+- fix: |Worker| Fix one-mail `api_keys` readonly keys whose `allowed_sources`/`allowed_accounts` are created as comma strings (`/admin/unified/keys` string input) being stored by `JSON.stringify` as a quoted string, causing `scopeQuery` to crash calling `join` (`accounts.join is not a function`): `parseList` now falls back to splitting on commas when JSON parsing yields a string (one-mail unified inbox M4)
 - fix: |Worker| Fix the one-mail 90-day read-email retention cleanup only running when the legacy `auto_cleanup` setting is present: `scheduled` now runs the cleanup on every trigger, independent of that setting (one-mail M5 retention)
+- fix: |Aggregator| Batch IMAP sync fetches: `fetch_new_messages` now processes at most `BATCH_SIZE` (default 200) newest messages per run, so a large mailbox's first full pull no longer stalls in a single `fetch` and times out (9999-email QQ INBOX reproduced the timeout in production) (one-mail aggregator M3)
 
 ### Improvements
 

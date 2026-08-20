@@ -51,3 +51,16 @@ def test_fetch_resets_on_uidvalidity_change(tmp_path):
     msgs = fetch_new_messages(client, acc(), "INBOX", state)
     assert [m.uid for m in msgs] == [10, 11]        # 全量重拉
     assert state.get_uidvalidity("qq", "INBOX") == 2
+
+
+def test_fetch_batches_large_mailbox(tmp_path):
+    # 大批量收件箱：只返回 UID 最大的 BATCH_SIZE 封，推进 last_uid 到该批最大 UID
+    from one_mail_agg.imap_base import BATCH_SIZE
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    big = list(range(1, BATCH_SIZE * 3 + 1))          # 600 封
+    client = FakeClient(big)
+    msgs = fetch_new_messages(client, acc(), "INBOX", state)
+    assert len(msgs) == BATCH_SIZE
+    assert msgs[0].uid == 401                         # 最后 200 封
+    assert msgs[-1].uid == 600
