@@ -10,6 +10,9 @@
 
 ### Features
 
+- feat: |Worker| Add Bearer API-key authentication for the unified mailbox API, including readonly source/account scoping and admin access
+- feat: |Worker| Add complete unified inbox query endpoints: `GET /api/unified/search`, `GET /api/unified/count?source=&unread=`, `GET /api/unified/verifcodes?addr=&fresh=`, and `POST /api/unified/emails/:id/read` (admin API-key only), plus a verification-code extraction pure function and verifcode mail lookup; add `POST /admin/unified/keys` (x-admin-auth protected) to create API keys with an optional role and source/account whitelists, returning the plaintext key only once at creation (one-mail unified inbox)
+
 ### Bug Fixes
 
 ### Improvements

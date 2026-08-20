@@ -10,6 +10,9 @@
 
 ### Features
 
+- feat: |Worker| Add Bearer API-key authentication for the unified mailbox API, including readonly source/account scoping and admin access
+- feat: |Worker| 新增统一收件箱完整查询端点：`GET /api/unified/search`、`GET /api/unified/count?source=&unread=`、`GET /api/unified/verifcodes?addr=&fresh=`、`POST /api/unified/emails/:id/read`（admin API-key 专属），并提供验证码提取纯函数与验证码邮件查询；新增 `POST /admin/unified/keys`（x-admin-auth 保护）用于创建带 rolereadonly/admin、来源/账号白名单的 API key，明文 key 仅创建时返回一次（one-mail 统一收件箱）
+
 ### Bug Fixes
 
 ### Improvements

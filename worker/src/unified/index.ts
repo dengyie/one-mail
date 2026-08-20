@@ -2,6 +2,8 @@ import { Context, Hono } from "hono";
 import { handleListQuery } from "../common";
 import { buildEmailFilters } from "./unified_query";
 import { ingestHandler } from "./ingest";
+import { countEmails, verifCodes, markRead } from "./extra_endpoints";
+import { createKey } from "./key_admin";
 import { lookupKey, canAccess, scopeQuery } from "./api_keys";
 
 const api = new Hono<HonoCustomType>();
@@ -41,6 +43,10 @@ const getEmail = async (c: Context<HonoCustomType>) => {
 
 api.get("/api/unified/emails", listEmails);
 api.get("/api/unified/emails/:id", getEmail);
+api.get("/api/unified/count", countEmails);
+api.get("/api/unified/verifcodes", verifCodes);
+api.post("/api/unified/emails/:id/read", markRead);   // readonly 被 canAccess 挡（POST）
 api.post("/admin/unified/ingest", ingestHandler);
+api.post("/admin/unified/keys", createKey);           // x-admin-auth 保护
 
 export default api;
