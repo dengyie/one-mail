@@ -19,6 +19,7 @@ class RawMessage:
     uid: int
     raw_bytes: bytes
     internal_date_ms: int | None
+    uidl: str | None = None     # POP3 稳定 UIDL；IMAP 路径为 None
 
 
 def make_imap_uid(host: str, folder: str, uidvalidity: int, uid: int) -> str:

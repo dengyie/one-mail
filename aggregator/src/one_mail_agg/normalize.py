@@ -68,7 +68,7 @@ def _attachments(msg) -> list[dict]:
 
 def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
                       uidvalidity: int, uid: int, internal_date_ms: int | None,
-                      now_ms: int = 0) -> dict:
+                      now_ms: int = 0, imap_uid_override: str | None = None) -> dict:
     import time
     msg = message_from_bytes(raw_bytes)
     text, html = _bodies(msg)
@@ -89,5 +89,5 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
         "flags_json": "[]",
         "attachments_json": json.dumps(_attachments(msg), ensure_ascii=False),
         "raw_ref": None,
-        "imap_uid": make_imap_uid(account.host, folder, uidvalidity, uid),
+        "imap_uid": imap_uid_override or make_imap_uid(account.host, folder, uidvalidity, uid),
     }

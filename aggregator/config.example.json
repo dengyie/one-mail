@@ -6,6 +6,8 @@
     {"id": "qq-main", "source": "imap_qq", "host": "imap.qq.com", "port": 993,
      "username": "you@qq.com", "password": "<QQ授权码>", "folders": ["INBOX"], "use_ssl": true},
     {"id": "163-main", "source": "imap_163", "host": "imap.163.com", "port": 993,
-     "username": "you@163.com", "password": "<163授权码>", "folders": ["INBOX"], "use_ssl": true}
+     "username": "you@163.com", "password": "<163授权码>", "folders": ["INBOX"], "use_ssl": true,
+     "protocol": "auto",
+     "pop3_host": "pop.163.com", "pop3_port": 995, "pop3_ssl": true}
   ]
 }

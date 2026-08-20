@@ -35,7 +35,7 @@ def test_load_config_defaults_and_slash_strip(tmp_path):
         "admin_token": "secret",
         "accounts": [
             {"id": "qq-main", "source": "imap_qq", "host": "imap.qq.com", "port": 993,
-             "username": "a@qq.com", "password": "app-pw"}  # folders/use_ssl omitted
+             "username": "qq@qq.com", "password": "app-pw"}  # folders/use_ssl omitted
         ],
     }))
     c = load_config(str(cfg))
@@ -44,3 +44,49 @@ def test_load_config_defaults_and_slash_strip(tmp_path):
     assert c.accounts[0].folders == ["INBOX"]
     assert c.accounts[0].use_ssl is True
     assert c.accounts[0].oauth is None
+
+
+def test_load_config_protocol_defaults_auto(tmp_path):
+    cfg = tmp_path / "c3.json"
+    cfg.write_text(json.dumps({
+        "worker_base_url": "u", "admin_token": "t",
+        "accounts": [
+            {"id": "qq", "source": "imap_qq", "host": "imap.qq.com", "port": 993,
+             "username": "a@qq.com", "password": "p"}
+        ],
+    }))
+    a = load_config(str(cfg)).accounts[0]
+    # 默认协议为 auto（IMAP 优先、失败后 POP3）
+    assert a.protocol == "auto"
+    # 未显式指定 POP3 时，host/port/ssl/stls 为空/继承
+    assert a.pop3_host == "" and a.pop3_port == 0
+    assert a.pop3_ssl is None and a.pop3_use_stls is False
+    # 由 imap.X 推导 pop.X 主机、默认 995 SSL
+    assert a.resolve_pop3_host() == "pop.qq.com"
+    assert a.resolve_pop3_port() == 995
+    assert a.resolve_pop3_use_ssl() is True
+
+
+def test_load_config_explicit_pop3_fields_and_host_derivation(tmp_path):
+    cfg = tmp_path / "c4.json"
+    cfg.write_text(json.dumps({
+        "worker_base_url": "u", "admin_token": "t",
+        "accounts": [
+            {"id": "oa", "source": "imap_outlook", "host": "outlook.office365.com", "port": 993,
+             "username": "u", "password": "p", "oauth": {"provider": "outlook"},
+             "protocol": "imap"},
+            {"id": "y163", "source": "imap_163", "host": "imap.163.com", "port": 993,
+             "username": "x@163.com", "password": "p", "protocol": "pop3",
+             "pop3_host": "pop.163.com", "pop3_port": 995, "pop3_ssl": True},
+            {"id": "oa-nosub", "source": "imap_other", "host": "mail.example.com", "port": 993,
+             "username": "u", "password": "p", "protocol": "imap"},
+        ],
+    }))
+    a0, a1, a2 = load_config(str(cfg)).accounts
+    assert a0.protocol == "imap"
+    assert a1.protocol == "pop3"
+    assert a1.pop3_host == "pop.163.com"
+    assert a1.pop3_port == 995
+    assert a1.pop3_ssl is True
+    assert a1.resolve_pop3_host() == "pop.163.com"   # 显式 host 优先
+    assert a2.resolve_pop3_host() == "mail.example.com"  # 非 imap. 前缀原样

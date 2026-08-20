@@ -46,6 +46,22 @@ def test_normalize_header_not_json_serializable():
         assert isinstance(v, str)
 
 
+def test_normalize_pop3_uid_override():
+    """POP3 路径没有 IMAP UIDVALIDITY/UID，调用方用 imap_uid_override 传稳定键，
+    归一化结果的 imap_uid 必须用该值，而非默认的 host:folder:uidvalidity:uid。"""
+    from one_mail_agg.config import AccountConfig
+    pop = AccountConfig(id="163", source="imap_163", host="imap.163.com", port=993,
+                        username="x@163.com", password="p", protocol="pop3",
+                        pop3_host="pop.163.com", pop3_port=995, pop3_ssl=True)
+    e = normalize_message(RAW, pop, "INBOX", uidvalidity=1, uid=42,
+                          internal_date_ms=None,
+                          imap_uid_override="pop3:pop.163.com:INBOX:UIDL-ABC123")
+    assert e["imap_uid"] == "pop3:pop.163.com:INBOX:UIDL-ABC123"
+    # 不传 override 时必须严格保持旧 IMAP 输出
+    e_imap = normalize_message(RAW, acc(), "INBOX", uidvalidity=7, uid=123, internal_date_ms=None)
+    assert e_imap["imap_uid"] == "imap.qq.com:INBOX:7:123"
+
+
 def test_normalize_header_values_coerced():
     """即使某头值被解析成 Header/bytes（真实故障形态），headers_json 也必须
     可 JSON 序列化（旧代码在此处 TypeError: Header not JSON serializable）。

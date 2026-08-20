@@ -24,6 +24,7 @@
 - fix: |Worker| `unread=1`/`0` 三态过滤（此前只处理 `unread=1`）；`verifcodes` 参数 `fresh` 非数字返回 400、结果 `LIMIT 50`；`markRead` 先查存在性再更新，已读行幂等不再误 404；retention 清理改为分页删除（每批 ≤1000）并保护 R2 附件键（review 修复）
 - fix: |Aggregator| IMAP 同步在邮件头被 `email` 解析成 `Header` 对象时崩溃（`TypeError: Object of type Header is not JSON serializable`，`headers_json` 裸 `json.dumps(dict(msg.items()))`）：新增 `_header_json_stringify`，所有字符串值统一 `str`（`bytes`→decode、`Header`→str）后再 `json.dumps`，大收件箱重爬不再中途（review 修复轮 2，commit `068e462`）
 - fix: |Aggregator| IMAP 同步超大附件 OOM：QQ 收件箱单封 66MB/65MB 附件，按数量 `BATCH_SIZE=200` 一窗拉取 ~200MB+ RFC822 全塞内存，pxed K8s 容器（cgroup memory.max≈3.9GB、基态 ~1GB）在 `rc=137` 被 OOM 反复杀进程（`Out of memory: Killed process python`），`last_uid` 卡 4024 不再推进。修复两层：① `fetch_new_messages` 先 `RFC822.SIZE` 探测窗口，改按 `BATCH_BYTES=64MiB` 预算截断窗口；② 单封超过 `MAX_SINGLE_BYTES=30MiB` 的跳过并把水印推过它，避免一封信把容器顶爆（commit `269c3fd` + `60d33c9`）
+- feat: |Aggregator| 新增 IMAP-first / POP3-fallback：普通密码账号默认 `protocol: auto`（先 IMAP，连接/选择失败且非 OAuth 时自动降级 POP3）；163 这类 IMAP 在 `EXAMINE/SELECT` 被服务端拒绝（`Unsafe Login`）的账号实测经 `pop.163.com:995` POP3 收敛。POP3 用 UIDL 做稳定水印（`state.pop3_seen`，按 `account|folder` 隔离，避免 POP3 message number 删除重排复位），`pop3:` 命名空间的稳定键写入同一 `imap_uid` 字段继续吃 Worker partial unique index 幂等；`LIST` 先探测单封大小，复用 `BATCH_BYTES/MAX_SINGLE_BYTES` 预算防大附件 OOM；支持 `protocol: imap`（禁止降级）、`protocol: pop3`（直连 POP3）、OAuth 账号不降级。降级成功后账号被"钉住"在 POP3（`state.fallback`）且只在 POP3 成功后才钉，避免 IMAP 抖动时同一账号出现 imap:/pop3: 两套键的重复行（`聚合器`）
 
 ### Improvements
 
