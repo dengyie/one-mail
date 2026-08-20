@@ -4,7 +4,7 @@ import { buildEmailFilters } from "./unified_query";
 import { ingestHandler } from "./ingest";
 import { countEmails, verifCodes, markRead } from "./extra_endpoints";
 import { createKey } from "./key_admin";
-import { lookupKey, canAccess, scopeQuery } from "./api_keys";
+import { lookupKey, canAccess, canAccessRow, scopeQuery } from "./api_keys";
 
 const api = new Hono<HonoCustomType>();
 
@@ -39,8 +39,11 @@ const getEmail = async (c: Context<HonoCustomType>) => {
         .bind(c.req.param("id")).first();
     if (!row) return c.json({ error: "not found" }, 404);
     const key = c.get("apiKey");
-    // readonly key 只能读其白名单覆盖的行（source 与 account 都必须在白名单内）
-    if (!canAccess(key, "GET", row.source, row.account_id)) {
+    // readonly key 只能读其白名单覆盖的行（source 与 account 都必须在白名单内）。
+    // 行级校验必须走 canAccessRow（而不是 canAccess）：canAccess 对 undefined
+    // 放行留给 scopeQuery 注入，但这里行值若是 NULL 且被误转成 undefined 就会
+    // 重开 C1 越权。canAccessRow 对缺失/空行值一律 fail-closed。
+    if (!canAccessRow(key, row.source, row.account_id)) {
         return c.json({ error: "forbidden" }, 403);
     }
     return c.json(row);
