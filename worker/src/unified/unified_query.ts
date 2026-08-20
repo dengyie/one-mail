@@ -12,6 +12,7 @@ export function buildEmailFilters(q: Record<string, string | undefined>): EmailF
     if (q.source)      inClause("source", q.source);
     if (q.account_id)  inClause("account_id", q.account_id);
     if (q.unread === "1") { clauses.push("is_read = 0"); }
+    else if (q.unread === "0") { clauses.push("is_read = 1"); }
     if (q.since)       { clauses.push("received_at >= ?");  params.push(Number(q.since)); }
     if (q.until)       { clauses.push("received_at <= ?");  params.push(Number(q.until)); }
     if (q.q) {

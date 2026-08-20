@@ -38,6 +38,11 @@ const getEmail = async (c: Context<HonoCustomType>) => {
     const row = await c.env.DB.prepare(`SELECT * FROM emails WHERE id = ?`)
         .bind(c.req.param("id")).first();
     if (!row) return c.json({ error: "not found" }, 404);
+    const key = c.get("apiKey");
+    // readonly key 只能读其白名单覆盖的行（source 与 account 都必须在白名单内）
+    if (!canAccess(key, "GET", row.source, row.account_id)) {
+        return c.json({ error: "forbidden" }, 403);
+    }
     return c.json(row);
 };
 

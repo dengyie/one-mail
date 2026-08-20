@@ -51,9 +51,11 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
     uids = [u for u in uids if u > last_uid]
     if not uids:
         return []
-    # 大批量收件箱：每次只处理 UID 最大的一个窗口，避免一次 fetch 全量卡死
-    # （首次同步时 last_uid=0，邮箱可能上万封，全量 fetch 会超时）
-    uids = uids[-BATCH_SIZE:]
+    # 大批量收件箱：一次只取一个"窗口"（此处为最小的 BATCH_SIZE 个），
+    # 由落库端把 last_uid 推进到该窗口内最大 uid；下一轮再取下一窗口。
+    # 避免首次同步 last_uid=0 时一次 fetch 整个收件箱导致超时；
+    # 且保证海量邮箱最终收敛，不会永久丢弃最早的一批。
+    uids = uids[:BATCH_SIZE]
     data = client.fetch(uids, [b"RFC822", b"INTERNALDATE"])
     out = []
     for u in uids:

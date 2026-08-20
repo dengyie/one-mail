@@ -19,6 +19,9 @@
 - fix: |Worker| 修复 one-mail `api_keys` readonly key 的 `allowed_sources`/`allowed_accounts` 若以逗号字符串创建时（`/admin/unified/keys` 传字符串）被 `JSON.stringify` 存成带引号字符串，`scopeQuery` 调用 `join` 崩溃（`accounts.join is not a function`）：`parseList` 现对 JSON 解析结果为字符串时回退按逗号拆分（one-mail 统一收件箱 M4）
 - fix: |Worker| 修复 one-mail 统一收件箱 90 天保留清理仅在配置了 legacy `auto_cleanup` 时才执行的问题：`scheduled` 每次触发都运行已读邮件清理，不再依赖该设置（one-mail M5 保留清理）
 - fix: |Aggregator| IMAP 同步分批拉取：`fetch_new_messages` 单轮最多处理 `BATCH_SIZE`（默认 200）封最新邮件，避免大收件箱首次全量一次 `fetch` 卡死超时（QQ 收件箱 9000+ 封场景实测超时）（one-mail 聚合器 M3）
+- fix: |Aggregator| IMAP 分批改为从**最旧**窗口（`uids[:BATCH_SIZE]`）开始爬，推进 `last_uid` 到窗口内最大 UID，多轮收敛到整个收件箱——修复前一版因取最新窗口导致大邮箱永久丢弃最早一批邮件；补 `state.py` 对缺 `uidvalidity` 键的容错（review 修复）
+- fix: |Worker| 统一收件箱 `verifcodes`/`GET /api/unified/emails/:id` 越权：readonly key 现会按 `allowed_sources`/`allowed_accounts` 白名单强制注入 WHERE（verifcodes）或对行 source/account 校验（getEmail），跨源读验证码/正文一律 403，消除 scoped-key 越权读任意邮箱（review 修复）
+- fix: |Worker| `unread=1`/`0` 三态过滤（此前只处理 `unread=1`）；`verifcodes` 参数 `fresh` 非数字返回 400、结果 `LIMIT 50`；`markRead` 先查存在性再更新，已读行幂等不再误 404；retention 清理改为分页删除（每批 ≤1000）并保护 R2 附件键（review 修复）
 
 ### Improvements
 

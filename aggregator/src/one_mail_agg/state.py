@@ -9,6 +9,9 @@ class SyncState:
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 self._data = json.load(f)
+        # 旧/手工编辑的 state 可能缺键，补默认，避免 KeyError
+        self._data.setdefault("last_uid", {})
+        self._data.setdefault("uidvalidity", {})
 
     def _key(self, account_id: str, folder: str) -> str:
         return f"{account_id}|{folder}"

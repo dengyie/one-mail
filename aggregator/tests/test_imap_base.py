@@ -28,7 +28,7 @@ class FakeClient:
     def select_folder(self, folder, readonly=True):
         return {b"UIDVALIDITY": self._uidvalidity}
     def search(self, criteria, charset=None):
-        # criteria like ["UID", "51:*"]
+        # criteria like ["UID", "51:*"] — 真实 IMAP 语义：UID >= 51 全部返回
         lo = int(criteria[1].split(":")[0])
         return [u for u in self._uids if u >= lo]
     def fetch(self, uids, data):
@@ -54,13 +54,26 @@ def test_fetch_resets_on_uidvalidity_change(tmp_path):
 
 
 def test_fetch_batches_large_mailbox(tmp_path):
-    # 大批量收件箱：只返回 UID 最大的 BATCH_SIZE 封，推进 last_uid 到该批最大 UID
+    # 大批量收件箱：每次取最小窗口 BATCH_SIZE 封，多轮收敛到最后一窗
     from one_mail_agg.imap_base import BATCH_SIZE
     state = SyncState(str(tmp_path / "st.json"))
     state.set_last_uid("qq", "INBOX", 0)
     big = list(range(1, BATCH_SIZE * 3 + 1))          # 600 封
     client = FakeClient(big)
+    # 第一轮：最低 200 封（1..200），last_uid 推进到 200
     msgs = fetch_new_messages(client, acc(), "INBOX", state)
     assert len(msgs) == BATCH_SIZE
-    assert msgs[0].uid == 401                         # 最后 200 封
-    assert msgs[-1].uid == 600
+    assert msgs[0].uid == 1
+    assert msgs[-1].uid == BATCH_SIZE                 # 200
+    # 落库端推进 watermark（模拟 sync.py 行为）
+    state.set_last_uid("qq", "INBOX", max(m.uid for m in msgs))
+    # 第二轮：201..400
+    msgs2 = fetch_new_messages(client, acc(), "INBOX", state)
+    assert [m.uid for m in msgs2] == list(range(BATCH_SIZE + 1, BATCH_SIZE * 2 + 1))
+    state.set_last_uid("qq", "INBOX", max(m.uid for m in msgs2))
+    # 第三轮：401..600（末窗）
+    msgs3 = fetch_new_messages(client, acc(), "INBOX", state)
+    assert [m.uid for m in msgs3] == list(range(BATCH_SIZE * 2 + 1, BATCH_SIZE * 3 + 1))
+    state.set_last_uid("qq", "INBOX", max(m.uid for m in msgs3))
+    # 全部收敛后再跑一轮：无新邮件
+    assert fetch_new_messages(client, acc(), "INBOX", state) == []
