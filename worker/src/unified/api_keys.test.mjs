@@ -27,11 +27,11 @@ test("readonly source whitelist enforced", () => {
   assert.equal(canAccess(roQq, "GET", "imap_qq", "qq-main"), true);
   assert.equal(canAccess(roQq, "GET", "imap_gmail", "qq-main"), false);
   assert.equal(canAccess(roQq, "GET", "imap_qq", "gmail-1"), false);
-  // C1 fail-closed：白名单 key 缺 source/account 参数时必须拒绝（对应的行作用域 NULL
-  // 或未注入白名单时，不能放行）。顶层 middleware 靠 scopeQuery 注入白名单来约束实际查询。
-  assert.equal(canAccess(roQq, "GET"), false);
-  assert.equal(canAccess(roQq, "GET", "imap_qq"), false);
-  assert.equal(canAccess(roQq, "GET", undefined, "qq-main"), false);
+  // C1 fail-closed（行级）：显式传入空/NULL 值不得早退——但未携带参数（undefined）
+  // 由 middleware 交给 scopeQuery 注入白名单，在此放行。
+  assert.equal(canAccess(roQq, "GET"), true);                          // 未带过滤参数 → 放行（scopeQuery 负责注入）
+  assert.equal(canAccess(roQq, "GET", "imap_qq"), true);               // 请求只带 source：account 未传 → scopeQuery 注入 account
+  assert.equal(canAccess(roQq, "GET", undefined, "qq-main"), true);    // 请求只带 account：source 未传 → scopeQuery 注入 source
 });
 
 test("readonly multi-value query: every value must be in whitelist", () => {
