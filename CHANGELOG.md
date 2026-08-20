@@ -13,6 +13,7 @@
 - feat: |Worker| Add Bearer API-key authentication for the unified mailbox API, including readonly source/account scoping and admin access
 - feat: |Worker| 新增统一收件箱完整查询端点：`GET /api/unified/search`、`GET /api/unified/count?source=&unread=`、`GET /api/unified/verifcodes?addr=&fresh=`、`POST /api/unified/emails/:id/read`（admin API-key 专属），并提供验证码提取纯函数与验证码邮件查询；新增 `POST /admin/unified/keys`（x-admin-auth 保护）用于创建带 rolereadonly/admin、来源/账号白名单的 API key，明文 key 仅创建时返回一次（one-mail 统一收件箱）
 - feat: |Worker| one-mail 统一收件箱新增 90 天已读邮件保留清理：`scheduled` 任务每次运行时删除 `is_read=1` 且 `received_at` 早于 90 天前的邮件，并同步删除关联的 R2 附件键（若配置了 `ATTACHMENTS` bucket）（one-mail M5 保留清理）
+- feat: |Frontend| 前后端彻底分离：前端改为唯一形态「跨域直连 Worker」——`VITE_API_BASE` 指向 worker 自定义域名 `mail-api.mangoqwq.cc.cd`，`vite.config.js` 新增 dev `server.proxy`（本地 `pnpm dev` 直连 `127.0.0.1:8787`，不再 404）；删除已废弃的 Pages Functions 代理拓扑（`pages/functions/_middleware.js` + `pages/wrangler.toml` 的 `[[services]] BACKEND` + `frontend_pagefunction_deploy.yaml`），`API_PATHS` 收敛为 `worker/src/worker.ts` 单一来源；`pages/wrangler.toml` 退化为纯静态托管（见 `docs/superpowers/specs/2026-08-21-frontend-backend-separation.md`）
 
 ### Bug Fixes
 

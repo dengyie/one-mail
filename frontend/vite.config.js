@@ -13,6 +13,18 @@ export default defineConfig({
   build: {
     outDir: './dist',
   },
+  // 本地 dev 直连本地 Worker（wrangler dev 默认 8787）。前后端分离：生产走 VITE_API_BASE 跨域直连，
+  // dev 这里用同源 proxy 避免 CORS 干扰本地联调。wrangler dev 请用 `--local` 以复用本地 D1/KV。
+  server: {
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      '/open_api': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      '/user_api': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      '/admin': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      '/telegram': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+      '/external': { target: 'http://127.0.0.1:8787', changeOrigin: true },
+    },
+  },
   plugins: [
     vue(),
     wasm(),
