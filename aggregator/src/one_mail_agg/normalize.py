@@ -16,6 +16,22 @@ def _dec(v) -> str:
         return str(v)
 
 
+def _header_json_stringify(v) -> str:
+    """把单个 header 值变成可 JSON 序列化的 str。
+
+    `message from email.message` 某些畸形头会被解析成 `email.header.Header`
+    或 bytes 对象，json.dumps 不能直接序列化（TypeError: ... not JSON
+    serializable）。统一折成字符串，保留头名与原始内容，不丢头。
+    """
+    if v is None:
+        return ""
+    if isinstance(v, bytes):
+        return v.decode("utf-8", errors="replace")
+    if hasattr(v, "encode"):  # str / Header，均可转 str
+        return str(v)
+    return str(v)
+
+
 def _bodies(msg) -> tuple[str, str]:
     text, html = "", ""
     parts = msg.walk() if msg.is_multipart() else [msg]
@@ -66,7 +82,9 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
         "html_body": html,
         "received_at": now_ms or int(time.time() * 1000),
         "internal_date": internal_date_ms,
-        "headers_json": json.dumps(dict(msg.items()), ensure_ascii=False),
+        "headers_json": json.dumps(
+            {k: _header_json_stringify(v) for k, v in msg.items()}, ensure_ascii=False
+        ),
         "is_read": 0,
         "flags_json": "[]",
         "attachments_json": json.dumps(_attachments(msg), ensure_ascii=False),
