@@ -20,7 +20,9 @@ def run_once(config_path: str) -> dict:
         factory = oauth_client_factory(account) if account.oauth else default_client_factory
         try:
             results[account.id] = sync_account(factory, config, account, state)
-            log.info("synced %s: %s", account.id, results[account.id])
+            r = results[account.id]
+            log.info("synced %s: protocol=%s synced=%d dropped=%d",
+                     account.id, r.get("protocol"), r.get("synced", 0), r.get("dropped", 0))
         except Exception as e:
             results[account.id] = {"error": str(e)}
             log.error("sync %s failed: %s", account.id, e)

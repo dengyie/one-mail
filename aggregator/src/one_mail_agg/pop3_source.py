@@ -69,7 +69,8 @@ def uidl_to_key(account: AccountConfig, folder: str, uidl: str) -> str:
 
 
 def fetch_new_pop3_messages(conn, account: AccountConfig, folder: str,
-                            state: SyncState) -> list[RawMessage]:
+                            state: SyncState,
+                            oversize: list[str] | None = None) -> list[RawMessage]:
     """一次性取回 POP3 INBOX 中尚未 seen 的新邮件，返回 `RawMessage` 列表。
 
     与 IMAP 同样受 BATCH_SIZE / BATCH_BYTES / MAX_SINGLE_BYTES 约束：先 LIST 探测
@@ -98,6 +99,8 @@ def fetch_new_pop3_messages(conn, account: AccountConfig, folder: str,
             size = MAX_SINGLE_BYTES + 1
         if size > MAX_SINGLE_BYTES:
             # 单封超限：跳过并标记 seen，避免下一轮再次拉同一封（懒上传语义：超限封跳过不重试）
+            if oversize is not None:
+                oversize.append(uidl)
             state.add_pop3_seen(account.id, folder, uidl)
             log.warning("pop3 skip oversize %s@%s folder=%s uidl=%s size=%d > %d",
                         account.id, account.resolve_pop3_host(), folder, uidl, size,

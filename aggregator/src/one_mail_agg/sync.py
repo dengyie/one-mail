@@ -19,13 +19,29 @@ def default_client_factory(account: AccountConfig) -> IMAPClient:
     return c
 
 
-def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) -> int:
-    """IMAP 增量同步一整个账号（全部 folders），返回同步邮件数。"""
+def _account_result(synced: int, dropped: int, protocol: str) -> dict:
+    """统一构造 sync_account 的返回形态：
+
+    `{"synced": N, "dropped": M, "protocol": ...}`——`dropped` 是本轮被
+    跳过/放弃的邮件数（fetch 层超大超限 + sync 层归一化失败），把隐式的
+    per-message warning 聚合为可观测指标（review Important-2）。
+    """
+    return {"synced": synced, "dropped": dropped, "protocol": protocol}
+
+
+def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) -> dict:
+    """IMAP 增量同步一整个账号（全部 folders），返回 `{"synced", "dropped"}`。
+
+    dropped = 超大单封被跳过（fetch 层 water mark 推过）＋归一化失败被跳过。
+    """
     total = 0
+    dropped = 0
     for folder in account.folders:
         sel = client.select_folder(folder, readonly=True)
         uidvalidity = int(sel[b"UIDVALIDITY"])
-        msgs = fetch_new_messages(client, account, folder, state)
+        oversize = []                                   # 本窗口被 MAX_SINGLE_BYTES 跳过的大封 uid
+        msgs = fetch_new_messages(client, account, folder, state, oversize=oversize)
+        dropped += len(oversize)    # 先计入大封跳过，再判断有无健康邮件
         if not msgs:
             continue
         # 逐封归一化，单封畸形绝不卡死整批（C3 hardening）：
@@ -39,40 +55,47 @@ def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) 
                     m.raw_bytes, account, folder, uidvalidity,
                     m.uid, m.internal_date_ms))
             except Exception as e:
+                dropped += 1
                 log.warning("skip imap message uid=%s folder=%s account=%s: %r",
                             m.uid, folder, account.id, e)
         if batch:
             upload_emails(config, batch)
             total += len(batch)
-        # 水印始终推进到本窗口最大 uid（含被跳过的畸形单封）——即便整个窗口
-        # 都是坏件也要推进，否则账号每轮都重拉同一个坏窗口（与 MAX_SINGLE_BYTES
-        # 推水印语义一致）。被跳过的 uid 就此放弃，仅以 warning 日志留痕（与
-        # MAX_SINGLE_BYTES 主动跳过的取舍口径一致；真要 100% 留到底只能人工从
-        # 日志捞出来单测复现）。若 upload 失败，上面的 upload_emails 已抛错，
-        # 此处不执行，水印留在本窗口最大 uid 之下，下一轮续传。
+        # 水印在 upload 成功后才推进，始终进到本窗口最大 uid（含被跳过的畸形
+        # 单封）——即便整个窗口都是坏件也要推进，否则一轮轮重拉同一个坏窗口
+        # （与 MAX_SINGLE_BYTES 推水印语义一致）。被跳过的 uid 就此放弃，仅以
+        # warning 日志留痕（与 MAX_SINGLE_BYTES 主动跳过的取舍口径一致；真要
+        # 100% 留到底只能人工从日志捞出来单测复现）。若 upload 失败，上面的
+        # upload_emails 抛错，此处不执行，水印留在窗口之下，下一轮续传（boundary
+        # test：upload 抛错 → 水印不推进、下轮重拉同一窗口）。
         state.set_last_uid(account.id, folder, max(m.uid for m in msgs))
-    return total
+    return _account_result(total, dropped, "imap")
 
 
-def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> int:
+def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> dict:
     """POP3 降级同步：只在逻辑收件箱 INBOX 上读取。
 
     POP3 没有 IMAP 的复杂文件夹结构，配置里除 INBOX 外的 folder 直接忽略。
     水印用 UIDL 集合推进；upload 成功后批量标记 seen。
+
+    返回 `{"synced", "dropped"}`——dropped 含量子（fetch 层大封跳过）+ 单封
+    归一化失败（坏件不标记 seen，留给下一轮）。
     """
     if "INBOX" not in account.folders:
-        return 0
+        return _account_result(0, 0, "pop3")
     conn = connect_pop3(account)
     try:
-        msgs = fetch_new_pop3_messages(conn, account, "INBOX", state)
+        oversize: list[str] = []
+        msgs = fetch_new_pop3_messages(conn, account, "INBOX", state, oversize=oversize)
         if not msgs:
-            return 0
+            return _account_result(0, len(oversize), "pop3")
         # 逐封归一化，单封畸形绝不卡死整批（C3 hardening）：
         # 归一化失败的 UIDL 跳过上传、**不标记 seen**，下一轮 fetch 会重试；
         # 成功归一化的照常批量 mark seen。POP3 的 watermark 就是 seen 集合，
         # 所以跳过的 UIDL 不得标记，留给下一轮（IMAP 多 folder 窗口可以推进
         # last_uid 放弃，POP3 没有对称概念）。
         batch, uploaded_uidls = [], []
+        dropped = len(oversize)
         for m in msgs:
             try:
                 batch.append(normalize_message(
@@ -81,24 +104,25 @@ def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> int:
                     imap_uid_override=uidl_to_key(account, "INBOX", m.uidl)))
                 uploaded_uidls.append(m.uidl)
             except Exception as e:
+                dropped += 1
                 log.warning("skip pop3 message uidl=%s account=%s: %r",
                             m.uidl, account.id, e)
         if not batch:
-            # 全部归一化失败：不能静默返回 0。`_fallback_to_pop3` 把任何返回值
-            # （含 0）当「POP3 同步成功」并永久钉住账号到 POP3；这里抛错让调用
-            # 层按「POP3 失败」处理——auto 账号下轮重试 IMAP，显式 pop3 账号
-            # 由 run_once 捕获、下轮重试同批未 seen 的 UIDL（review Important-1
-            # 回归修复：改动前整批 list-comprehension 崩到这里不执行钉住）。
+            # 全部归一化失败且无任何已成功上传的邮件：不能静默返回 0。
+            # `_fallback_to_pop3` 将任何 <=0 返回值当「POP3 同步成功」并永久钉住
+            # 账号到 POP3；这里抛出表示「POP3 本轮失败」——auto 账号下轮重试 IMAP，
+            # 显式 pop3 账号由 run_once 捕获、下轮重试同批未 seen 的 UIDL（review
+            # Important-1 回归：改动前整批 list-comprehension 崩到这里不执行钉住）。
             n_pending = len(msgs)
             raise RuntimeError(
                 f"pop3 {account.id}: all {n_pending} pending messages failed to "
                 f"normalize, nothing uploaded and nothing marked seen")
         result = upload_emails(config, batch)
         inserted = result.get("inserted", len(batch))
-        # 上传成功（200）后批量 seen——只标记**成功上传的这批**（已归一化的），
-        # 被跳过的坏 UIDL 不在此列。如果上传失败会抛出，此处不执行，留到下一轮。
+        # 上传成功（200）后批量 seen——只标记**成功归一化的这批**，被跳过的坏
+        # UIDL 不在此列。如果上传失败会抛出，此处不执行，留到下一轮。
         state.add_pop3_seen_many(account.id, "INBOX", uploaded_uidls)
-        return inserted
+        return _account_result(inserted, dropped, "pop3")
     finally:
         try:
             conn.quit()
@@ -116,14 +140,14 @@ def sync_account(client_factory, config: Config, account: AccountConfig, state: 
       一旦降级，账号被"钉住"在 POP3（`state.fallback`），不再回头重试 IMAP——
       防止 IMAP 抖动时同一账号出现 imap:/pop3: 两套 imap_uid 键的重复行。
 
-    返回 `{"synced": N, "protocol": "imap"|"pop3"}`。
+    返回 `{"synced": N, "dropped": M, "protocol": "imap"|"pop3"}`。
     """
     if account.protocol == "pop3":
-        return {"synced": sync_pop3(account, config, state), "protocol": "pop3"}
+        return sync_pop3(account, config, state)
 
-    # 已被钉住到 POP3 的账号直接走 POP3（不重试 IMAP）
+    # 已被钉住到 POP3 的账号直接走 POP3（不再试 IMAP）
     if state.is_fallback_pinned(account.id):
-        return {"synced": sync_pop3(account, config, state), "protocol": "pop3"}
+        return sync_pop3(account, config, state)
 
     client = None
     try:
@@ -135,8 +159,7 @@ def sync_account(client_factory, config: Config, account: AccountConfig, state: 
         raise
 
     try:
-        total = sync_imap(client, config, account, state)
-        return {"synced": total, "protocol": "imap"}
+        return sync_imap(client, config, account, state)
     except IMAPClientError:
         if account.protocol == "auto" and not account.oauth:
             return _fallback_to_pop3(config, account, state)
@@ -152,16 +175,17 @@ def sync_account(client_factory, config: Config, account: AccountConfig, state: 
 def _fallback_to_pop3(config: Config, account: AccountConfig, state: SyncState) -> dict:
     """IMAP 失败后降级到 POP3。
 
-    - POP3 同步成功后才钉住（`state.fallback`），永久不再重试 IMAP：避免 IMAP
+    - POP3 同步成功后才钉住（`state.fallback`），永久不重试 IMAP：避免 IMAP
       抖动时同一账号出现 imap:/pop3: 两套 imap_uid 键的重复行。
-    - 若 POP3 本身也失败，则抛错、不钉住——保留 IMAP 在下轮仍可用的机会，避免
-      「IMAP 短暂抖动 + POP3 也挂」把账号永久锁死在 POP3。
+    - 若 POP3 本身也失败，则抛错、不钉住——保留 IMAP 在下轮仍可用的机会。
     - 边界：若本 run 内 IMAP 已成功 upload 部分 folder 后才失败，POP3 全量重抓
-      INBOX 会与 imap: 键重复（unique index 拦不住跨命名空间）。163 的首个
-      SELECT 即挂（零 IMAP upload），现实中快速收敛；多 folder 混合场景的跨协议
+      INBOX 会与 imap: 键重复（unique index 拦不住跨命名空间）。163.com 首个
+      SELECT 即挂（零 IMAP upload），现实中快速收敛；多文件夹混合场景跨协议
       去重留待后续（见 CHANGELOG 注释）。
     """
-    n = sync_pop3(account, config, state)
+    res = sync_pop3(account, config, state)
     state.set_fallback_pinned(account.id, True)
-    log.info("account=%s pinned to POP3 after IMAP failure (synced=%d)", account.id, n)
-    return {"synced": n, "protocol": "pop3"}
+    log.info("account=%s pinned to POP3 after IMAP failure (synced=%d, dropped=%d)",
+             account.id, res["synced"], res["dropped"])
+    res["protocol"] = "pop3"     # sync_pop3 已返回 pop3; 保底显式
+    return res

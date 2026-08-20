@@ -134,6 +134,7 @@ def test_sync_imap_skips_bad_single_message_others_uploaded(tmp_path, monkeypatc
 
     assert res["protocol"] == "imap"
     assert res["synced"] == 2                       # 幸存的 101,103 才计数
+    assert res["dropped"] == 1                     # uid=102 归一化失败被跳过（可观测）
     assert len(calls) == 1 and len(calls[0]) == 2   # 只上传正常的两封
     assert [e["imap_uid"] for e in calls[0]] == [
         "imap.163.com:INBOX:7:101",
@@ -158,8 +159,53 @@ def test_sync_imap_all_bad_still_advances_watermark(tmp_path, monkeypatch):
 
     assert res["protocol"] == "imap"
     assert res["synced"] == 0
+    assert res["dropped"] == 2                     # 两封都归一化失败 → dropped 聚合
     assert calls == []                              # 无任何上传
     assert state.get_last_uid("163-main", "INBOX") == 102   # 水印照进
+
+
+def test_sync_imap_oversize_skips_count_in_dropped(tmp_path, monkeypatch):
+    """fetch 层 MAX_SINGLE_BYTES 跳过的大封要计入 dropped（review Important-2）：
+    oversize 跳过不能再只靠隐式 per-message warning，必须聚合进 sync_account 结果。"""
+    from one_mail_agg import imap_base
+    monkeypatch.setattr(imap_base, "BATCH_BYTES", 10 ** 9)      # 放大预算，不截窗口
+    monkeypatch.setattr(imap_base, "MAX_SINGLE_BYTES", 20 * 1024)  # 单封 20KB 上限
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    # uid=1 的大封被跳过（99KB），uid=2,3 正常
+    client = _ImapMsgs([1, 2, 3], sizes={1: 99_999, 2: 200, 3: 300})
+    res = sync_mod.sync_account(lambda acc: client, _cfg([acc]), acc, state)
+
+    assert res["synced"] == 2                 # 只有正常的两封上传
+    assert res["dropped"] == 1                # 大封被跳过 → 计入 dropped
+    assert [e["imap_uid"] for e in calls[0]] == [
+        "imap.163.com:INBOX:7:2",
+        "imap.163.com:INBOX:7:3",
+    ]
+    # 水印推进过 uid=1（跳过内容不丢水位），不再卡在同一大封上
+    assert state.get_last_uid("163-main", "INBOX") == 3
+
+
+def test_sync_imap_all_oversize_window_still_counts_dropped(tmp_path, monkeypatch):
+    """整个窗口都是超大单封（msgs 为空）时，oversize 跳过不能漏计：
+    `continue` 前必须先累加 dropped。watermark 由 fetch 层推进到最大 uid。"""
+    from one_mail_agg import imap_base
+    monkeypatch.setattr(imap_base, "BATCH_BYTES", 10 ** 9)
+    monkeypatch.setattr(imap_base, "MAX_SINGLE_BYTES", 1000)
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    client = _ImapMsgs([10, 11], sizes={10: 99_999, 11: 88_888})   # 全大封
+    res = sync_mod.sync_account(lambda acc: client, _cfg([acc]), acc, state)
+
+    assert res["protocol"] == "imap"
+    assert res["synced"] == 0
+    assert res["dropped"] == 2                # 两封都超限 → 都计入 dropped
+    assert calls == []                        # 无任何上传
+    assert state.get_last_uid("163-main", "INBOX") == 11   # 水印推过全部大封
 
 
 def test_sync_pop3_skips_bad_uidl_retries_next_round(tmp_path, monkeypatch):
@@ -188,6 +234,7 @@ def test_sync_pop3_skips_bad_uidl_retries_next_round(tmp_path, monkeypatch):
     res = sync_mod.sync_account(None, _cfg([acc]), acc, state)
     assert res["protocol"] == "pop3"
     assert res["synced"] == 1                    # 只有成功的那封
+    assert res["dropped"] == 1                   # UL-BAD 归一化失败 → dropped 可观测
     assert len(calls) == 1 and len(calls[0]) == 1
     # UL-BAD 未标记 seen：下一轮会重试
     assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1"}
@@ -199,6 +246,7 @@ def test_sync_pop3_skips_bad_uidl_retries_next_round(tmp_path, monkeypatch):
     monkeypatch.setattr(sync_mod, "connect_pop3", pop_f2)
     res2 = sync_mod.sync_account(None, _cfg([acc]), acc, state)
     assert res2["synced"] == 1
+    assert res2["dropped"] == 0                  # 全部成功，无 dropped
     assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1", "UL-BAD"}
 
 
@@ -213,11 +261,34 @@ def test_sync_auto_falls_back_to_pop3_on_select_failure(tmp_path, monkeypatch):
                                 _cfg([acc]), acc, state)
     assert res["protocol"] == "pop3"
     assert res["synced"] == 1
+    assert res["dropped"] == 0
     assert pop_f.made == 1
     assert len(calls) == 1
     assert calls[0][0]["imap_uid"].startswith("pop3:")
     # 上传成功后 UIDL 标记 seen
     assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1"}
+
+
+def test_sync_pop3_oversize_skips_count_in_dropped(tmp_path, monkeypatch):
+    """POP3 路径 MAX_SINGLE_BYTES 跳过（fetch 层标记 seen）要计入 dropped：超限
+    懒上传语义下该封永久放弃，聚合计数让运维能看到「多少封因超限被扔」。"""
+    from one_mail_agg import pop3_source
+    monkeypatch.setattr(pop3_source, "BATCH_BYTES", 10 ** 9)
+    monkeypatch.setattr(pop3_source, "MAX_SINGLE_BYTES", 1000)   # 单封 1KB 上限
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+    huge = b"From: b@c\r\nSubject: huge\r\n\r\n" + b"X" * 2000   # > 1KB 大封
+    pop_f = _PopFactory([("UL-1", b"From: a@b\r\nSubject: ok\r\n\r\n1\r\n"),
+                         ("UL-A", huge),
+                         ("UL-2", b"From: d@e\r\nSubject: two\r\n\r\n2\r\n")])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    res = sync_mod.sync_account(None, _cfg([acc]), acc, state)
+    assert res["protocol"] == "pop3"
+    assert res["synced"] == 2                      # UL-1, UL-2 上传
+    assert res["dropped"] == 1                     # UL-A 超限 → dropped
+    # 超限的 UL-A 被标记 seen（下轮不重拉），其余成功上传的也 seen
+    assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1", "UL-2", "UL-A"}
 
 
 def test_sync_explicit_imap_does_not_fallback(tmp_path, monkeypatch):

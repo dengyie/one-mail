@@ -40,7 +40,12 @@ def _to_ms(dt) -> int | None:
             return None
 
 
-def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncState) -> list[RawMessage]:
+def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncState,
+                       oversize: list[int] | None = None) -> list[RawMessage]:
+    """`oversize`（可选）：记录被 MAX_SINGLE_BYTES 跳过的大封 uid 的可变计数器。
+    由 sync 层传入，把「本该在批次里的邮件为何缺席」从隐式 warning 提升为
+    可聚合观测值（review Important-2 / 聚合器 dropped）。
+    """
     sel = client.select_folder(folder, readonly=True)
     uidvalidity = int(sel[b"UIDVALIDITY"])
     last_uid = state.get_last_uid(account.id, folder)
@@ -76,8 +81,10 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
         elif isinstance(raw_size, int):           # 其他服务器/库直接返回 int
             size = raw_size
         if size > MAX_SINGLE_BYTES:
-            # 单封超限：跳过该封并把 water mark 推过它，否则每次窗口都卡在这封
+            # 单封超限：跳过该封并把 water mark 推过该封，否则每次窗口都卡在这封
             # （该封极可能是超大附件，整体拉取会顶爆容器内存）
+            if oversize is not None:
+                oversize.append(u)
             if u > state.get_last_uid(account.id, folder):
                 state.set_last_uid(account.id, folder, u)
             continue
