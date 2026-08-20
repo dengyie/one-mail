@@ -63,19 +63,39 @@ def test_normalize_pop3_uid_override():
 
 
 def test_normalize_header_values_coerced():
-    """即使某头值被解析成 Header/bytes（真实故障形态），headers_json 也必须
-    可 JSON 序列化（旧代码在此处 TypeError: Header not JSON serializable）。
-    """
+    """即使某头被解析成 Header/bytes 字节，headers_json 也必须可 JSON 序列化。"""
     from email.header import Header
     from one_mail_agg.normalize import _header_json_stringify
 
     cases = [
         None,
         b"bytes\xe4\xb8\xad\xe6\x96\x87",
-        Header("=?utf-8?B?5rWL6K+V?=", "utf-8"),  # Header 对象（真实故障形态）
+        Header("=?utf-8?B?5wWL6K+V?=", "utf-8"),  # Header 对象（真实故障形态）
         "plain str",
     ]
     for raw in cases:
         s = _header_json_stringify(raw)
         assert isinstance(s, str)  # 防止 json.dumps 抛 TypeError 的关键
         # 值被安全转成字符串（即使是空串），全量 headers_json 能 json.loads
+
+
+def test_normalize_missing_from_falls_back_to_unknown():
+    """缺 From 头的邮件 from_addr 兜底为 'unknown'，保证 Worker ingest 不接受
+    空字符串（HTTP 500 from_addr/to_addr required），否则整个批次卡死。
+
+    回归：QQ 收件箱曾因单封缺 From 邮件整批反复 500，last_uid 卡住不推进。
+    """
+    raw = (b"To: me@qq.com\r\nSubject: no sender\r\n"
+           b"Content-Type: text/plain; charset=utf-8\r\n\r\nbody\r\n")
+    e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=999, internal_date_ms=None)
+    assert e["from_addr"] == "unknown"
+    assert e["to_addr"] == "me@qq.com"
+
+
+def test_normalize_from_without_address_falls_back():
+    """From 头只有显示名、无地址时，也必须给出有效 from_addr（非空）。"""
+    raw = (b"From: just a name\r\nTo: me@qq.com\r\n"
+           b"Content-Type: text/plain; charset=utf-8\r\n\r\nbody\r\n")
+    e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1000, internal_date_ms=None)
+    assert e["from_addr"]  # 非空
+    assert e["from_addr"] == "just a name"

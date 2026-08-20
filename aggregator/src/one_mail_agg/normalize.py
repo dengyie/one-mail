@@ -72,11 +72,19 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
     import time
     msg = message_from_bytes(raw_bytes)
     text, html = _bodies(msg)
+
+    # from_addr 兜底：worker ingest 契约要求 from_addr/to_addr 非空。
+    # 缺 From 头 / 空 From / 解析出不含 @ 的伪地址 → 用整段头文本 / "unknown"
+    # 兜底，避免整个批次因单封畸形邮件在 QQ/163 反复 500（`from_addr required`）卡死。
+    from_hdr = _dec(msg.get("From", ""))
+    _parsed = parseaddr(from_hdr)[1]
+    from_addr = _parsed if ("@" in _parsed) else (from_hdr or "unknown")
+    to_addr = parseaddr(_dec(msg.get("To", "")))[1] or account.username
     return {
         "source": account.source,
         "account_id": account.id,
-        "from_addr": parseaddr(_dec(msg.get("From", "")))[1] or _dec(msg.get("From", "")),
-        "to_addr": parseaddr(_dec(msg.get("To", "")))[1] or account.username,
+        "from_addr": from_addr,
+        "to_addr": to_addr,
         "subject": _dec(msg.get("Subject", "")),
         "text_body": text,
         "html_body": html,
