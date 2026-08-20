@@ -16,6 +16,8 @@
 
 ### Bug Fixes
 
+- fix: |Worker| 修复 one-mail 统一收件箱 90 天保留清理仅在配置了 legacy `auto_cleanup` 时才执行的问题：`scheduled` 每次触发都运行已读邮件清理，不再依赖该设置（one-mail M5 保留清理）
+
 ### Improvements
 
 - fix: |Worker| 地址活跃时间保活增加 1 天写入窗口，用户设置和邮箱访问不再重复更新近期活跃地址，降低 D1 写入量（issue #1103）

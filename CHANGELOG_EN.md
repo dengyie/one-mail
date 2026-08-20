@@ -16,6 +16,8 @@
 
 ### Bug Fixes
 
+- fix: |Worker| Fix the one-mail 90-day read-email retention cleanup only running when the legacy `auto_cleanup` setting is present: `scheduled` now runs the cleanup on every trigger, independent of that setting (one-mail M5 retention)
+
 ### Improvements
 
 - fix: |Worker| Throttle address-activity touches to one write per day so user settings and mailbox access do not repeatedly update recently active addresses, reducing D1 writes (issue #1103)

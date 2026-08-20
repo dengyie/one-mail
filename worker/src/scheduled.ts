@@ -12,6 +12,13 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
         { env: env, } as Context<HonoCustomType>,
         CONSTANTS.AUTO_CLEANUP_KEY
     );
+    // one-mail: 清理 90 天前已读的统一邮件（每次 scheduled 触发都执行，不依赖 legacy auto_cleanup 设置）
+    try {
+        const r = await cleanupReadEmails(env, 90);
+        console.log("one-mail retention cleanup:", JSON.stringify(r));
+    } catch (e) {
+        console.error("one-mail retention cleanup error", e);
+    }
     if (!autoCleanupSetting) {
         console.log("No auto cleanup settings found, skipping cleanup.");
         return;
@@ -79,12 +86,5 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
                 }
             }
         }
-    }
-    // one-mail: 清理 90 天前已读的统一邮件
-    try {
-        const r = await cleanupReadEmails(env, 90);
-        console.log("one-mail retention cleanup:", JSON.stringify(r));
-    } catch (e) {
-        console.error("one-mail retention cleanup error", e);
     }
 }
