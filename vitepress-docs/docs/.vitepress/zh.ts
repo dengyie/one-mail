@@ -141,6 +141,7 @@ function sidebarGuide(): DefaultTheme.SidebarItem[] {
             items: [
                 { text: 'Worker 变量说明', link: 'worker-vars' },
                 { text: '配置发送邮件', link: 'config-send-mail' },
+                { text: '前端开发文档', link: 'ui/frontend-dev' },
             ]
         },
         {

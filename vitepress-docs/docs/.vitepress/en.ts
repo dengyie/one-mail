@@ -141,6 +141,7 @@ function sidebarGuide(): DefaultTheme.SidebarItem[] {
             items: [
                 { text: 'Worker Variables', link: 'worker-vars' },
                 { text: 'Configure Email Sending', link: 'config-send-mail' },
+                { text: 'Frontend Dev Guide', link: 'ui/frontend-dev' },
             ]
         },
         {

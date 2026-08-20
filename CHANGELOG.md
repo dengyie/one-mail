@@ -37,6 +37,8 @@
 
 ### Improvements
 
+- docs: |前端| 新增前端开发文档（`guide/ui/frontend-dev`，中英双语）：涵盖 one-mail 统一收件箱前端架构（Vue 3 + Vite + Naive UI 跨域直连 Worker）、目录结构与关键模块（`api/index.js` 鉴权头注入、`router` 多语言路由、`store` 全局状态、`email-parser` wasm 解析）、本地开发（`VITE_API_BASE` + `vite.config.js` dev proxy → `127.0.0.1:8787` 联调）、环境变量（`VITE_API_BASE`/`VITE_CF_WEB_ANALY_TOKEN`/`VITE_IS_TELEGRAM`）、构建/部署矩阵（`build` / `build:pages` / `build:telegram`）、one-mail 统一收件箱 Bearer API-key 鉴权与 `/api/unified/*` 端点表、代码风格与 FAQ；后续开发统一收件箱前端页面时以此为入口
+
 - fix: |Worker| 地址活跃时间保活增加 1 天写入窗口，用户设置和邮箱访问不再重复更新近期活跃地址，降低 D1 写入量（issue #1103）
 
 - feat: |用户系统| 用户绑定地址列表改用服务端分页，并仅在第一页查询总数；用户邮件列表改用 JOIN、删除改用 `EXISTS` 在数据库侧校验地址归属，避免为大用户加载全部绑定地址（issue #1103）
