@@ -1,202 +1,100 @@
 <!-- markdownlint-disable-file MD033 MD045 -->
-# Cloudflare Temp Email - Free Temporary Email Service
+# one-mail — Unified Inbox
 
 <p align="center">
-  <a href="https://temp-mail-docs.awsl.uk" target="_blank">
-    <img alt="docs" src="https://img.shields.io/badge/docs-grey?logo=vitepress">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest" target="_blank">
-    <img src="https://img.shields.io/github/v/release/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/LICENSE" target="_blank">
-    <img alt="MIT License" src="https://img.shields.io/github/license/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="https://github.com/dreamhunter2333/cloudflare_temp_email/graphs/contributors" target="_blank">
-   <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="">
-    <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/dreamhunter2333/cloudflare_temp_email">
-  </a>
-  <a href="">
-    <img src="https://img.shields.io/github/last-commit/dreamhunter2333/cloudflare_temp_email">
-  </a>
+  <a href="README.md"><img alt="中文" src="https://img.shields.io/badge/README-中文-blue"></a>
+  <a href="README_EN.md"><img alt="English" src="https://img.shields.io/badge/README-English-blue"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-<p align="center">
-  <a href="https://hellogithub.com/repository/2ccc64bb1ba346b480625f584aa19eb1" target="_blank">
-    <img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=2ccc64bb1ba346b480625f584aa19eb1&claim_uid=FxNypXK7UQ9OECT" alt="Featured｜HelloGitHub" height="30"/>
-  </a>
-</p>
+> **Unified Inbox**: aggregates mail from multiple accounts (QQ / 163 / Gmail / Outlook …) into a single API on Cloudflare Workers — a VPS-based `aggregator/` polls the providers (IMAP first, POP3 fallback) and uploads into a unified D1-backed API, so verification codes and login confirmations from every mailbox land in one place.
 
-<p align="center">
-  <a href="README.md">中文文档</a> |
-  <a href="README_EN.md">English Document</a> |
-  <a href="README_JA.md">日本語ドキュメント</a>
-</p>
+Forked from [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email), keeping its temp-mail base (Cloudflare Email Routing + Worker receive + Vue frontend) and adding the **one-mail unified inbox** on top.
 
-> This project is for learning and personal use only. Please do not use it for any illegal activities, or you will be responsible for the consequences.
+---
 
-**A fully-featured temporary email service!**
+## Architecture
 
-- **Completely Free** - Built on Cloudflare's free services with zero cost
-- **High Performance** - Rust WASM email parsing for extremely fast response
-- **Modern UI** - Responsive design with multi-language support and easy operation
-- **Address Password** - Support setting individual passwords for email addresses to enhance security
-- **Agent-friendly** - Built-in mailbox [`skill`](skills/cf-temp-mail-agent-mail/SKILL.md) for AI agents
-- **Mobile admin** - Community client [CloudMail](https://github.com/Lur1N77777/CloudMail) for Android admin and mailbox management
-
-## Deployment Documentation - Quick Start
-
-[Documentation](https://temp-mail-docs.awsl.uk) | [Github Action Deployment Guide](https://temp-mail-docs.awsl.uk/en/guide/actions/github-action.html)
-
-<a href="https://temp-mail-docs.awsl.uk/en/guide/actions/github-action.html">
-  <img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare Workers" height="32">
-</a>
-
-## Changelog
-
-See [CHANGELOG](CHANGELOG.md) for the latest updates.
-
-## Live Demo
-
-Try it now → [https://mail.awsl.uk/](https://mail.awsl.uk/)
-
-<details>
-<summary>Service Status Monitoring (Click to expand/collapse)</summary>
-
-|                                            |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Backend](https://temp-email-api.awsl.uk/) | [![Deploy Backend Production](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/backend_deploy.yaml/badge.svg)](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/backend_deploy.yaml) ![](https://uptime.aks.awsl.icu/api/badge/10/status) ![](https://uptime.aks.awsl.icu/api/badge/10/uptime) ![](https://uptime.aks.awsl.icu/api/badge/10/ping) ![](https://uptime.aks.awsl.icu/api/badge/10/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/10/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/10/response) |
-| [Frontend](https://mail.awsl.uk/)          | [![Deploy Frontend](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/frontend_deploy.yaml/badge.svg)](https://github.com/dreamhunter2333/cloudflare_temp_email/actions/workflows/frontend_deploy.yaml) ![](https://uptime.aks.awsl.icu/api/badge/12/status) ![](https://uptime.aks.awsl.icu/api/badge/12/uptime) ![](https://uptime.aks.awsl.icu/api/badge/12/ping) ![](https://uptime.aks.awsl.icu/api/badge/12/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/12/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/12/response)         |
-
-</details>
-
-<details>
-<summary>Star History (Click to expand/collapse)</summary>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date&theme=dark" />
-  <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date" />
-  <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=dreamhunter2333/cloudflare_temp_email&type=Date" />
-</picture>
-
-</details>
-
-<details open>
-<summary>Table of Contents (Click to expand/collapse)</summary>
-
-- [Cloudflare Temp Email - Free Temporary Email Service](#cloudflare-temp-email---free-temporary-email-service)
-  - [Deployment Documentation - Quick Start](#deployment-documentation---quick-start)
-  - [Changelog](#changelog)
-  - [Live Demo](#live-demo)
-  - [Core Features](#core-features)
-    - [Email Processing](#email-processing)
-    - [User Management](#user-management)
-    - [Admin Features](#admin-features)
-    - [Multi-language \& Interface](#multi-language--interface)
-    - [Integration \& Extensions](#integration--extensions)
-  - [Technical Architecture](#technical-architecture)
-    - [System Architecture](#system-architecture)
-    - [Tech Stack](#tech-stack)
-    - [Main Components](#main-components)
-  - [Join the Community](#join-the-community)
-
-</details>
-
-## Core Features
-
-<details open>
-<summary>Core Features Details (Click to expand/collapse)</summary>
-
-### Email Processing
-
-- [x] Use `rust wasm` to parse emails, with fast parsing speed. Almost all emails can be parsed. Even emails that Node.js parsing modules fail to parse can be successfully parsed by rust wasm
-- [x] **AI Email Recognition** - Use Cloudflare Workers AI to automatically extract verification codes, authentication links, service links and other important information from emails
-- [x] Support optional random second-level subdomain mailbox creation for selected base domains
-- [x] Support sending emails with `DKIM` verification
-- [x] Support multiple sending methods such as `SMTP` and `Resend`
-- [x] Add attachment viewing feature with support for displaying attachment images
-- [x] Support S3 attachment storage and deletion
-- [x] Spam detection and blacklist/whitelist configuration
-- [x] Email forwarding feature with global forwarding address support
-
-### User Management
-
-- [x] Use `credentials` to log in to previously used mailboxes
-- [x] Add complete user registration and login functionality. Users can bind email addresses and automatically obtain email JWT credentials to switch between different mailboxes after binding
-- [x] Support `OAuth2` third-party login (Github, Authentik, etc.)
-- [x] Support `Passkey` passwordless login
-- [x] User role management with support for multi-role domain and prefix configuration
-- [x] User inbox viewing with address and keyword filtering support
-
-### Admin Features
-
-- [x] Complete admin console
-- [x] Create mailboxes without prefix in `admin` backend
-- [x] Admin user management page with user address viewing feature
-- [x] Scheduled cleanup function with support for multiple cleanup strategies
-- [x] Get mailboxes with custom names, `admin` can configure blacklist
-- [x] Add access password for use as a private site
-
-### Multi-language & Interface
-
-- [x] Both frontend and backend support multi-language
-- [x] Modern UI design with responsive layout
-- [x] Google Ads integration support
-- [x] Use shadow DOM to prevent style pollution
-- [x] Support URL JWT parameter auto-login
-
-### Integration & Extensions
-
-- [x] Complete `Telegram Bot` support, `Telegram` push notifications, and Telegram Bot mini app
-- [x] Add `SMTP proxy server` supporting `SMTP` for sending emails and `IMAP` for viewing emails
-- [x] Webhook support and message push integration
-- [x] Support `CF Turnstile` CAPTCHA verification
-- [x] Rate limiting configuration to prevent abuse
-- [x] **Agent-friendly**: bundled [`cf-temp-mail-agent-mail`](skills/cf-temp-mail-agent-mail/SKILL.md) skill lets AI agents consume a mailbox directly, see [docs](vitepress-docs/docs/en/guide/feature/agent-email.md)
-- [x] Community mobile admin client: [CloudMail](https://github.com/Lur1N77777/CloudMail) is built with Expo / React Native for this project's compatible API, providing an Android admin console, address management, inbox/sent/unknown mail, quick verification-code copy, OLED black theme, and local grouping.
-
-</details>
-
-## Technical Architecture
-
-<details>
-<summary>Technical Architecture Details (Click to expand/collapse)</summary>
-
-### System Architecture
-
-- **Database**: Cloudflare D1 as the main database
-- **Frontend Deployment**: Deploy frontend using Cloudflare Pages
-- **Backend Deployment**: Deploy backend using Cloudflare Workers
-- **Email Routing**: Use Cloudflare Email Routing
-
-### Tech Stack
-
-- **Frontend**: Vue 3 + Vite + TypeScript
-- **Backend**: TypeScript + Cloudflare Workers
-- **Email Parsing**: Rust WASM (mail-parser-wasm)
-- **Database**: Cloudflare D1 (SQLite)
-- **Storage**: Cloudflare KV + R2 (optional S3)
-- **Proxy Service**: Python SMTP/IMAP Proxy Server
-
-### Main Components
-
-- **Worker**: Core backend service
-- **Frontend**: Vue 3 user interface
-- **Mail Parser WASM**: Rust email parsing module
-- **SMTP Proxy Server**: Python email proxy service
-- **Pages Functions**: Cloudflare Pages middleware
-- **Documentation**: VitePress documentation site
-
-</details>
-
-### Important Notes
-
-- When adding domain records in Resend, if your DNS provider is hosting your 3rd level domain a.b.com, please remove the 2nd level domain prefix b from the default name generated by Resend, otherwise it will add a.b.b.com, causing verification to fail. After adding the record, you can verify it using:
-```bash
-nslookup -qt="mx" a.b.com 1.1.1.1
+```
+Mailbox providers (IMAP/POP3)
+   QQ / 163 / Gmail / Outlook ...
+        │  (VPS aggregator polls)
+        ▼
+VPS Python aggregator  aggregator/
+   │  IMAP preferred, automatic POP3 fallback
+   │  BATCH_SIZE / BATCH_BYTES windowed convergence, skip oversized (anti-OOM)
+   ▼
+Cloudflare Worker ──mail-api.mangoqwq.cc.cd──> API (worker/)
+   │  ├─ /api/unified/*        unified inbox queries (API-key auth)
+   │  ├─ /admin/unified/*     management / ingest (admin auth)
+   │  └─ /api/* ·/user_api/* ·/admin/*  temp-mail base (upstream)
+   ▼
+frontend/  —  VITE_API_BASE direct to Worker (separated frontend/backend)
 ```
 
-## Join the Community
+## Components
 
-- [Telegram](https://t.me/cloudflare_temp_email)
+| Component | Stack | Role |
+|---|---|---|
+| `worker/` | TS + Hono · Workers · D1 | Unified inbox API + temp-mail base |
+| `aggregator/` | Python 3, stdlib | Polls IMAP/POP3, idempotent upload |
+| `frontend/` | Vue 3 + Naive UI | UI, connects the Worker directly |
+| `pages/` | static shell | optional static hosting (no Functions) |
+| `db/` | D1 SQLite | unified schema + migrations |
+| `mail-parser-wasm/` | Rust WASM | mail parsing (upstream base) |
+| `smtp_proxy_server/` | Python | SMTP/IMAP proxy for local dev (upstream base) |
+
+## Unified inbox
+
+Auth — separate from the temp-mail JWT base:
+
+| Scope | Header | Source |
+|---|---|---|
+| `/api/unified/*` (query) | `Authorization: Bearer <api-key>` | `POST /admin/unified/keys` |
+| `/admin/unified/*` (management) | `x-admin-auth` | `ADMIN_PASSWORDS[0]` |
+
+API keys are `readonly` or `admin`, optionally scoped by `allowed_sources` / `allowed_accounts`.
+
+Key endpoints: `GET /api/unified/emails` · `/search` · `/count` · `/verifcodes` · `/:id` · `POST /:id/read` · `POST /admin/unified/ingest` · `POST /admin/unified/keys` · `POST /admin/unified/accounts`.
+
+Aggregator notes:
+- **`protocol: auto`** — try IMAP, fall back to POP3 on `Unsafe Login` (verified on 163), then **pin** the account so no imap:/pop3: duplicates.
+- **Batched sync** — windowed by `BATCH_SIZE` (200) / `BATCH_BYTES` (64 MiB), advancing `last_uid`; oversized singles skipped above `MAX_SINGLE_BYTES` (30 MiB).
+- **Idempotent** — `(uidvalidity, imap_uid)` unique index on the Worker side.
+
+### Retention
+
+`scheduled` purges read emails older than 90 days, deleting related R2 attachment keys too.
+
+---
+
+## Quick start
+
+```bash
+# 1. Worker
+cd worker && cp wrangler.toml.template wrangler.toml && pnpm install && pnpm deploy
+
+# 2. Aggregator (VPS)
+cd aggregator && cp config.example.json config.json   # accounts: protocol auto/imap/pop3
+pip install -e .                                      # run on a 5-min loop
+
+# 3. Frontend
+cd frontend && cp .env.example .env.local   # VITE_API_BASE=https://<worker-domain>
+pnpm install && pnpm dev
+```
+
+See `worker/wrangler.toml.template` and `aggregator/config.example.json` for all vars.
+
+## What's in this repo
+
+A fork of [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) with the one-mail unified inbox layered on top. The temp-mail base (Email Routing receive, Rust-WASM parsing, SMTP proxy) is preserved; the unified inbox (D1 schema, Worker API, VPS aggregator) is this repo's addition.
+
+## Docs & changelog
+
+- `CHANGELOG.md` (中文) / `CHANGELOG_EN.md` (English) — version history
+- `docs/` — one-mail design & acceptance notes (frontend/backend separation, aggregator)
+- `vitepress-docs/` — upstream temp-mail feature docs (appendix)
+
+## License
+
+[MIT](LICENSE)

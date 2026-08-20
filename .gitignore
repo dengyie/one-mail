@@ -154,3 +154,6 @@ aggregator/src/*.egg-info/
 sync_state.json
 __pycache__/
 *.pyc
+
+# Claude Code local worktrees (never pushed)
+.claude/worktrees/
