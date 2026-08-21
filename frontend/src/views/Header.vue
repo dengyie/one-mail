@@ -6,7 +6,7 @@ import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useIsMobile } from '../utils/composables'
 import {
     DarkModeFilled, LightModeFilled, MenuFilled,
-    AdminPanelSettingsFilled, MonitorHeartFilled,
+    AdminPanelSettingsFilled, MonitorHeartFilled, InboxRound,
     KeyboardArrowDownOutlined, OpenInNewOutlined
 } from '@vicons/material'
 import { GithubAlt, Language, User, Home } from '@vicons/fa'
@@ -34,6 +34,7 @@ const showMobileMenu = ref(false)
 const menuValue = computed(() => {
     if (route.path.includes("user")) return "user";
     if (route.path.includes("admin")) return "admin";
+    if (route.path.includes("unified")) return "unified";
     return "home";
 });
 
@@ -148,6 +149,26 @@ const menuOptions = computed(() => [
         ),
         key: "user",
         show: !isTelegram.value
+    },
+    {
+        label: () => h(
+            NButton,
+            {
+                text: true,
+                size: "small",
+                type: menuValue.value == "unified" ? "primary" : "default",
+                style: "width: 100%",
+                onClick: async () => {
+                    await router.push(getRouterPathWithLang('/unified', locale.value));
+                    showMobileMenu.value = false;
+                }
+            },
+            {
+                default: () => t('unified'),
+                icon: () => h(NIcon, { component: InboxRound }),
+            }
+        ),
+        key: "unified"
     },
     {
         label: () => h(

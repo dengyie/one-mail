@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* 统一 dark mode：awesome-ui 组件用 dark: 变体，需与全站 useDark(class 策略) 同步。
+   Tailwind v4 默认跟随 prefers-color-scheme（media 策略）；这里改成 class 策略，
+   使 <html class="dark"> 时 dark: 工具类生效，与 Naive UI 的 darkTheme 一起切换。 */
+@custom-variant dark (&:where(.dark, .dark *));

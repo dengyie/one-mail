@@ -207,7 +207,54 @@ cross-origin to the Worker via `VITE_API_BASE`, so the page host needs no revers
 
 ---
 
-## 6. Style & Reference Points
+## 6. Unified Inbox Frontend Page
+
+The unified inbox page (top-nav "Unified", route `/unified`) is a dedicated view assembled
+with Tailwind + awesome-ui components. It reads the cross-account mails aggregated by the
+Python aggregator through `/api/unified/*`. Routes: `/unified` (main page) and
+`/unified/:id` (single-mail detail).
+
+### Tailwind wiring
+
+- `src/tailwind.css`: `@import "tailwindcss"` + `@custom-variant dark (&:where(.dark, .dark *))`
+  so `dark:` utilities follow the site-wide `useDark` (class strategy, `<html class="dark">`).
+- `vite.config.js`: adds the `@tailwindcss/vite` plugin; the build emits Tailwind utilities.
+- Coexists with Naive UI: Tailwind preflight does not override Naive component styles, and the
+  zinc utilities are only used by this page and the awesome-ui components.
+
+### Page structure (4 views)
+
+| Tab | Description |
+|-----|-------------|
+| Mail List | Paginated (`limit`/`offset`) with `source`/`account_id`/`unread` filters + `q` keyword search; clicking a row opens the detail |
+| Verification Codes | Recipient address + `fresh` window (10min/1h/24h); cards highlight the `code` with one-click copy |
+| Aggregator Status | Derived from `/api/unified/count` + list rows: totals / unread / sources / accounts (frontend view; the actual IMAP/POP3 fetch is done by the Python aggregator) |
+| API Settings | Paste/save the API-key (localStorage only); "Test connection"; admins can create a key (plaintext shown once) |
+
+### Key implementation points
+
+- `src/api/index.js`: `unifiedFetch` only injects `Authorization: Bearer <unifiedApiKey>`
+  (reuses `safeBearerHeader` to filter invalid characters), does not flip global loading and
+  does not attach the site JWT; `buildUnifiedQuery` joins `source`/`account_id` arrays into
+  comma-separated values.
+- `src/store/index.js`: `unifiedApiKey` (`useLocalStorage`) persists the key.
+- `src/components/ai/`: pure-Tailwind components copied from awesome-ui (`StatusIndicator`,
+  etc., `<script setup lang="ts">` usable as-is).
+- Body rendering: prefers `text_body`; falls back to a minimal HTML-to-text conversion for
+  `html_body`. **Never uses `v-html`**.
+- i18n: a `unified` namespace was added to `src/i18n/message-registry.ts`; the page uses
+  `useScopedI18n('unified')`.
+
+### Build verification
+
+`pnpm build` emits two dedicated chunks (`UnifiedInbox`, `UnifiedInboxDetail`); Tailwind styles
+compile into `index-*.css`. Local dev: run `worker` with `pnpm dev` (local D1) and the frontend
+with `pnpm dev` (proxied to `127.0.0.1:8787`); after pasting an API-key in Settings the views
+start fetching.
+
+---
+
+## 7. Style & Reference Points
 
 - Entry: `src/main.js`
 - Global router guard: `src/router/index.js` (locale redirect + `jwt` query handling)
@@ -226,7 +273,7 @@ Preferred conventions:
 
 ---
 
-## 7. FAQ
+## 8. FAQ
 
 **Q: Endpoints 404 / CORS in dev**
 : Make sure `VITE_API_BASE` is empty (path proxy) and your local worker is on

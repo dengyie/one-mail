@@ -43,6 +43,16 @@ const router = createRouter({
             component: () => import('../views/telegram/Mail.vue')
         },
         {
+            path: '/unified',
+            alias: '/:lang/unified',
+            component: () => import('../views/UnifiedInbox.vue')
+        },
+        {
+            path: '/unified/:id',
+            alias: '/:lang/unified/:id',
+            component: () => import('../views/UnifiedInboxDetail.vue')
+        },
+        {
             name: 'not-found',
             path: '/:pathMatch(.*)*',
             redirect: '/'

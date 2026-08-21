@@ -564,6 +564,10 @@ export const MESSAGE_REGISTRY = {
       "en": "Cloudflare Temp Email",
       "zh": "Cloudflare 临时邮件"
     },
+    "unified": {
+      "en": "Unified",
+      "zh": "统一收件箱"
+    },
     "user": {
       "en": "User",
       "zh": "用户"
@@ -2589,6 +2593,284 @@ export const MESSAGE_REGISTRY = {
     "adminContact": {
       "en": "If you need help, please contact the administrator ({msg})",
       "zh": "如果你需要帮助，请联系管理员 ({msg})"
+    }
+  },
+  "unified": {
+    "title": {
+      "en": "Unified Inbox",
+      "zh": "统一收件箱"
+    },
+    "subtitle": {
+      "en": "Cross-account emails, aggregated by the aggregator",
+      "zh": "聚合器归集的跨账号邮件"
+    },
+    "tabs.list": {
+      "en": "Mail List",
+      "zh": "邮件列表"
+    },
+    "tabs.codes": {
+      "en": "Verification Codes",
+      "zh": "验证码"
+    },
+    "tabs.status": {
+      "en": "Aggregator Status",
+      "zh": "聚合器状态"
+    },
+    "tabs.settings": {
+      "en": "API Settings",
+      "zh": "API 设置"
+    },
+    "list.search": {
+      "en": "Search",
+      "zh": "搜索"
+    },
+    "list.searchPlaceholder": {
+      "en": "Search subject / sender / body",
+      "zh": "搜索主题 / 发件人 / 正文"
+    },
+    "list.source": {
+      "en": "Source",
+      "zh": "来源"
+    },
+    "list.allSources": {
+      "en": "All sources",
+      "zh": "全部来源"
+    },
+    "list.account": {
+      "en": "Account",
+      "zh": "账号"
+    },
+    "list.allAccounts": {
+      "en": "All accounts",
+      "zh": "全部账号"
+    },
+    "list.unread": {
+      "en": "Unread only",
+      "zh": "仅看未读"
+    },
+    "list.empty": {
+      "en": "No emails found",
+      "zh": "暂无邮件"
+    },
+    "list.emptyFiltered": {
+      "en": "No emails match the current filter",
+      "zh": "没有符合当前筛选条件的邮件"
+    },
+    "list.total": {
+      "en": "{count} emails",
+      "zh": "共 {count} 封邮件"
+    },
+    "list.prev": {
+      "en": "Prev",
+      "zh": "上一页"
+    },
+    "list.next": {
+      "en": "Next",
+      "zh": "下一页"
+    },
+    "list.loading": {
+      "en": "Loading...",
+      "zh": "加载中..."
+    },
+    "list.noSubject": {
+      "en": "(no subject)",
+      "zh": "(无主题)"
+    },
+    "detail.back": {
+      "en": "Back to list",
+      "zh": "返回列表"
+    },
+    "detail.from": {
+      "en": "From",
+      "zh": "发件人"
+    },
+    "detail.to": {
+      "en": "To",
+      "zh": "收件人"
+    },
+    "detail.receivedAt": {
+      "en": "Received",
+      "zh": "收到时间"
+    },
+    "detail.attachments": {
+      "en": "Attachments",
+      "zh": "附件"
+    },
+    "detail.noBody": {
+      "en": "No body content",
+      "zh": "无正文内容"
+    },
+    "detail.markRead": {
+      "en": "Mark as read",
+      "zh": "标记已读"
+    },
+    "codes.title": {
+      "en": "Verification codes (last 10 min)",
+      "zh": "验证码（最近 10 分钟）"
+    },
+    "codes.addrLabel": {
+      "en": "Recipient address",
+      "zh": "收件地址"
+    },
+    "codes.addrPlaceholder": {
+      "en": "e.g. xxx@example.com",
+      "zh": "例如 xxx@example.com"
+    },
+    "codes.refresh": {
+      "en": "Refresh",
+      "zh": "刷新"
+    },
+    "codes.empty": {
+      "en": "No verification codes in the window",
+      "zh": "当前时间窗内暂无验证码"
+    },
+    "codes.copy": {
+      "en": "Copy",
+      "zh": "复制"
+    },
+    "codes.copied": {
+      "en": "Copied",
+      "zh": "已复制"
+    },
+    "codes.copyFailed": {
+      "en": "Copy failed",
+      "zh": "复制失败"
+    },
+    "status.title": {
+      "en": "Aggregator runtime status",
+      "zh": "聚合器运行状态"
+    },
+    "status.mode": {
+      "en": "This card is a frontend view. It reads the aggregation results served by the Worker unified API — actual IMAP/POP3 fetch is done by the Python aggregator.",
+      "zh": "此卡片为前端视图，读取 Worker 统一 API 归集的邮件数据。实际的 IMAP/POP3 拉取由 Python 聚合器完成。"
+    },
+    "status.emails": {
+      "en": "Emails aggregated",
+      "zh": "已归集邮件"
+    },
+    "status.unread": {
+      "en": "Unread",
+      "zh": "未读"
+    },
+    "status.sources": {
+      "en": "Sources",
+      "zh": "来源"
+    },
+    "status.accounts": {
+      "en": "Accounts",
+      "zh": "账号"
+    },
+    "status.online": {
+      "en": "Online",
+      "zh": "在线"
+    },
+    "status.offline": {
+      "en": "Offline / No API key",
+      "zh": "离线 / 未设置 API key"
+    },
+    "status.connecting": {
+      "en": "Connecting",
+      "zh": "连接中"
+    },
+    "status.error": {
+      "en": "Error",
+      "zh": "连接错误"
+    },
+    "status.lastRefresh": {
+      "en": "Refreshed {time}",
+      "zh": "刷新于 {time}"
+    },
+    "status.noKey": {
+      "en": "Set an API key in the Settings tab to enable the views",
+      "zh": "在“API 设置”里配置 API key 后即可启用各视图"
+    },
+    "settings.title": {
+      "en": "Unified inbox API key",
+      "zh": "统一收件箱 API key"
+    },
+    "settings.keyLabel": {
+      "en": "API key",
+      "zh": "API key"
+    },
+    "settings.keyPlaceholder": {
+      "en": "Paste your unified inbox API key",
+      "zh": "粘贴你的统一收件箱 API key"
+    },
+    "settings.keyTip": {
+      "en": "Stored locally in your browser. Used to call /api/unified/* with Bearer auth.",
+      "zh": "仅保存在浏览器本地，用于以 Bearer 方式调用 /api/unified/* 接口。"
+    },
+    "settings.save": {
+      "en": "Save",
+      "zh": "保存"
+    },
+    "settings.saved": {
+      "en": "API key saved",
+      "zh": "API key 已保存"
+    },
+    "settings.required": {
+      "en": "API key is required",
+      "zh": "API key 不能为空"
+    },
+    "settings.createKey": {
+      "en": "Create a new API key",
+      "zh": "新建 API key"
+    },
+    "settings.createKeyTip": {
+      "en": "Requires admin password. The plaintext key is shown only once — copy it now.",
+      "zh": "需要管理员密码。明文 key 仅显示一次，请立即复制保存。"
+    },
+    "settings.keyName": {
+      "en": "Key name",
+      "zh": "Key 名称"
+    },
+    "settings.keyNamePlaceholder": {
+      "en": "e.g. browser-dashboard",
+      "zh": "例如 browser-dashboard"
+    },
+    "settings.role": {
+      "en": "Role",
+      "zh": "角色"
+    },
+    "settings.readonly": {
+      "en": "readonly",
+      "zh": "只读"
+    },
+    "settings.adminRole": {
+      "en": "admin",
+      "zh": "管理员"
+    },
+    "settings.adminPassword": {
+      "en": "Admin password",
+      "zh": "管理员密码"
+    },
+    "settings.adminPasswordPlaceholder": {
+      "en": "Required to create a key",
+      "zh": "创建 key 时需要"
+    },
+    "settings.create": {
+      "en": "Create",
+      "zh": "创建"
+    },
+    "settings.created": {
+      "en": "Key created. Copy it now — it won't be shown again.",
+      "zh": "Key 创建成功，请立即复制，之后不再显示。"
+    },
+    "settings.createdTitle": {
+      "en": "New API key",
+      "zh": "新 API key"
+    },
+    "settings.test": {
+      "en": "Test connection",
+      "zh": "测试连接"
+    },
+    "settings.testOk": {
+      "en": "Connection OK",
+      "zh": "连接正常"
+    },
+    "settings.testFail": {
+      "en": "Connection failed",
+      "zh": "连接失败"
     }
   }
 } as const

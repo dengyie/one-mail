@@ -189,7 +189,50 @@ VITE_CF_WEB_ANALY_TOKEN=
 
 ---
 
-## 6. 代码风格与参考
+## 6. 统一收件箱前端页面
+
+统一收件箱页面（顶部导航「统一收件箱」，路由 `/unified`）是 Tailwind + awesome-ui 组件
+装配的独立视图，通过 `/api/unified/*` 读取聚合器归集的跨账号邮件。路由：
+`/unified`（主页面）与 `/unified/:id`（单封详情）。
+
+### Tailwind 接入
+
+- `src/tailwind.css`：`@import "tailwindcss"` + `@custom-variant dark (&:where(.dark, .dark *))`，
+  让 `dark:` 工具类跟随全站 `useDark`（class 策略，`<html class="dark">`）。
+- `vite.config.js`：引入 `@tailwindcss/vite` 插件，构建产物会编译 Tailwind 工具类。
+- 与 Naive UI 共存：Tailwind 的 preflight 不会覆盖 Naive 组件（组件样式优先），zinc 工具类
+  只用于本页面与 awesome-ui 组件。
+
+### 页面结构（4 个视图）
+
+| Tab | 说明 |
+|-----|------|
+| 邮件列表 | 分页（`limit`/`offset`）+ `source`/`account_id`/`unread` 过滤 + `q` 关键词搜索；点击行进入详情 |
+| 验证码 | 输入收件地址 + `fresh` 时间窗（10min/1h/24h），卡片高亮 `code` 并一键复制 |
+| 聚合器状态 | 从 `/api/unified/count` + 列表推导「总数 / 未读 / 来源 / 账号」（前端视图；实际 IMAP/POP3 抓取由 Python 聚合器完成） |
+| API 设置 | 粘贴/保存 API-key（仅存 localStorage）；「测试连接」；管理员密码可新建 key（明文仅显示一次） |
+
+### 关键实现点
+
+- `src/api/index.js`：`unifiedFetch` 只注入 `Authorization: Bearer <unifiedApiKey>`（复用
+  `safeBearerHeader` 过滤非法字符），不触发全局 loading、不携带站点 JWT；`buildUnifiedQuery`
+  负责把 `source`/`account_id` 数组拼成逗号多值。
+- `src/store/index.js`：`unifiedApiKey`（`useLocalStorage`）保存 key。
+- `src/components/ai/`：从 awesome-ui 复制的纯 Tailwind 组件（`StatusIndicator` 等，
+  `<script setup lang="ts">` 无需改动即可使用）。
+- 正文渲染：优先 `text_body`；仅有 `html_body` 时做最小转纯文本，**绝不使用 `v-html`**。
+- 国际化：`src/i18n/message-registry.ts` 新增 `unified` namespace，页面用
+  `useScopedI18n('unified')` 取文案。
+
+### 构建验证
+
+`pnpm build` 产出 `UnifiedInbox` / `UnifiedInboxDetail` 两个独立 chunk，Tailwind 样式编译进
+`index-*.css`。本地联调：`worker` 用 `pnpm dev`（本地 D1），前端 `pnpm dev`（proxy 到
+`127.0.0.1:8787`），在设置页粘贴 API-key 后各视图即可取数。
+
+---
+
+## 7. 代码风格与参考
 
 - 入口：`src/main.js`
 - 全局路由守卫：`src/router/index.js`（locale 重定向 + `jwt` query 处理）
@@ -208,7 +251,7 @@ VITE_CF_WEB_ANALY_TOKEN=
 
 ---
 
-## 7. 常见问题
+## 8. 常见问题
 
 **Q: dev 时接口 404 / CORS**
 : 确认 `VITE_API_BASE` 为空（走 proxy），工作 worker 在 `127.0.0.1:8787`。若设了非空

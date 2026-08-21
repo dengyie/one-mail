@@ -6,7 +6,15 @@ import {
 
 export const useGlobalState = createGlobalState(
     () => {
-        const isDark = useDark()
+        // class 策略：<html class="dark"> 才走 dark 主题。这样 Tailwind 的 dark: 变体
+        // 与 Naive UI 的 darkTheme 一起切换（awesome-ui 组件依赖 dark: 工具类）。
+        const isDark = useDark({
+            selector: 'html',
+            attribute: 'class',
+            valueDark: 'dark',
+            valueLight: '',
+            storageKey: 'color-scheme',
+        })
         const toggleDark = useToggle(isDark)
         const loading = ref(false);
         const announcement = useLocalStorage('announcement', '');
@@ -80,6 +88,8 @@ export const useGlobalState = createGlobalState(
         const showAuth = ref(false);
         const showAddressCredential = ref(false);
         const showAdminAuth = ref(false);
+        // 统一收件箱（/api/unified/*）的 Bearer API-key，localStorage 持久化
+        const unifiedApiKey = useLocalStorage('unifiedApiKey', '');
         const auth = useStorage('auth', '');
         const adminAuth = useStorage('adminAuth', '');
         const jwt = useStorage('jwt', '');
@@ -158,6 +168,7 @@ export const useGlobalState = createGlobalState(
             auth,
             jwt,
             adminAuth,
+            unifiedApiKey,
             showAdminAuth,
             adminTab,
             adminMailTabAddress,
