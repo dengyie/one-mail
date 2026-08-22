@@ -62,6 +62,8 @@
 
 ### Improvements
 
+- refactor: |architecture| In-place monorepo (pnpm workspace + packages/shared shared contract pkg, worker/frontend renamed @one-mail/*); worker core/ layering (address JWT sign/verify, settings, emails INSERT, raw_mails list single-source); frontend 4 auth wrappers consolidated into one createApiClient factory (zero behavior change)
+
 - docs: |Frontend| Add a frontend development guide (`guide/ui/frontend-dev`, EN + zh): covers the one-mail unified-inbox frontend architecture (Vue 3 + Vite + Naive UI talking cross-origin directly to the Worker), directory layout and key modules (`api/index.js` auth-header injection, `router` locale-aware routing, `store` global state, `email-parser` wasm parsing), local development (`VITE_API_BASE` + `vite.config.js` dev proxy → `127.0.0.1:8787` for wrangler-dev integration), environment variables (`VITE_API_BASE`/`VITE_CF_WEB_ANALY_TOKEN`/`VITE_IS_TELEGRAM`), the build/deploy matrix (`build` / `build:pages` / `build:telegram`), one-mail unified-inbox Bearer API-key auth and the `/api/unified/*` endpoint table, coding style, and FAQ. Use it as the entry point when building the unified-inbox frontend pages later
 
 - fix: |Worker| Throttle address-activity touches to one write per day so user settings and mailbox access do not repeatedly update recently active addresses, reducing D1 writes (issue #1103)

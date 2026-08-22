@@ -62,6 +62,8 @@
 
 ### Improvements
 
+- refactor: |架构| 原位 monorepo（pnpm workspace + packages/shared 共享契约包，worker/frontend 改名 @one-mail/*）；worker 抽 core/ 精炼层（地址 JWT 签发/校验、settings 读写、emails INSERT、raw_mails 列表单源）；前端 4 个鉴权 wrapper 收敛为 createApiClient 工厂（线上行为零变化）
+
 - docs: |前端| 新增前端开发文档（`guide/ui/frontend-dev`，中英双语）：涵盖 one-mail 统一收件箱前端架构（Vue 3 + Vite + Naive UI 跨域直连 Worker）、目录结构与关键模块（`api/index.js` 鉴权头注入、`router` 多语言路由、`store` 全局状态、`email-parser` wasm 解析）、本地开发（`VITE_API_BASE` + `vite.config.js` dev proxy → `127.0.0.1:8787` 联调）、环境变量（`VITE_API_BASE`/`VITE_CF_WEB_ANALY_TOKEN`/`VITE_IS_TELEGRAM`）、构建/部署矩阵（`build` / `build:pages` / `build:telegram`）、one-mail 统一收件箱 Bearer API-key 鉴权与 `/api/unified/*` 端点表、代码风格与 FAQ；后续开发统一收件箱前端页面时以此为入口
 
 - fix: |Worker| 地址活跃时间保活增加 1 天写入窗口，用户设置和邮箱访问不再重复更新近期活跃地址，降低 D1 写入量（issue #1103）
