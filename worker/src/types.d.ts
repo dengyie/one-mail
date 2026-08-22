@@ -51,7 +51,7 @@ type Bindings = {
     ADMIN_PASSWORDS: string | string[] | undefined
     DISABLE_ADMIN_PASSWORD_CHECK: string | boolean | undefined
     JWT_SECRET: string
-    // 地址 JWT 过期天数（默认 90，见 unified/address_token.ts）；REJECT_EXPLESS_JWT=true
+    // 地址 JWT 过期天数（默认 90，见 core/auth.ts）；REJECT_EXPLESS_JWT=true
     // 时拒绝无 exp 的旧地址 JWT（Phase 7 / I7a）
     ADDRESS_JWT_TTL_DAYS: string | number | undefined
     REJECT_EXPLESS_JWT: string | boolean | undefined

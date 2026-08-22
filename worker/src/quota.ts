@@ -1,40 +1,15 @@
 import { Context } from "hono";
+import { getJsonSetting } from './core/settings.ts';
+import { SETTINGS_KEYS } from '@one-mail/shared';
 
 /**
  * 配额（quota）逻辑独立成文件，便于 node --experimental-strip-types --test 直跑单测。
  *
- * 项目约定：可被 node --test 加载的模块**只引 hono**，不带相对路径 import（其它被测
- * 模块如 ingest.ts / api_keys.ts / retention.ts 均如此）——因为相对 import 在
- * strip-types 下要么需要显式 .ts 扩展名、要么撞「裸目录 import」（./models）解析失败。
- * 故本文件把所需常量与 UserSettings 读取逻辑内联，零相对 import。
+ * settings 键值以 `@one-mail/shared` 的 SETTINGS_KEYS 为准。
+ * settings 表读写本身委托 core/settings.ts（唯一实现，零 T3 双份 SQL）。
  *
  * utils.ts 从本文件 re-export 三个函数，调用方仍 import from "../utils"，无破坏。
- * 内联的设置键 / 默认值必须与 constants.ts、models/index.ts UserSettings 保持一致——
- * 修改那两处时同步本文件。
  */
-
-// 与 constants.ts CONSTANTS.USER_SETTINGS_KEY / ROLE_ADDRESS_CONFIG_KEY 同值。
-const USER_SETTINGS_KEY = 'user_settings';
-const ROLE_ADDRESS_CONFIG_KEY = 'role_address_config';
-
-/**
- * 读 settings 表某 key 的 JSON 值。与 utils.ts getJsonSetting 同实现
- * （读 c.env.DB settings 行 → JSON.parse；坏值/缺值返回 null）。
- */
-const getJsonSettingLocal = async <T = any>(
-    c: Context<HonoCustomType>, key: string
-): Promise<T | null> => {
-    const value = await c.env.DB.prepare(
-        `SELECT value FROM settings where key = ?`
-    ).bind(key).first<string>("value");
-    if (!value) return null;
-    try {
-        return JSON.parse(value) as T;
-    } catch (e) {
-        console.error(`getJsonSettingLocal: Failed to parse ${key}`, e);
-        return null;
-    }
-};
 
 /**
  * 读 user_settings.maxAddressCount，复制 models/index.ts UserSettings 构造逻辑：
@@ -51,7 +26,7 @@ export const getMaxAddressCount = async (
     maxAddressCountFromSettings: number
 ): Promise<number> => {
     if (!userRole) return maxAddressCountFromSettings;
-    const roleConfigs = await getJsonSettingLocal<Record<string, any>>(c, ROLE_ADDRESS_CONFIG_KEY);
+    const roleConfigs = await getJsonSetting<Record<string, any>>(c, SETTINGS_KEYS.ROLE_ADDRESS_CONFIG);
     if (!roleConfigs) return maxAddressCountFromSettings;
     const roleMaxCount = roleConfigs[userRole]?.maxAddressCount;
     if (typeof roleMaxCount !== 'number') return maxAddressCountFromSettings;
@@ -71,7 +46,7 @@ export const getMaxMailAccountCount = async (
     userRole: string | null | undefined
 ): Promise<number> => {
     if (!userRole) return DEFAULT_MAX_MAIL_ACCOUNTS;
-    const roleConfigs = await getJsonSettingLocal<Record<string, any>>(c, ROLE_ADDRESS_CONFIG_KEY);
+    const roleConfigs = await getJsonSetting<Record<string, any>>(c, SETTINGS_KEYS.ROLE_ADDRESS_CONFIG);
     if (!roleConfigs) return DEFAULT_MAX_MAIL_ACCOUNTS;
     const v = roleConfigs[userRole]?.maxMailAccountCount;
     if (typeof v !== 'number' || v < 0) return DEFAULT_MAX_MAIL_ACCOUNTS;
@@ -101,7 +76,7 @@ export const isAddressCountLimitReached = async (
     user_id: number | string,
     userRole: string | null | undefined
 ): Promise<boolean> => {
-    const value = await getJsonSettingLocal(c, USER_SETTINGS_KEY);
+    const value = await getJsonSetting(c, SETTINGS_KEYS.USER_SETTINGS);
     const maxAddressCount = await getMaxAddressCount(c, userRole, readMaxAddressCountSetting(value));
 
     if (maxAddressCount <= 0) return false;

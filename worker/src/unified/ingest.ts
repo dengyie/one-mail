@@ -1,4 +1,5 @@
 import { Context } from "hono";
+import { insertEmail } from "../core/ingest.ts";
 
 export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowMs: number): unknown[] {
     // from_addr/to_addr/account_id 必须非空：account_id=NULL 的行会被
@@ -27,17 +28,11 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
     ];
 }
 
-const INSERT_SQL = `INSERT OR IGNORE INTO emails
-  (id,source,account_id,from_addr,to_addr,subject,text_body,html_body,
-   received_at,internal_date,headers_json,is_read,flags_json,attachments_json,
-   raw_ref,imap_uid,updated_at)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
-
-export async function insertEmails(env: Bindings, emails: Record<string, unknown>[]): Promise<{ inserted: number; skipped: number }> {
+export async function insertEmails(c: Context<HonoCustomType>, emails: Record<string, unknown>[]): Promise<{ inserted: number; skipped: number }> {
     let inserted = 0, skipped = 0;
     for (const e of emails) {
         const params = toEmailInsertParams(e, crypto.randomUUID(), Date.now());
-        const { meta } = await env.DB.prepare(INSERT_SQL).bind(...(params as never[])).run();
+        const { meta } = await insertEmail(c, params);
         const changes = (meta as { changes?: number })?.changes ?? 0;
         if (changes > 0) inserted++; else skipped++;
     }
@@ -53,6 +48,6 @@ export const ingestHandler = async (c: Context<HonoCustomType>) => {
     if (emails.length > 200) {
         return c.json({ error: "max 200 emails per request" }, 400);
     }
-    const result = await insertEmails(c.env, emails);
+    const result = await insertEmails(c, emails);
     return c.json(result);
 };

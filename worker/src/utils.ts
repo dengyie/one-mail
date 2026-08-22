@@ -3,6 +3,11 @@ import { createMimeMessage } from "mimetext";
 import { UserSettings, RoleAddressConfig } from "./models";
 import { CONSTANTS } from "./constants";
 import { compressText } from "./gzip";
+import { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
+// settings 表读写唯一实现已迁至 core/settings.ts。此处既以 named re-export 保持
+// `import { getSetting, ... } from '../utils'` 调用方不变，又在 default 对象里引用同名
+// import 绑定（简写 `getSetting` 等价 `getSetting: getSetting`），utils.getSetting 照常可用。
+export { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
 
 export const getJsonObjectValue = <T = any>(
     value: string | any
@@ -22,56 +27,6 @@ export const getJsonObjectValue = <T = any>(
         console.error(`GetJsonValue: Failed to parse ${value}`, e);
     }
     return null;
-}
-
-export const getJsonSetting = async <T = any>(
-    c: Context<HonoCustomType>, key: string
-): Promise<T | null> => {
-    const value = await getSetting(c, key);
-    if (!value) {
-        return null;
-    }
-    try {
-        return JSON.parse(value) as T;
-    } catch (e) {
-        console.error(`GetJsonSetting: Failed to parse ${key}`, e);
-    }
-    return null;
-}
-
-export const getSetting = async (
-    c: Context<HonoCustomType>, key: string
-): Promise<string | null> => {
-    try {
-        const value = await c.env.DB.prepare(
-            `SELECT value FROM settings where key = ?`
-        ).bind(key).first<string>("value");
-        return value;
-    } catch (error) {
-        console.error(`GetSetting: Failed to get ${key}`, error);
-    }
-    return null;
-}
-
-export const saveSetting = async (
-    c: Context<HonoCustomType>,
-    key: string, value: string
-) => {
-    await c.env.DB.prepare(
-        `INSERT or REPLACE INTO settings (key, value) VALUES (?, ?)`
-        + ` ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')`
-    ).bind(key, value, value).run();
-    return true;
-}
-
-export const deleteSetting = async (
-    c: Context<HonoCustomType>,
-    key: string
-) => {
-    await c.env.DB.prepare(
-        `DELETE FROM settings WHERE key = ?`
-    ).bind(key).run();
-    return true;
 }
 
 export const getStringValue = (value: any): string => {

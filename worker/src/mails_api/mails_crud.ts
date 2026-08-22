@@ -2,8 +2,9 @@ import { Context } from 'hono'
 
 import i18n from '../i18n';
 import { getBooleanValue } from '../utils';
-import { handleMailListQuery, deleteAddressWithData, updateAddressUpdatedAt } from '../common'
-import { resolveRawEmailRow } from '../gzip'
+import { deleteAddressWithData, updateAddressUpdatedAt } from '../common'
+import { resolveRawEmailList, resolveRawEmailRow } from '../gzip'
+import { listRawMails, countRawMails, getRawMail } from '../core/mail-list.ts'
 import { getSendBalanceState } from './send_balance';
 
 const listMails = async (c: Context<HonoCustomType>) => {
@@ -13,19 +14,22 @@ const listMails = async (c: Context<HonoCustomType>) => {
     }
     const { limit, offset } = c.req.query();
     if (Number.parseInt(offset) <= 0) updateAddressUpdatedAt(c, address);
-    return await handleMailListQuery(c,
-        `SELECT * FROM raw_mails where address = ?`,
-        `SELECT count(*) as count FROM raw_mails where address = ?`,
-        [address], limit, offset
-    );
+    // limit/offset 校验与 common.handleMailListQuery 原逻辑逐字等价
+    const msgs = i18n.getMessagesbyContext(c);
+    const lim = typeof limit === "string" ? parseInt(limit) : limit;
+    const off = typeof offset === "string" ? parseInt(offset) : offset;
+    if (!lim || lim < 0 || lim > 100) return c.text(msgs.InvalidLimitMsg, 400);
+    if (off == null || off == undefined || off < 0) return c.text(msgs.InvalidOffsetMsg, 400);
+    const rows = await listRawMails(c, address, { limit: lim, offset: off });
+    const results = await resolveRawEmailList(rows);
+    const count = off === 0 ? await countRawMails(c, address) : 0;
+    return c.json({ results, count });
 };
 
 const getMail = async (c: Context<HonoCustomType>) => {
     const { address } = c.get("jwtPayload")
     const { mail_id } = c.req.param();
-    const result = await c.env.DB.prepare(
-        `SELECT * FROM raw_mails where id = ? and address = ?`
-    ).bind(mail_id, address).first();
+    const result = await getRawMail(c, mail_id, address);
     if (!result) return c.json(null);
     return c.json(await resolveRawEmailRow(result));
 };

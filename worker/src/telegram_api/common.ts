@@ -1,5 +1,5 @@
 import { Context } from "hono";
-import { Jwt } from "hono/utils/jwt";
+import { verifyAddressJwt } from "../core/auth";
 import { CONSTANTS } from "../constants";
 import { getBooleanValue, getIntValue, getJsonSetting } from "../utils";
 import { deleteAddressWithData, newAddress, generateRandomName } from "../common";
@@ -63,7 +63,13 @@ export const jwtListToAddressData = async (
     const invalidJwtList = [] as string[];
     for (const jwt of jwtList) {
         try {
-            const { address, address_id } = await Jwt.verify(jwt, c.env.JWT_SECRET, "HS256");
+            const payload = await verifyAddressJwt(c, jwt);
+            if (!payload) {
+                addressList.push(msgs.TgInvalidCredentialMsg);
+                invalidJwtList.push(jwt);
+                continue;
+            }
+            const { address, address_id } = payload;
             const name = await c.env.DB.prepare(
                 `SELECT name FROM address WHERE id = ? `
             ).bind(address_id).first("name");
@@ -87,10 +93,11 @@ export const bindTelegramAddress = async (
     c: Context<HonoCustomType>, userId: string, jwt: string,
     msgs: LocaleMessages
 ): Promise<string> => {
-    const { address } = await Jwt.verify(jwt, c.env.JWT_SECRET, "HS256");
-    if (!address) {
+    const payload = await verifyAddressJwt(c, jwt);
+    if (!payload || !payload.address) {
         throw Error(msgs.TgInvalidCredentialMsg);
     }
+    const { address } = payload;
     const jwtList = await c.env.KV.get<string[]>(`${CONSTANTS.TG_KV_PREFIX}:${userId}`, 'json') || [];
     const { addressIdMap } = await jwtListToAddressData(c, jwtList, msgs);
     if (address as string in addressIdMap) {
@@ -112,8 +119,8 @@ export const unbindTelegramAddress = async (
     const newJwtList = [];
     for (const jwt of jwtList) {
         try {
-            const { address: kvAddress } = await Jwt.verify(jwt, c.env.JWT_SECRET, "HS256");
-            if (kvAddress == address) {
+            const payload = await verifyAddressJwt(c, jwt);
+            if (payload && payload.address == address) {
                 continue;
             }
         } catch (e) {

@@ -1,10 +1,8 @@
 import { Context } from 'hono'
-import { Jwt } from 'hono/utils/jwt'
-
 import i18n from '../i18n'
 import { getBooleanValue } from '../utils'
 import { newAddress, handleListQuery } from '../common'
-import { addressJwtExpSeconds } from '../unified/address_token'
+import { signAddressJwt } from '../core/auth'
 
 const listAddresses = async (c: Context<HonoCustomType>) => {
     const { limit, offset, query, sort_by, sort_order } = c.req.query();
@@ -151,11 +149,10 @@ const showPassword = async (c: Context<HonoCustomType>) => {
     const name = await c.env.DB.prepare(
         `SELECT name FROM address WHERE id = ? `
     ).bind(id).first("name");
-    const jwt = await Jwt.sign({
+    const jwt = await signAddressJwt(c, {
         address: name,
         address_id: id,
-        exp: addressJwtExpSeconds(c),
-    }, c.env.JWT_SECRET, "HS256")
+    })
     return c.json({ jwt });
 };
 

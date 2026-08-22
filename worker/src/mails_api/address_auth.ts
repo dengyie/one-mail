@@ -1,8 +1,7 @@
 import { Context } from 'hono';
 import i18n from '../i18n';
 import utils, { getBooleanValue, hashPassword, checkCfTurnstile } from '../utils';
-import { Jwt } from 'hono/utils/jwt';
-import { addressJwtExpSeconds } from '../unified/address_token';
+import { signAddressJwt } from '../core/auth';
 
 export default {
     // 修改地址密码
@@ -74,11 +73,10 @@ export default {
         }
 
         // 创建JWT
-        const jwt = await Jwt.sign({
+        const jwt = await signAddressJwt(c, {
             address: address.name,
             address_id: address.id,
-            exp: addressJwtExpSeconds(c),
-        }, c.env.JWT_SECRET, "HS256");
+        });
 
         return c.json({
             jwt: jwt,

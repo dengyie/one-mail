@@ -126,7 +126,7 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
 
     // one-mail: mirror into unified emails table (never block base ingest)
     try {
-        await saveUnifiedEmail(env, parsedEmailContext.rawEmail, message.from, toAddress);
+        await saveUnifiedEmail({ env } as Context<HonoCustomType>, parsedEmailContext.rawEmail, message.from, toAddress);
     } catch (error) {
         console.warn("save unified email error", error);
     }

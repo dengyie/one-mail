@@ -1,11 +1,9 @@
 import { Context } from 'hono';
-import { Jwt } from 'hono/utils/jwt'
-
 import { isAddressCountLimitReached } from "../utils"
 import { unbindTelegramByAddress } from '../telegram_api/common';
 import i18n from '../i18n';
 import { updateAddressUpdatedAt, commonGetUserRole, handleListQuery, hideObjectFields } from '../common';
-import { addressJwtExpSeconds } from '../unified/address_token';
+import { signAddressJwt } from '../core/auth';
 
 const UserBindAddressModule = {
     bind: async (c: Context<HonoCustomType>) => {
@@ -170,11 +168,10 @@ const UserBindAddressModule = {
         const name = await c.env.DB.prepare(
             `SELECT name FROM address WHERE id = ? `
         ).bind(address_id).first("name");
-        const jwt = await Jwt.sign({
+        const jwt = await signAddressJwt(c, {
             address: name,
             address_id: address_id,
-            exp: addressJwtExpSeconds(c),
-        }, c.env.JWT_SECRET, "HS256")
+        })
         return c.json({
             jwt: jwt
         })

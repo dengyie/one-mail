@@ -1,12 +1,11 @@
 import { Context } from 'hono';
-import { Jwt } from 'hono/utils/jwt'
 import { WorkerMailerOptions } from 'worker-mailer';
 
 import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, hashPassword, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { CONSTANTS } from './constants';
 import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
-import { addressJwtExpSeconds } from './unified/address_token';
+import { signAddressJwt } from './core/auth';
 import { isSafeWebhookUrl } from './unified/webhook_url';
 import i18n from './i18n';
 
@@ -446,11 +445,10 @@ export const newAddress = async (
             const generatedPassword = await generatePasswordForAddress(c, address);
 
             // create jwt
-            const jwt = await Jwt.sign({
+            const jwt = await signAddressJwt(c, {
                 address: address,
                 address_id: address_id,
-                exp: addressJwtExpSeconds(c),
-            }, c.env.JWT_SECRET, "HS256")
+            })
             return {
                 jwt: jwt,
                 address: address,
