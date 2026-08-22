@@ -6,6 +6,7 @@ import bind_address from './bind_address';
 import passkey from './passkey';
 import oauth2 from './oauth2';
 import user_mail_api from './user_mail_api';
+import mail_accounts from './mail_accounts';
 
 export const api = new Hono<HonoCustomType>();
 
@@ -32,6 +33,12 @@ api.post('/user_api/bind_address', bind_address.bind);
 api.get('/user_api/bind_address_jwt/:address_id', bind_address.getBindedAddressJwt);
 api.post('/user_api/unbind_address', bind_address.unbind);
 api.post('/user_api/transfer_address', bind_address.transferAddress);
+
+// user external mail accounts（自助接入外部邮箱归集）
+api.get('/user_api/mail_accounts', mail_accounts.list);
+api.post('/user_api/mail_accounts', mail_accounts.create);
+api.delete('/user_api/mail_accounts/:id', mail_accounts.remove);
+api.post('/user_api/mail_accounts/:id/toggle', mail_accounts.toggle);
 
 // passkey api
 api.get('/user_api/passkey', passkey.getPassKeys);

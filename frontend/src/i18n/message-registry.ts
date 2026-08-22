@@ -579,6 +579,112 @@ export const MESSAGE_REGISTRY = {
       "zh": "退出登录"
     }
   },
+  "views.user.UserMailAccounts": {
+    "title": {
+      "en": "Aggregate your own external mailboxes (Gmail / QQ / 163 / Outlook) into this unified inbox. Each synced message is visible only to you.",
+      "zh": "把您自己的外部邮箱（Gmail / QQ / 163 / Outlook）归集到统一收件箱。同步的邮件仅您自己可见。"
+    },
+    "addNew": {
+      "en": "Add Mailbox",
+      "zh": "接入邮箱"
+    },
+    "label": {
+      "en": "Label (optional)",
+      "zh": "名称（可选）"
+    },
+    "source": {
+      "en": "Provider",
+      "zh": "服务商"
+    },
+    "host": {
+      "en": "IMAP Host",
+      "zh": "IMAP 主机"
+    },
+    "port": {
+      "en": "Port",
+      "zh": "端口"
+    },
+    "username": {
+      "en": "Email Address",
+      "zh": "邮箱地址"
+    },
+    "cred": {
+      "en": "App Password / Authorization Code",
+      "zh": "应用密码 / 授权码"
+    },
+    "protocol": {
+      "en": "Protocol",
+      "zh": "协议"
+    },
+    "folders": {
+      "en": "Folders (comma separated, default INBOX)",
+      "zh": "文件夹（逗号分隔，默认 INBOX）"
+    },
+    "enabled": {
+      "en": "Enabled",
+      "zh": "启用"
+    },
+    "disabled": {
+      "en": "Disabled",
+      "zh": "已停用"
+    },
+    "lastSync": {
+      "en": "Last Sync",
+      "zh": "上次同步"
+    },
+    "never": {
+      "en": "never",
+      "zh": "从未"
+    },
+    "toggle": {
+      "en": "Toggle",
+      "zh": "启停"
+    },
+    "delete": {
+      "en": "Delete",
+      "zh": "删除"
+    },
+    "cancel": {
+      "en": "Cancel",
+      "zh": "取消"
+    },
+    "submit": {
+      "en": "Submit",
+      "zh": "提交"
+    },
+    "success": {
+      "en": "Success",
+      "zh": "成功"
+    },
+    "addSuccessTip": {
+      "en": "Mailbox added. Messages will appear after the next sync (about 5 minutes).",
+      "zh": "已接入。下一轮同步（约 5 分钟）后可见邮件。"
+    },
+    "deleteConfirm": {
+      "en": "Remove this mailbox? Already-synced messages are kept.",
+      "zh": "移除该邮箱？已同步的邮件会保留。"
+    },
+    "empty": {
+      "en": "No external mailboxes yet.",
+      "zh": "尚未接入任何外部邮箱。"
+    },
+    "auto": {
+      "en": "Auto",
+      "zh": "自动"
+    },
+    "imap": {
+      "en": "IMAP",
+      "zh": "IMAP"
+    },
+    "pop3": {
+      "en": "POP3",
+      "zh": "POP3"
+    },
+    "lastError": {
+      "en": "Last Error",
+      "zh": "最近错误"
+    }
+  },
   "views.Admin": {
     "about": {
       "en": "About",
@@ -745,6 +851,10 @@ export const MESSAGE_REGISTRY = {
     "user_mail_box_tab": {
       "en": "Mail Box",
       "zh": "收件箱"
+    },
+    "user_mail_accounts": {
+      "en": "My Mailboxes",
+      "zh": "我的邮箱"
     },
     "user_settings": {
       "en": "User Settings",
@@ -2084,6 +2194,10 @@ export const MESSAGE_REGISTRY = {
       "en": "Max Address Count (0 = Unlimited)",
       "zh": "最大地址数量（0 为不限制）"
     },
+    "maxMailAccountCount": {
+      "en": "Max External Mailboxes (0 = Unlimited)",
+      "zh": "外部邮箱上限（0 为不限制）"
+    },
     "noRolesAvailable": {
       "en": "No roles available in system config",
       "zh": "系统配置中没有可用的角色"
@@ -2092,13 +2206,17 @@ export const MESSAGE_REGISTRY = {
       "en": "Not Configured (Use Global Settings)",
       "zh": "未配置（使用全局设置）"
     },
+    "notConfiguredMailAccount": {
+      "en": "Not Configured (Default 5)",
+      "zh": "未配置（默认 5）"
+    },
     "role": {
       "en": "Role",
       "zh": "角色"
     },
     "roleConfigDesc": {
-      "en": "Configure maximum address count for each user role. Role-based limits take priority over global settings. Set 0 for unlimited.",
-      "zh": "为每个用户角色配置最大地址数量。角色配置优先于全局设置。设置为 0 表示不限制。"
+      "en": "Configure per-role limits. Role-based limits take priority over global settings. Set 0 for unlimited. Max Address Count excludes external mailboxes (counted separately under Max External Mailboxes).",
+      "zh": "按角色配置配额上限，角色配置优先于全局设置，设为 0 表示不限制。最大地址数量不计外部邮箱（外部邮箱独立按「外部邮箱上限」计数）。"
     },
     "save": {
       "en": "Save",
@@ -2603,6 +2721,18 @@ export const MESSAGE_REGISTRY = {
     "subtitle": {
       "en": "Cross-account emails, aggregated by the aggregator",
       "zh": "聚合器归集的跨账号邮件"
+    },
+    "auth.loginRequired": {
+      "en": "Log in to view your unified inbox, or configure an API key for programmatic access.",
+      "zh": "登录后查看统一收件箱，也可以配置 API key 进行程序化访问。"
+    },
+    "auth.login": {
+      "en": "Log in",
+      "zh": "登录"
+    },
+    "auth.apiKeyMode": {
+      "en": "Using API-key access. Log in to automatically scope mail to your bound addresses.",
+      "zh": "当前使用 API-key 访问。登录后会自动限制为你绑定地址的邮件。"
     },
     "tabs.list": {
       "en": "Mail List",

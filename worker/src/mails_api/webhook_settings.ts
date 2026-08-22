@@ -3,6 +3,7 @@ import { CONSTANTS } from "../constants";
 import { AdminWebhookSettings, WebhookSettings, RawMailRow } from "../models";
 import { commonParseMail, sendWebhook } from "../common";
 import { resolveRawEmail } from "../gzip";
+import { isSafeWebhookUrl } from "../unified/webhook_url";
 import i18n from "../i18n";
 
 
@@ -28,6 +29,12 @@ async function saveWebhookSettings(c: Context<HonoCustomType>): Promise<Response
         return c.text(msgs.WebhookNotAllowedForUserMsg, 403);
     }
     const settings = await c.req.json<WebhookSettings>();
+    // I7d：用户（allow-list 内）设置的 webhook URL 保存时即校验 SSRF（拒私有/回环/
+    // 元数据地址，坏 URL 不落库）。allow-list 用户不是全信主体——URL 到端点是他们自己
+    // 可选的，落到内网即 SSRF。
+    if (!isSafeWebhookUrl(settings.url)) {
+        return c.text("unsafe webhook url", 400);
+    }
     await c.env.KV.put(
         `${CONSTANTS.WEBHOOK_KV_USER_SETTINGS_KEY}:${address}`,
         JSON.stringify(settings));

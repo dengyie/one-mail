@@ -4,6 +4,7 @@ import { Jwt } from 'hono/utils/jwt'
 import i18n from '../i18n'
 import { getBooleanValue } from '../utils'
 import { newAddress, handleListQuery } from '../common'
+import { addressJwtExpSeconds } from '../unified/address_token'
 
 const listAddresses = async (c: Context<HonoCustomType>) => {
     const { limit, offset, query, sort_by, sort_order } = c.req.query();
@@ -19,6 +20,11 @@ const listAddresses = async (c: Context<HonoCustomType>) => {
     const sortColumn = Object.hasOwn(allowedSortColumns, sort_by) ? allowedSortColumns[sort_by] : 'a.id';
     const sortDirection = sort_order === 'ascend' ? 'asc' : 'desc';
     const orderBy = `${sortColumn} ${sortDirection}`;
+    // 排除外部邮箱引用行（Part 2：source_meta='external' 是用户自助接入外部邮箱时
+    // 写入 address 表的「引用占位」，仅作 users_address join 用，不属于本站域名地址。
+    // admin 地址管理页不应把它们当成可建址/可收信的本站地址展示，否则管理员看到一堆
+    // gmail/qq 外部地址且点删除会误删用户接入引用 → 隔离作用域被破坏。）
+    const NOT_EXTERNAL = `(source_meta IS NULL OR source_meta != 'external')`;
     if (query) {
         // D1 caps LIKE pattern length at 50 bytes; fall back to instr() for
         // longer queries to avoid "LIKE or GLOB pattern too complex" (#956).
@@ -30,8 +36,8 @@ const listAddresses = async (c: Context<HonoCustomType>) => {
             + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name) AS mail_count,`
             + ` (SELECT COUNT(*) FROM sendbox WHERE address = a.name) AS send_count`
             + ` FROM address a`
-            + ` where ${whereClause}`,
-            `SELECT count(*) as count FROM address where ${whereClause}`,
+            + ` where ${whereClause} AND ${NOT_EXTERNAL}`,
+            `SELECT count(*) as count FROM address where ${whereClause} AND ${NOT_EXTERNAL}`,
             [param], limit, offset, orderBy, ['password']
         );
     }
@@ -39,8 +45,9 @@ const listAddresses = async (c: Context<HonoCustomType>) => {
         `SELECT a.*,`
         + ` (SELECT COUNT(*) FROM raw_mails WHERE address = a.name) AS mail_count,`
         + ` (SELECT COUNT(*) FROM sendbox WHERE address = a.name) AS send_count`
-        + ` FROM address a`,
-        `SELECT count(*) as count FROM address`,
+        + ` FROM address a`
+        + ` where ${NOT_EXTERNAL}`,
+        `SELECT count(*) as count FROM address where ${NOT_EXTERNAL}`,
         [], limit, offset, orderBy, ['password']
     );
 };
@@ -70,6 +77,15 @@ const createNewAddress = async (c: Context<HonoCustomType>) => {
 const deleteAddress = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
     const { id } = c.req.param();
+    // 拒删外部邮箱引用行（Part 2）：source_meta='external' 的 address 行是用户自助
+    // 接入外部邮箱时写入的归属引用占位，删了会破坏该用户的 to_addr 隔离作用域。
+    // 这类行只能由用户在「我的邮箱」页删 mailbox 时连带解绑，管理员不得从地址页误删。
+    const target = await c.env.DB.prepare(
+        `SELECT source_meta FROM address WHERE id = ?`
+    ).bind(id).first<{ source_meta: string | null }>();
+    if (target && target.source_meta === 'external') {
+        return c.text(msgs.AddressNotFoundMsg, 404);
+    }
     // single batch runs as one transaction: rows keyed by address name are
     // deleted first and the address row last, so the name subqueries still
     // resolve and a failed statement rolls back the whole deletion
@@ -137,7 +153,8 @@ const showPassword = async (c: Context<HonoCustomType>) => {
     ).bind(id).first("name");
     const jwt = await Jwt.sign({
         address: name,
-        address_id: id
+        address_id: id,
+        exp: addressJwtExpSeconds(c),
     }, c.env.JWT_SECRET, "HS256")
     return c.json({ jwt });
 };

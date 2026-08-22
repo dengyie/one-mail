@@ -328,7 +328,6 @@ onMounted(async () => {
                                 {{ t('randomSubdomainTip') }}
                             </p>
                         </n-form-item-row>
-                        <Turnstile v-model:value="cfToken" />
                         <n-button type="primary" block secondary strong @click="newEmail" :loading="loading">
                             <template #icon>
                                 <n-icon :component="NewLabelOutlined" />

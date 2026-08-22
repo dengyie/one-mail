@@ -1,8 +1,0 @@
-[Unit]
-Description=one-mail IMAP aggregator
-After=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=/opt/one-mail-agg/aggregator
-ExecStart=/opt/one-mail-agg/aggregator/.venv/bin/python -m one_mail_agg.main /opt/one-mail-agg/config.json

@@ -6,6 +6,8 @@ import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValu
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { CONSTANTS } from './constants';
 import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
+import { addressJwtExpSeconds } from './unified/address_token';
+import { isSafeWebhookUrl } from './unified/webhook_url';
 import i18n from './i18n';
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
@@ -446,7 +448,8 @@ export const newAddress = async (
             // create jwt
             const jwt = await Jwt.sign({
                 address: address,
-                address_id: address_id
+                address_id: address_id,
+                exp: addressJwtExpSeconds(c),
             }, c.env.JWT_SECRET, "HS256")
             return {
                 jwt: jwt,
@@ -834,6 +837,14 @@ export async function sendWebhook(
                 formatMap[key as keyof WebhookMail]
             ).replace(/^"(.*)"$/, '$1')
         );
+    }
+    // I7d webhook SSRF 防护：URL 由 admin 或 allow-list 内用户可配，若指向
+    // 169.254.169.254/内网等地址即可做 SSRF。Workers 无 dns/net 模块，fetch 时
+    // 的 DNS-rebinding 无法全拦——这里做静态 best-effort 校验（拒私有/回环/元数据），
+    // 运行时 rebinding 仍为残留风险（见 changelog）。
+    if (!isSafeWebhookUrl(settings.url)) {
+        console.warn("send webhook blocked unsafe url", settings.url);
+        return { success: false, message: "unsafe webhook url (private/internal IP or invalid)" };
     }
     const response = await fetch(settings.url, {
         method: settings.method,

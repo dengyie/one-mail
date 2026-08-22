@@ -94,3 +94,26 @@ export function scopeQuery(key: Pick<ApiKeyRow, "role" | "allowed_sources" | "al
     if (accounts && accounts.length > 0 && !out.account_id) out.account_id = accounts.join(",");
     return out;
 }
+
+/**
+ * 用户登录通道（x-user-token）的收件地址归属作用域：
+ * 1) users_address JOIN address —— 该用户绑定的本站邮箱地址（mangoqwq 域 + 外部引用行）
+ * 2) user_mail_accounts.username —— 该用户自助接入的外部邮箱（Part 2），即 to_addr
+ * 两者 UNION 后逗号连接。无任何归属时返回哨兵 "__none__" —— 配合 buildEmailFilters
+ * 的 to_addr IN (...) 会让查询返回 0 行（fail-closed），而不是返回全部邮件。
+ *
+ * 注意：归属以 to_addr（收件人）为准，不是 account_id（聚合器账号 id）。
+ * 外部邮箱的 to_addr 直接取自 user_mail_accounts.username，不依赖 users_address 的
+ * address_id UNIQUE 约束——两个用户接入同名外部邮箱时各自归属隔离，互不串看。
+ */
+export async function userAddressScope(db: D1Database, userId: number): Promise<string> {
+    const { results } = await db.prepare(
+        `SELECT a.name AS name FROM users_address ua
+         JOIN address a ON a.id = ua.address_id
+         WHERE ua.user_id = ?
+         UNION
+         SELECT username AS name FROM user_mail_accounts WHERE user_id = ? AND enabled = 1`
+    ).bind(userId, userId).all<{ name: string }>();
+    if (!results || results.length === 0) return "__none__";
+    return results.map((r) => r.name).filter(Boolean).join(",");
+}

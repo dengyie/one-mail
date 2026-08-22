@@ -30,6 +30,8 @@ const fetchRoleConfigs = async () => {
         tableData.value = systemRoles.value.map(roleObj => ({
             role: roleObj.role,
             max_address_count: configs[roleObj.role]?.maxAddressCount ?? null,
+            // 外部邮箱接入上限；空=用全局默认 5（getMaxMailAccountCount）
+            max_mail_account_count: configs[roleObj.role]?.maxMailAccountCount ?? null,
         }));
     } catch (error) {
         console.log(error)
@@ -42,8 +44,17 @@ const saveConfig = async () => {
         // convert tableData to object with nested structure
         const configs = {};
         tableData.value.forEach(row => {
-            if (row.max_address_count !== null && row.max_address_count !== undefined) {
-                configs[row.role] = { maxAddressCount: row.max_address_count };
+            // 只为显式配置过的角色写键，空值省略（后端缺失即回退默认）
+            if (row.max_address_count !== null && row.max_address_count !== undefined
+                || row.max_mail_account_count !== null && row.max_mail_account_count !== undefined) {
+                const cfg = {};
+                if (row.max_address_count !== null && row.max_address_count !== undefined) {
+                    cfg.maxAddressCount = row.max_address_count;
+                }
+                if (row.max_mail_account_count !== null && row.max_mail_account_count !== undefined) {
+                    cfg.maxMailAccountCount = row.max_mail_account_count;
+                }
+                configs[row.role] = cfg;
             }
         });
 
@@ -86,6 +97,23 @@ const columns = [
                 style: 'width: 200px;',
                 onUpdateValue: (value) => {
                     row.max_address_count = value;
+                }
+            })
+        }
+    },
+    {
+        title: t('maxMailAccountCount'),
+        key: 'max_mail_account_count',
+        render(row) {
+            return h(NInputNumber, {
+                value: row.max_mail_account_count,
+                min: 0,
+                max: 999,
+                clearable: true,
+                placeholder: t('notConfiguredMailAccount'),
+                style: 'width: 200px;',
+                onUpdateValue: (value) => {
+                    row.max_mail_account_count = value;
                 }
             })
         }

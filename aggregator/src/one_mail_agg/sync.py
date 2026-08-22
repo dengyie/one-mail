@@ -14,7 +14,9 @@ log = logging.getLogger("one-mail-agg")
 
 
 def default_client_factory(account: AccountConfig) -> IMAPClient:
-    c = IMAPClient(account.host, port=account.port, ssl=account.use_ssl)
+    # 30s socket 超时与 POP3 一致：界住单个挂死的 IMAP 账号，不让它吃满整轮
+    # 240s 预算而饿死同轮其它账号（I3）。
+    c = IMAPClient(account.host, port=account.port, ssl=account.use_ssl, timeout=30)
     c.login(account.username, account.password)
     return c
 

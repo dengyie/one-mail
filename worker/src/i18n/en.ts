@@ -31,6 +31,7 @@ const messages: LocaleMessages = {
     InvalidEmailOrPasswordMsg: "Invalid email or password",
     VerifyMailSenderNotSetMsg: "Verify mail sender address is not set, please contact the administrator",
     CodeAlreadySentMsg: "Code already sent, please wait",
+    RateLimitExceededMsg: "Too many requests, please try again later",
     InvalidUserDefaultRoleMsg: "Invalid user default role, please contact the administrator",
     FailedUpdateUserDefaultRoleMsg: "Failed to update user default role, please contact the administrator",
 

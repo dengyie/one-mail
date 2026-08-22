@@ -6,6 +6,7 @@ import { UserSettings, GeoData, UserInfo, RoleAddressConfig } from "../models";
 import { handleListQuery } from '../common'
 import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
+import { mergeRoleAddressConfigs } from "../unified/rbac_config";
 
 export default {
     getSetting: async (c: Context<HonoCustomType>) => {
@@ -190,8 +191,16 @@ export default {
             if (typeof config?.maxAddressCount === "number" && config.maxAddressCount < 0) {
                 return c.text(msgs.InvalidMaxAddressCountMsg, 400);
             }
+            // 外部邮箱接入上限（角色化配额）。缺失/负数非法，与 maxAddressCount 同口径校验。
+            if (typeof config?.maxMailAccountCount === "number" && config.maxMailAccountCount < 0) {
+                return c.text(msgs.InvalidMaxAddressCountMsg, 400);
+            }
         }
-        await saveSetting(c, CONSTANTS.ROLE_ADDRESS_CONFIG_KEY, JSON.stringify(configs));
+        // C2 [安全]: 改 merge（PATCH 语义）而非整表替换，避免两 admin 并发配不同 role 互覆盖。
+        // incoming 中提交的 role 键覆盖既有同名 role 对象；未提交的 role 保留原值。
+        const existing = await getJsonSetting<RoleAddressConfig>(c, CONSTANTS.ROLE_ADDRESS_CONFIG_KEY);
+        const merged = mergeRoleAddressConfigs(existing, configs);
+        await saveSetting(c, CONSTANTS.ROLE_ADDRESS_CONFIG_KEY, JSON.stringify(merged));
         return c.json({ success: true });
     },
 }

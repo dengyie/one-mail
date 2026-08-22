@@ -200,6 +200,9 @@ export type SendMailLimitConfig = {
 
 export type RoleConfig = {
     maxAddressCount?: number;
+    // 外部邮箱接入上限；缺失/负数 → 回退全局默认 5（getMaxMailAccountCount）。
+    // 与 maxAddressCount 同走 role_address_config，admin 后台按角色配。
+    maxMailAccountCount?: number;
     // future configs can be added here
 }
 

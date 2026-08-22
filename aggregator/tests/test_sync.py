@@ -7,6 +7,21 @@ from one_mail_agg.imap_base import RawMessage
 from one_mail_agg.state import SyncState
 
 
+def test_default_client_factory_uses_30s_timeout(monkeypatch):
+    """I3：默认 IMAP 客户端工厂必须带 30s socket 超时，单账号挂死不拖垮整轮。"""
+    calls = []
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            calls.append((a, kw))
+        def login(self, u, p):
+            pass
+    monkeypatch.setattr(sync_mod, "IMAPClient", _FakeClient)
+    acc = _acc()
+    client = sync_mod.default_client_factory(acc)
+    assert isinstance(client, _FakeClient)
+    assert calls == [(("imap.163.com",), {"port": 993, "ssl": True, "timeout": 30})]
+
+
 def _cfg(accounts):
     return Config(worker_base_url="https://one-mail.x.workers.dev", admin_token="secret",
                   accounts=accounts, state_path="st.json")

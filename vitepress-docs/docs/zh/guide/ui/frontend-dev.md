@@ -132,8 +132,14 @@ pnpm dev            # Vite dev server http://localhost:5173
 | `VITE_IS_TELEGRAM` | Telegram 专属构建形态开关（`true` 时用 `build:telegram`） | 否 |
 
 > [!WARNING]
-> **不要**在仓库里提交真实密钥/token。`.env.example` / `.env.pages` 只存档占位符号生产
-> 地址。
+> **不要**在仓库里提交真实密钥/token。`.env.example` / `.env.pages.example` 只存档占位符与
+> 说明；`.env.pages` 已被忽略、不入 git。
+
+> [!NOTE]
+> `frontend/.env.pages` 已加入根 `.gitignore`（I1 安全加固）——它是密钥落地区，禁止提交，
+> 仓库只留 `.env.pages.example` 样例。但 `pnpm build:pages` 会隐式加载 `.env.pages`
+> （Vite `-m pages`），因此 pxed 部署必须在构建机执行 `build:pages` **之前**用
+> `scp`/注入方式把 `frontend/.env.pages` 就位（值参考 `.env.pages.example`）。
 
 示例：
 
@@ -164,26 +170,25 @@ VITE_CF_WEB_ANALY_TOKEN=
 
 ## 5. one-mail 统一收件箱 & API 鉴权
 
-### API-key（Bearer）鉴权
+### 登录用户与 API-key 鉴权
 
-`/api/unified/*` 不与临时邮箱的 JWT 体系耦合，而是独立使用 **Bearer API-key** 鉴权：
+`/api/unified/*` 支持两条鉴权通道，浏览器登录用户优先使用现有用户体系：
 
-- 由 `POST /admin/unified/keys` 创建（`x-admin-auth` 保护），创建时返回一次明文 key。
-- 每个 key 可带 `role`（`readonly` / `admin`）以及 `allowed_sources` / `allowed_accounts`
-  白名单。
-- 前端在请求 `/api/unified/*` 时注入 `Authorization: Bearer <apiKey>`。
-- 行级敏感数据（如单封邮件 `/api/unified/emails/:id`）用 `canAccessRow` 做 fail-closed
-  校验：row 的 `source`/`account_id` 任一为 `NULL`/空时拒绝（C1 security 修复）。
+- 用户登录后发送 `x-user-token`（现有 `users` JWT）。具备 `ADMIN_USER_ROLE` 的用户为管理员，可查看全部归集邮件。
+- 普通用户按 `users_address → address.name → emails.to_addr` 做归属过滤，只能查看自己绑定地址的邮件；没有绑定地址时 fail-closed 返回空结果。
+- 没有登录用户时仍可使用 `Authorization: Bearer <apiKey>`，供聚合器或脚本程序化访问。
+- API key 由 `POST /admin/unified/keys` 创建（`x-admin-auth` 保护），创建时返回一次明文 key；每个 key 可带 `role`（`readonly` / `admin`）以及 `allowed_sources` / `allowed_accounts` 白名单。
+- 单封邮件读取与标记已读、验证码查询都会执行对应的行级/地址级作用域校验；API-key 行级校验对缺失或空的 `source`/`account_id` fail-closed。
 
 ### 统一收件箱 API 端点
 
 | 端点 | 方法 | 说明 | 鉴权 |
 |------|------|------|------|
-| `/api/unified/emails` | GET | 分页查询邮件（支持 `source`/`account_id`/`unread` 过滤） | API-key |
-| `/api/unified/emails/:id` | GET | 单封邮件（含 raw） | API-key（行级白名单校验） |
-| `/api/unified/count` | GET | 邮件计数 | API-key |
-| `/api/unified/verifcodes` | GET | 验证码邮件查询（`addr`/`fresh`） | API-key |
-| `/api/unified/emails/:id/read` | POST | 标记已读 | API-key（`readonly` 被 403） |
+| `/api/unified/emails` | GET | 分页查询邮件（支持 `source`/`account_id`/`unread` 过滤） | 用户 JWT / API-key |
+| `/api/unified/emails/:id` | GET | 单封邮件（含 raw，执行归属校验） | 用户 JWT / API-key |
+| `/api/unified/count` | GET | 邮件计数 | 用户 JWT / API-key |
+| `/api/unified/verifcodes` | GET | 验证码邮件查询（`addr`/`fresh`，执行归属校验） | 用户 JWT / API-key |
+| `/api/unified/emails/:id/read` | POST | 标记已读（执行归属校验，readonly key 被 403） | 用户 JWT / API-key |
 | `/api/unified/ingest` | POST | 聚合器写入 | `x-admin-auth` |
 | `/admin/unified/keys` | POST | 创建 API-key | `x-admin-auth` |
 
@@ -214,9 +219,11 @@ VITE_CF_WEB_ANALY_TOKEN=
 
 ### 关键实现点
 
-- `src/api/index.js`：`unifiedFetch` 只注入 `Authorization: Bearer <unifiedApiKey>`（复用
-  `safeBearerHeader` 过滤非法字符），不触发全局 loading、不携带站点 JWT；`buildUnifiedQuery`
+- `src/api/index.js`：登录用户优先由 `unifiedUserFetch` 注入 `x-user-token`；未登录时回退到
+  `unifiedFetch` 的 `Authorization: Bearer <unifiedApiKey>`，两者都不触发全局 loading；`buildUnifiedQuery`
   负责把 `source`/`account_id` 数组拼成逗号多值。
+- 页面未登录且未配置 API-key 时显示登录入口；登录后无需 API-key，管理员看全部，普通用户由 Worker 自动限制到绑定地址。
+- `UnifiedInboxDetail.vue` 直接深链接打开时也执行同一鉴权选择，单封邮件和标记已读不会绕过 Worker 作用域。
 - `src/store/index.js`：`unifiedApiKey`（`useLocalStorage`）保存 key。
 - `src/components/ai/`：从 awesome-ui 复制的纯 Tailwind 组件（`StatusIndicator` 等，
   `<script setup lang="ts">` 无需改动即可使用）。

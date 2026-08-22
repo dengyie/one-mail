@@ -1,6 +1,6 @@
 import { Context } from "hono";
 import { buildEmailFilters } from "./unified_query";
-import { scopeQuery } from "./api_keys";
+import { resolveScope, checkRowAccess } from "./auth_scope";
 import { extractVerifCode } from "./verifcode";
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
@@ -15,7 +15,8 @@ const intOr400 = (c: Context<HonoCustomType>, v: string | undefined, fallback: n
 };
 
 export const countEmails = async (c: Context<HonoCustomType>) => {
-    const q = scopeQuery(c.get("apiKey"), c.req.query());
+    const q = await resolveScope(c, c.req.query());
+    if (q === null) return c.json({ count: 0 });
     const { where, params } = buildEmailFilters(q);
     const count = await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${where}`)
         .bind(...params).first("count");
@@ -23,12 +24,12 @@ export const countEmails = async (c: Context<HonoCustomType>) => {
 };
 
 export const verifCodes = async (c: Context<HonoCustomType>) => {
-    const key = c.get("apiKey");
     const q = c.req.query();
     const addr = q.addr;
     if (!addr) return c.json({ error: "addr required" }, 400);
-    // 注入 key 白名单（若 key 限定 source/account，则 WHERE 必须带上）
-    const scoped = scopeQuery(key, { ...q, addr: undefined });
+    // 注入鉴权作用域（用户 to_addr / API-key 白名单），并去掉透传的 addr（下方单独绑定）
+    const scoped = await resolveScope(c, { ...q, addr: undefined });
+    if (scoped === null) return c.json({ results: [] });
     const { where, params } = buildEmailFilters(scoped);
     if (!where) return c.json({ error: "unscoped" }, 400);
     let freshMs = 10 * 60 * 1000;                        // 默认 10 分钟内
@@ -47,9 +48,14 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
 
 export const markRead = async (c: Context<HonoCustomType>) => {
     const id = c.req.param("id");
-    // 先确认行存在，避免"已读行 UPDATE 无生效行(rows-changed=0)"被误判为 404
-    const exists = await c.env.DB.prepare(`SELECT id FROM emails WHERE id = ?`).bind(id).first();
-    if (!exists) return c.json({ error: "not found" }, 404);
+    // 先取行（含 to_addr/source/account_id 用于行级校验），不存在 → 404
+    const row = await c.env.DB.prepare(
+        `SELECT id, source, account_id, to_addr FROM emails WHERE id = ?`
+    ).bind(id).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null } | null;
+    if (!row) return c.json({ error: "not found" }, 404);
+    if (!(await checkRowAccess(c, row))) {
+        return c.json({ error: "forbidden" }, 403);
+    }
     await c.env.DB.prepare(`UPDATE emails SET is_read = 1, updated_at = ? WHERE id = ?`)
         .bind(Date.now(), id).run();
     return c.json({ ok: true });

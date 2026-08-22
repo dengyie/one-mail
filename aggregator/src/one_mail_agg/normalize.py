@@ -85,7 +85,15 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
     from_hdr = _dec(msg.get("From", ""))
     _parsed = parseaddr(from_hdr)[1]
     from_addr = _parsed if ("@" in _parsed) else (from_hdr or "unknown")
-    to_addr = parseaddr(_dec(msg.get("To", "")))[1] or account.username
+    # to_addr 恒等于 account.username，不再取 To: 头。
+    # 归属语义：聚合器是用「该邮箱凭据」登录抓取的，抓到的所有邮件必然属于该
+    # 邮箱主人。统一收件箱按 to_addr 做归属隔离（resolveScope 把 to_addr IN 作用域
+    # 过滤给用户），若取 To: 头则 alias（user+tag@）、邮件列表转发、bcc、多收件人
+    # 等场景下 to_addr ≠ username → 邮件变孤儿（谁的 scope 都匹配不到），用户看不到
+    # 本该属于自己邮箱的邮件（可达性缺口，非泄漏——隔离层已拦住跨租户串看）。
+    # 固定取 username 保证每封抓回来的邮件都能被邮箱主人看到；原 To: 头仍在
+    # headers_json 里完整保留，展示需求不受影响。
+    to_addr = account.username
     return {
         "source": account.source,
         "account_id": account.id,

@@ -7,7 +7,10 @@ import { NButton, NPopconfirm } from 'naive-ui'
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
 
-const { userJwt, userSettings, } = useGlobalState()
+const {
+    userJwt, userSettings, auth, jwt,
+    addressPassword, userOauth2SessionState, userOauth2SessionClientID,
+} = useGlobalState()
 const message = useMessage()
 
 const showLogout = ref(false)
@@ -22,7 +25,13 @@ const { t } = useScopedI18n('views.user.UserSettings')
 
 
 const logout = async () => {
+    // 清空全部鉴权凭据（C3：退出登录后不清会残留在 localStorage，共享设备可继续操作）
     userJwt.value = '';
+    auth.value = '';
+    jwt.value = '';
+    addressPassword.value = '';
+    userOauth2SessionState.value = '';
+    userOauth2SessionClientID.value = '';
     location.reload()
 }
 

@@ -461,44 +461,39 @@ export const hashPassword = async (password: string): Promise<string> => {
     return hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export const getMaxAddressCount = async (
-    c: Context<HonoCustomType>,
-    userRole: string | null | undefined,
-    settings: UserSettings
-): Promise<number> => {
-    if (!userRole) return settings.maxAddressCount;
-    const roleConfigs = await getJsonSetting<RoleAddressConfig>(c, CONSTANTS.ROLE_ADDRESS_CONFIG_KEY);
-    if (!roleConfigs) return settings.maxAddressCount;
-    const roleMaxCount = roleConfigs[userRole]?.maxAddressCount;
-    if (typeof roleMaxCount !== 'number') return settings.maxAddressCount;
-    if (roleMaxCount < 0) return settings.maxAddressCount;
-    return roleMaxCount;
-};
-
 /**
- * 检查用户是否已达到地址数量限制
- * @param c - Hono Context
- * @param user_id - 用户 ID
- * @param userRole - 用户角色
- * @returns true 表示已超限，false 表示未超限
+ * KV-backed registration rate limit. Counts attempts per (action|ip) in a 60s window
+ * using a TTL key holding a small counter JSON. Returns true when allowed, false when over.
+ * No-op (always allows) when KV is unbound, so it can't break unrelated deploys.
  */
-export const isAddressCountLimitReached = async (
-    c: Context<HonoCustomType>,
-    user_id: number | string,
-    userRole: string | null | undefined
+export const checkRegistrationRateLimit = async (
+    c: Context<HonoCustomType>, action: string, limit = 5, windowSec = 60
 ): Promise<boolean> => {
-    const value = await getJsonSetting(c, CONSTANTS.USER_SETTINGS_KEY);
-    const settings = new UserSettings(value);
-    const maxAddressCount = await getMaxAddressCount(c, userRole, settings);
+    if (!c.env.KV) return true;
+    const ip = c.req.raw.headers.get("cf-connecting-ip") || "unknown";
+    const key = `reglimit|${action}|${ip}|${Math.floor(Date.now() / (windowSec * 1000))}`;
+    try {
+        const raw = await c.env.KV.get(key);
+        const count = raw ? (parseInt(raw, 10) || 0) : 0;
+        if (count >= limit) return false;
+        // TTL slightly beyond the window so the key self-expires
+        await c.env.KV.put(key, String(count + 1), { expirationTtl: windowSec + 5 });
+        return true;
+    } catch (e) {
+        console.error("registration rate limit check failed", e);
+        // I7b: KV 异常明确打 warn 日志（保留 fail-open——KV 宕了宁可放行注册
+        // 也别锁死全站注册；真正的暴力破解面 admin 已由 admin_lockout.ts fail-closed 兜底）。
+        console.warn("registration rate limit KV error (fail-open)", e);
+        return true; // fail-open: don't block legit users if KV hiccups
+    }
+}
 
-    if (maxAddressCount <= 0) return false;
-
-    const { count } = await c.env.DB.prepare(
-        `SELECT COUNT(*) as count FROM users_address where user_id = ?`
-    ).bind(user_id).first<{ count: number }>() || { count: 0 };
-
-    return count >= maxAddressCount;
-};
+// 配额三函数（getMaxAddressCount / getMaxMailAccountCount / isAddressCountLimitReached）
+// 已抽到 ./quota.ts —— 独立成文件便于 node --experimental-strip-types --test 直跑单测
+// （utils.ts 经 gzip.ts → ./models 的 type-only 值 import 在 strip-types 下会 SyntaxError，
+// quota.ts 只引纯值/类/import type，零脏依赖）。这里 re-export 保持调用方仍从 "../utils"
+// 导入，无破坏。
+export { getMaxAddressCount, getMaxMailAccountCount, isAddressCountLimitReached } from "./quota";
 
 export default {
     getJsonObjectValue,

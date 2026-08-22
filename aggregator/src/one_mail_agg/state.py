@@ -8,7 +8,12 @@ class SyncState:
         self._data = {"last_uid": {}, "uidvalidity": {}, "pop3_seen": {}, "fallback": {}}
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                self._data = json.load(f)
+                try:
+                    self._data = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    # 半截 JSON（旧版非原子写被 kill 的残留）：降级为全新状态、
+                    # 构造不抛错——否则一个坏文件就让所有账号的同步状态清零。
+                    self._data = {}
         # 旧/手工编辑的 state 可能缺键，补默认，避免 KeyError
         self._data.setdefault("last_uid", {})
         self._data.setdefault("uidvalidity", {})
@@ -81,5 +86,15 @@ class SyncState:
         self.save()
 
     def save(self) -> None:
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(self._data, f)
+        # 原子写：先写临时文件再 os.replace 替换，避免进程被 kill（240s 超时/OOM/重启）
+        # 时留下半截 JSON 导致下轮 json.load 抛错、全部账号同步状态丢失。
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._data, f)
+        except Exception:
+            # 写临时文件失败（磁盘满/权限/序列化错等）：清理残留 .tmp，不留垃圾。
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
+        os.replace(tmp, self.path)

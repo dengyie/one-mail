@@ -162,12 +162,43 @@ app.use('/api/*', async (c, next) => {
 		return;
 	}
 	if (c.req.path.startsWith("/api/unified")) {
+		// 用户登录通道：可选填充 userPayload（无 token 时为空，留给 unified
+		// 中间件按 Bearer API-key 处理或返回 401）。与 /api/new_address 同样的
+		// 非强制语义。
+		await checkUserPayload(c);
 		await next();
 		return;
 	}
 
 	try {
-		return await jwt({ secret: c.env.JWT_SECRET, alg: "HS256" })(c, next);
+		// 地址 JWT 校验（Phase 7 / I7a）。改用 hono Jwt.verify 直接校验而非 jwt() 中间件——
+		// 因为 jwt() 在校验成功后就调用 next() 跑完下游再返回，payload 事后无法再拦；
+		// 内联校验让我们能在 next() 之前检查 exp 并向 REJECT_EXPLESS_JWT 提供注入点。
+		// 抽取逻辑与 hono jwt() 中间件一致：Authorization: Bearer <token>，失败 401。
+		const token = c.req.raw.headers.get("Authorization");
+		if (!token) {
+			const lang = c.get("lang") || c.env.DEFAULT_LANG;
+			const msgs = i18n.getMessages(lang);
+			return c.text(msgs.InvalidAddressCredentialMsg, 401);
+		}
+		const parts = token.split(/\s+/);
+		if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer") {
+			const lang = c.get("lang") || c.env.DEFAULT_LANG;
+			const msgs = i18n.getMessages(lang);
+			return c.text(msgs.InvalidAddressCredentialMsg, 401);
+		}
+		const payload = await Jwt.verify(parts[1], c.env.JWT_SECRET, "HS256");
+		// REJECT_EXPLESS_JWT（默认 false）：拒绝缺少 exp 的地址 JWT（hono Jwt.verify
+		// 对无 exp 的 token 视为永不过期）。此部署前的旧 token 均无 exp——默认关，
+		// 保留约 90d 宽限，管理员手动打开后再踢掉旧 token，无需轮换 JWT_SECRET。
+		if (getBooleanValue(c.env.REJECT_EXPLESS_JWT) && !payload.exp) {
+			const lang = c.get("lang") || c.env.DEFAULT_LANG;
+			const msgs = i18n.getMessages(lang);
+			return c.text(msgs.InvalidAddressCredentialMsg, 401);
+		}
+		c.set("jwtPayload", payload as JwtPayload);
+		await next();
+		return;
 	} catch (e) {
 		console.warn(e);
 		const lang = c.get("lang") || c.env.DEFAULT_LANG;

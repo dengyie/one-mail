@@ -51,6 +51,10 @@ type Bindings = {
     ADMIN_PASSWORDS: string | string[] | undefined
     DISABLE_ADMIN_PASSWORD_CHECK: string | boolean | undefined
     JWT_SECRET: string
+    // 地址 JWT 过期天数（默认 90，见 unified/address_token.ts）；REJECT_EXPLESS_JWT=true
+    // 时拒绝无 exp 的旧地址 JWT（Phase 7 / I7a）
+    ADDRESS_JWT_TTL_DAYS: string | number | undefined
+    REJECT_EXPLESS_JWT: string | boolean | undefined
     BLACK_LIST: string | undefined
     ENABLE_AUTO_REPLY: string | boolean | undefined
     ENABLE_WEBHOOK: string | boolean | undefined
@@ -92,6 +96,9 @@ type Bindings = {
     // cf turnstile
     CF_TURNSTILE_SITE_KEY: string | undefined
     CF_TURNSTILE_SECRET_KEY: string | undefined
+
+    // AES-GCM 凭据加密密钥（32 字节 base64），加密 user_mail_accounts.cred_enc
+    MAIL_CRED_ENCRYPTION_KEY: string | undefined
 
     // resend
     RESEND_TOKEN: string | undefined
@@ -145,6 +152,15 @@ type Variables = {
     apiKey?: {
         id: string, name: string, key_hash: string, role: string,
         allowed_sources: string | null, allowed_accounts: string | null, enabled: number,
+    },
+    // 用户登录通道（x-user-token）鉴权后的统一收件箱上下文。
+    // 与 apiKey 并列：用户登录优先于 API-key（浏览器 UI 用），程序化访问仍走 apiKey。
+    unifiedUserAuth?: {
+        userPayload: UserPayload,
+        isAdmin: boolean,
+        // 普通用户的收件地址归属作用域（逗号多值，配合 buildEmailFilters 的 to_addr IN）。
+        // 管理员不设此字段（看全部）。无绑定地址时为 "__none__" 哨兵（fail-closed 返回 0 行）。
+        toAddrScope?: string,
     }
 }
 

@@ -34,7 +34,9 @@ import AiExtractSettings from './admin/AiExtractSettings.vue';
 const {
   adminAuth, showAdminAuth, adminTab, loading,
   globalTabplacement, showAdminPage, userSettings,
-  openSettings
+  openSettings, auth, jwt, userJwt,
+  userOauth2SessionState, userOauth2SessionClientID,
+  addressPassword
 } = useGlobalState()
 const message = useMessage()
 const router = useRouter()
@@ -70,6 +72,13 @@ const showLogoutModal = ref(false)
 const handleLogout = async () => {
   // 清空管理员认证
   adminAuth.value = '';
+  // 清空全部鉴权凭据（C3：退出登录后不清会残留在 localStorage，共享设备可继续操作）
+  auth.value = '';
+  jwt.value = '';
+  userJwt.value = '';
+  addressPassword.value = '';
+  userOauth2SessionState.value = '';
+  userOauth2SessionClientID.value = '';
   // 重置管理员相关状态
   showAdminAuth.value = false;
   adminTab.value = 'account';

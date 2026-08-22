@@ -2,6 +2,13 @@
   <div class="unified-detail max-w-4xl mx-auto px-4 py-6 text-left">
     <div v-if="loading" class="py-20 text-center text-zinc-400">{{ t('list.loading') }}</div>
 
+    <n-alert v-else-if="!hasAccess" type="warning" :show-icon="false" class="mb-4">
+      <div class="flex items-center justify-between gap-3">
+        <span>{{ t('auth.loginRequired') }}</span>
+        <n-button size="small" type="primary" @click="router.push('/user')">{{ t('auth.login') }}</n-button>
+      </div>
+    </n-alert>
+
     <n-empty v-else-if="error && !email" :description="error" class="py-20">
       <template #extra>
         <n-button size="small" @click="router.push('/unified')">{{ t('detail.back') }}</n-button>
@@ -96,8 +103,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowBackRound } from '@vicons/material'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
+import { useGlobalState } from '../store'
 
 const { t } = useScopedI18n('unified')
+const { userJwt, unifiedApiKey } = useGlobalState()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -106,8 +115,13 @@ const email = ref(null)
 const loading = ref(true)
 const error = ref('')
 const marking = ref(false)
+const hasAccess = computed(() => !!userJwt.value?.trim() || !!unifiedApiKey.value?.trim())
 
 const load = async () => {
+  if (!hasAccess.value) {
+    loading.value = false
+    return
+  }
   loading.value = true
   error.value = ''
   email.value = null

@@ -5,6 +5,7 @@ import { isAddressCountLimitReached } from "../utils"
 import { unbindTelegramByAddress } from '../telegram_api/common';
 import i18n from '../i18n';
 import { updateAddressUpdatedAt, commonGetUserRole, handleListQuery, hideObjectFields } from '../common';
+import { addressJwtExpSeconds } from '../unified/address_token';
 
 const UserBindAddressModule = {
     bind: async (c: Context<HonoCustomType>) => {
@@ -171,7 +172,8 @@ const UserBindAddressModule = {
         ).bind(address_id).first("name");
         const jwt = await Jwt.sign({
             address: name,
-            address_id: address_id
+            address_id: address_id,
+            exp: addressJwtExpSeconds(c),
         }, c.env.JWT_SECRET, "HS256")
         return c.json({
             jwt: jwt

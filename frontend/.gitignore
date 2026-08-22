@@ -29,6 +29,7 @@ coverage
 
 .env.*
 !.env.example
-!.env.pages
+# I1: .env.pages 不允许入库（密钥落地区），部署时由构建机注入；仓库只留 .env.pages.example
+!.env.pages.example
 *-dist/
 components.d.ts

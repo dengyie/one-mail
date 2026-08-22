@@ -9,7 +9,9 @@ import { hashPassword } from '../../utils'
 import { getRouterPathWithLang } from '../../utils'
 
 const {
-    jwt, settings, showAddressCredential, loading, openSettings
+    jwt, auth, userJwt, userOauth2SessionState, userOauth2SessionClientID,
+    addressPassword,
+    settings, showAddressCredential, loading, openSettings
 } = useGlobalState()
 const router = useRouter()
 const message = useMessage()
@@ -24,7 +26,13 @@ const confirmPassword = ref('')
 const { locale, t } = useScopedI18n('views.index.AccountSettings')
 
 const logout = async () => {
+    // C3：与 Admin/UserSettings 一致，退出时清空全部鉴权凭据，防共享设备残留。
     jwt.value = '';
+    auth.value = '';
+    userJwt.value = '';
+    addressPassword.value = '';
+    userOauth2SessionState.value = '';
+    userOauth2SessionClientID.value = '';
     await router.push(getRouterPathWithLang("/", locale.value))
     location.reload()
 }
@@ -34,7 +42,13 @@ const deleteAccount = async () => {
         await api.fetch(`/api/delete_address`, {
             method: 'DELETE'
         });
+        // C3：删除地址即登出，同样清空全部凭据。
         jwt.value = '';
+        auth.value = '';
+        userJwt.value = '';
+        addressPassword.value = '';
+        userOauth2SessionState.value = '';
+        userOauth2SessionClientID.value = '';
         await router.push(getRouterPathWithLang("/", locale.value))
         location.reload()
     } catch (error) {

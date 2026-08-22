@@ -244,6 +244,35 @@ const unifiedFetch = async (path, options = {}) => {
     return response.data;
 }
 
+// 统一收件箱用户通道：浏览器登录后使用现有用户 JWT，不依赖共享 API-key。
+const unifiedUserFetch = async (path, options = {}) => {
+    const token = safeHeaderValue(userJwt.value);
+    if (!token) {
+        throw new Error("not logged in");
+    }
+    const response = await instance.request(path, {
+        method: options.method || 'GET',
+        data: options.body || null,
+        headers: {
+            'Content-Type': 'application/json',
+            'x-user-token': token,
+        },
+    });
+    if (response.status >= 300) {
+        const detail = response.data && typeof response.data === 'object'
+            ? response.data.error || JSON.stringify(response.data)
+            : response.data;
+        throw new Error(`Code ${response.status}: ${detail || "error"}`);
+    }
+    return response.data;
+}
+
+// 登录用户优先；没有用户登录时保留 Bearer API-key 兼容路径。
+const unifiedAuthFetch = (path, options = {}) =>
+    safeHeaderValue(userJwt.value)
+        ? unifiedUserFetch(path, options)
+        : unifiedFetch(path, options);
+
 // 构造 /api/unified/emails 的查询串：source/account_id 逗号多值、未读标记、分页、关键词。
 const buildUnifiedQuery = (params = {}) => {
     const qs = new URLSearchParams();
@@ -270,19 +299,26 @@ export const api = {
     unified: {
         listEmails: async (params = {}) => {
             const s = buildUnifiedQuery(params);
-            return unifiedFetch(`/api/unified/emails${s ? `?${s}` : ''}`);
+            return unifiedAuthFetch(`/api/unified/emails${s ? `?${s}` : ''}`);
         },
-        getEmail: (id) => unifiedFetch(`/api/unified/emails/${encodeURIComponent(id)}`),
+        getEmail: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}`),
         count: async (params = {}) => {
             const s = buildUnifiedQuery(params);
-            return unifiedFetch(`/api/unified/count${s ? `?${s}` : ''}`);
+            return unifiedAuthFetch(`/api/unified/count${s ? `?${s}` : ''}`);
         },
         verifcodes: (addr, freshMs) =>
-            unifiedFetch(`/api/unified/verifcodes?addr=${encodeURIComponent(addr)}&fresh=${freshMs}`),
-        markRead: (id) => unifiedFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+            unifiedAuthFetch(`/api/unified/verifcodes?addr=${encodeURIComponent(addr)}&fresh=${freshMs}`),
+        markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
     },
     admin: {
         // 走 apiFetch：它已自动附带 x-admin-auth（管理员密码）
         createUnifiedKey: (body) => apiFetch('/admin/unified/keys', { method: 'POST', body }),
+    },
+    // 用户自助接入外部邮箱归集：走 apiFetch，自动附带 x-user-token
+    userMailAccounts: {
+        list: () => apiFetch('/user_api/mail_accounts'),
+        create: (body) => apiFetch('/user_api/mail_accounts', { method: 'POST', body }),
+        remove: (id) => apiFetch(`/user_api/mail_accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+        toggle: (id) => apiFetch(`/user_api/mail_accounts/${encodeURIComponent(id)}/toggle`, { method: 'POST' }),
     },
 }

@@ -147,8 +147,15 @@ config needed (the dev proxy forwards the same origin).
 | `VITE_IS_TELEGRAM` | Telegram-only build toggle (`true` → use `build:telegram`) | No |
 
 > [!WARNING]
-> **Never** commit real secrets/tokens. `.env.example` / `.env.pages` only hold placeholders
-> plus the production URL.
+> **Never** commit real secrets/tokens. `.env.example` / `.env.pages.example` only hold
+> placeholders plus explanations; `.env.pages` is gitignored and never committed.
+
+> [!NOTE]
+> `frontend/.env.pages` is now covered by the root `.gitignore` (I1 security hardening) — it
+> is a secret landing zone and must not be committed; only `.env.pages.example` is kept in the
+> repo. However, `pnpm build:pages` implicitly loads `.env.pages` (Vite `-m pages`), so the
+> pxed deploy must `scp`/inject `frontend/.env.pages` to the build host **before** running
+> `pnpm build:pages` (values per `.env.pages.example`).
 
 Example:
 
@@ -179,29 +186,25 @@ cross-origin to the Worker via `VITE_API_BASE`, so the page host needs no revers
 
 ## 5. one-mail Unified Inbox & API Auth
 
-### API-key (Bearer) auth
+### Logged-in user and API-key auth
 
-`/api/unified/*` is not coupled to the temp-mail JWT system; it uses its own
-**Bearer API-key** auth:
+`/api/unified/*` supports two auth channels, with the existing user system as the preferred browser path:
 
-- Keys are created via `POST /admin/unified/keys` (`x-admin-auth` protected); the plaintext
-  key is returned only once at creation.
-- Each key can carry `role` (`readonly` / `admin`) plus `allowed_sources` /
-  `allowed_accounts` whitelists.
-- The frontend sends `Authorization: Bearer <apiKey>` when calling `/api/unified/*`.
-- Row-level sensitive data (e.g. a single mail `/api/unified/emails/:id`) is checked with a
-  fail-closed `canAccessRow`: any `source`/`account_id` that is `NULL`/empty is denied
-  (C1 security fix).
+- A logged-in user sends `x-user-token` (the existing `users` JWT). Users whose role matches `ADMIN_USER_ROLE` are administrators and can see all aggregated mail.
+- Normal users are scoped through `users_address → address.name → emails.to_addr`, so they can only see mail addressed to their bound addresses. A user with no bound address is fail-closed and sees no rows.
+- Without a logged-in user, `Authorization: Bearer <apiKey>` remains available for the aggregator and scripted access.
+- API keys are created by `POST /admin/unified/keys` (`x-admin-auth` protected); the plaintext is returned only once. Keys may carry `role` (`readonly` / `admin`) and `allowed_sources` / `allowed_accounts` whitelists.
+- Single-mail reads and mark-read, plus verification-code queries, enforce the corresponding row/address scope. API-key row checks fail closed for missing or empty `source`/`account_id` values.
 
 ### Unified inbox API endpoints
 
 | Endpoint | Method | Purpose | Auth |
 |----------|--------|---------|------|
-| `/api/unified/emails` | GET | Paginated mail query (filter `source`/`account_id`/`unread`) | API-key |
-| `/api/unified/emails/:id` | GET | Single mail (incl. raw) | API-key (row-level whitelist) |
-| `/api/unified/count` | GET | Mail count | API-key |
-| `/api/unified/verifcodes` | GET | Verification-code mail query (`addr`/`fresh`) | API-key |
-| `/api/unified/emails/:id/read` | POST | Mark as read | API-key (`readonly` → 403) |
+| `/api/unified/emails` | GET | Paginated mail query (filter `source`/`account_id`/`unread`) | User JWT / API-key |
+| `/api/unified/emails/:id` | GET | Single mail (incl. raw, scoped) | User JWT / API-key |
+| `/api/unified/count` | GET | Mail count | User JWT / API-key |
+| `/api/unified/verifcodes` | GET | Verification-code mail query (`addr`/`fresh`, scoped) | User JWT / API-key |
+| `/api/unified/emails/:id/read` | POST | Mark as read (scoped; `readonly` key → 403) | User JWT / API-key |
 | `/api/unified/ingest` | POST | Ingest from aggregator | `x-admin-auth` |
 | `/admin/unified/keys` | POST | Create API-key | `x-admin-auth` |
 
@@ -233,10 +236,13 @@ Python aggregator through `/api/unified/*`. Routes: `/unified` (main page) and
 
 ### Key implementation points
 
-- `src/api/index.js`: `unifiedFetch` only injects `Authorization: Bearer <unifiedApiKey>`
-  (reuses `safeBearerHeader` to filter invalid characters), does not flip global loading and
-  does not attach the site JWT; `buildUnifiedQuery` joins `source`/`account_id` arrays into
-  comma-separated values.
+- `src/api/index.js`: logged-in users use `unifiedUserFetch`, which injects `x-user-token`; guests
+  fall back to `unifiedFetch` with `Authorization: Bearer <unifiedApiKey>`. Neither path flips global
+  loading; `buildUnifiedQuery` joins `source`/`account_id` arrays into comma-separated values.
+- The page shows a login entry when neither a user JWT nor an API key is available. After login, no
+  API key is required: administrators see all mail and normal users are scoped by the Worker to bound addresses.
+- `UnifiedInboxDetail.vue` applies the same auth selection for direct deep links, so single-mail reads
+  and mark-read cannot bypass the Worker scope.
 - `src/store/index.js`: `unifiedApiKey` (`useLocalStorage`) persists the key.
 - `src/components/ai/`: pure-Tailwind components copied from awesome-ui (`StatusIndicator`,
   etc., `<script setup lang="ts">` usable as-is).

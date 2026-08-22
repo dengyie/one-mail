@@ -1,7 +1,7 @@
 import { Context } from 'hono'
 
 import i18n from '../i18n';
-import { getBooleanValue, getJsonSetting, checkCfTurnstile, isAddressCountLimitReached } from '../utils';
+import { getBooleanValue, getJsonSetting, isAddressCountLimitReached } from '../utils';
 import { newAddress, getAddressPrefix, generateRandomName } from '../common'
 import { CONSTANTS } from '../constants'
 
@@ -9,7 +9,12 @@ const createNewAddress = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
     const userPayload = c.get("userPayload");
 
-    if (getBooleanValue(c.env.DISABLE_ANONYMOUS_USER_CREATE_EMAIL)
+    // I6 fail-closed：env 未设置时按 true 处理（文档默认即 true），消除配置遗漏暴露；
+    // 显式设 false/"0"/"false" 才允许匿名建址（保留显式 opt-in 出口）。
+    const anonymousForbidden = c.env.DISABLE_ANONYMOUS_USER_CREATE_EMAIL === undefined
+        ? true
+        : getBooleanValue(c.env.DISABLE_ANONYMOUS_USER_CREATE_EMAIL);
+    if (anonymousForbidden
         && !userPayload
     ) {
         return c.text(msgs.NewAddressAnonymousDisabledMsg, 403)
@@ -19,21 +24,19 @@ const createNewAddress = async (c: Context<HonoCustomType>) => {
     }
 
     // 如果启用了禁止匿名创建，且用户已登录，检查地址数量限制
-    if (getBooleanValue(c.env.DISABLE_ANONYMOUS_USER_CREATE_EMAIL) && userPayload) {
+    if (anonymousForbidden && userPayload) {
         const userRole = c.get("userRolePayload");
         if (await isAddressCountLimitReached(c, userPayload.user_id, userRole)) {
             return c.text(msgs.MaxAddressCountReachedMsg, 400)
         }
     }
 
+    // Turnstile 已从此处移除（2026-08-22 收紧到只守注册接口）：
+    // 建址在生产已受 DISABLE_ANONYMOUS_USER_CREATE_EMAIL 强制登录 + 数量限制 +
+    // checkRegistrationRateLimit 限流三重防护，盾对建址属于多余摩擦。
+    // 仍读 cf_token 以兼容旧前端，但不再校验。
     // eslint-disable-next-line prefer-const
-    let { name, domain, cf_token, enableRandomSubdomain } = await c.req.json();
-    // check cf turnstile
-    try {
-        await checkCfTurnstile(c, cf_token);
-    } catch (error) {
-        return c.text(msgs.TurnstileCheckFailedMsg, 400)
-    }
+    let { name, domain, enableRandomSubdomain } = await c.req.json();
     // Check if custom email names are disabled from environment variable
     const disableCustomAddressName = getBooleanValue(c.env.DISABLE_CUSTOM_ADDRESS_NAME);
 

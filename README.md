@@ -63,15 +63,15 @@ API key 支持 **readonly / admin** 两种角色，可绑定 `allowed_sources`�
 
 | 接口 | 说明 |
 |---|---|
-| `GET /api/unified/emails?source=&account=&limit=&offset=` | 统一收件箱翻页查询 |
-| `GET /api/unified/search?q=` | 关键词搜索全文 |
+| `GET /api/unified/emails?source=&account=&limit=&offset=&q=` | 统一收件箱翻页查询；`q=` 全文关键词搜索 |
 | `GET /api/unified/count?source=&unread=` | 邮件计数（含未读过滤） |
 | `GET /api/unified/verifcodes?addr=&fresh=` | 验证码提取（内置验证码识别纯函数） |
 | `GET /api/unified/emails/:id` | 单封邮件详情 |
 | `POST /api/unified/emails/:id/read` | 标记已读（admin） |
 | `POST /admin/unified/ingest` | 聚合器上传入口（`imap_uid` 幂等去重） |
 | `POST /admin/unified/keys` | 创建 API key（明文仅返回一次） |
-| `POST /admin/unified/accounts` | 管理聚合账号配置 |
+| `GET /admin/unified/mail_accounts` | 聚合器拉取启用中的用户邮箱并解密凭据（`x-admin-auth`） |
+| `POST /admin/unified/mail_accounts/:id/status` | 聚合器回写同步状态 / `last_error`（`x-admin-auth`） |
 
 ### 聚合器（aggregator/）
 
@@ -79,11 +79,11 @@ API key 支持 **readonly / admin** 两种角色，可绑定 `allowed_sources`�
 - **批量收敛**：滚动窗口按 `BATCH_SIZE`（默认 200）或 `BATCH_BYTES`（64 MiB）预算截断，`last_uid` 持续推进，大收件箱多轮收敛完成。
 - **防 OOM**：单封超 `MAX_SINGLE_BYTES`（30 MiB）跳过并推高水印，避免一封信打爆容器。
 - **幂等**：`(uidvalidity, imap_uid)` 走 Worker partial unique index，重复上传安全。
-- 运行：VPS 定时循环（`agg-loop.sh`），5 分钟一轮，supervisor/systemd 托管，无需新依赖（stdlib）。
+- 运行：VPS 定时循环（`agg-loop.sh`），5 分钟一轮，**supervisord 托管**（pxed 无 systemd/cron），无需新依赖（stdlib）。
 
-### 保留清理（R2/D1）
+### 保留清理（D1）
 
-`scheduled` 每次触发会删除已读且早于 90 天的邮件，并同步清理关联的 R2 附件键。
+`scheduled` 每次触发会分页删除 `is_read=1` 且 `received_at` 早于 90 天的邮件（D1 行）。R2 附件清理为预留逻辑（`retention.ts` 在配置了 `ATTACHMENTS` bucket 且行写入 `r2_key` 时才触发），当前生产未绑定 R2、聚合器亦不写 `r2_key`，故实际仅做 D1 清理。
 
 ---
 
@@ -105,7 +105,7 @@ pnpm deploy
 cd aggregator
 cp config.example.json config.json   # 填账号：protocol auto/imap/pop3 + 密码/OAuth
 pip install -e .
-# 定时循环：supervisor/systemd，每 5 分钟跑一轮
+# 定时循环：supervisord（见 deploy/README.md），每 5 分钟跑一轮
 ```
 
 ### 3. 前端

@@ -32,7 +32,8 @@ def oauth_client_factory(account: AccountConfig):
 
     def factory(acc: AccountConfig) -> IMAPClient:
         access = token_fn(acc.oauth or {})
-        c = IMAPClient(acc.host, port=acc.port, ssl=acc.use_ssl)
+        # 30s socket 超时与 POP3 / 默认 client 工厂一致（I3）：单账号挂死不拖垮整轮。
+        c = IMAPClient(acc.host, port=acc.port, ssl=acc.use_ssl, timeout=30)
         c.oauth2_login(acc.username, access)
         return c
     return factory

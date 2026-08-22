@@ -12,15 +12,26 @@
       <StatusIndicator :status="connStatus" :label="connLabel" />
     </div>
 
-    <!-- 未配置 API-key 提示 -->
+    <!-- 登录用户走用户 JWT；游客可使用兼容的 API-key 通道 -->
     <div
-      v-if="!hasKey"
+      v-if="!hasAccess"
       class="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 px-4 py-3 text-sm mb-4 flex items-center justify-between gap-3"
     >
-      <span>{{ t('status.noKey') }}</span>
-      <n-button size="small" type="primary" ghost @click="activeTab = 'settings'">
-        {{ t('tabs.settings') }}
-      </n-button>
+      <span>{{ t('auth.loginRequired') }}</span>
+      <div class="flex items-center gap-2 shrink-0">
+        <n-button size="small" type="primary" @click="router.push('/user')">
+          {{ t('auth.login') }}
+        </n-button>
+        <n-button size="small" ghost @click="activeTab = 'settings'">
+          {{ t('tabs.settings') }}
+        </n-button>
+      </div>
+    </div>
+    <div
+      v-else-if="!isLoggedIn && hasKey"
+      class="rounded-xl border border-sky-200 dark:border-sky-800/60 bg-sky-50 dark:bg-sky-950/30 text-sky-800 dark:text-sky-300 px-4 py-3 text-sm mb-4"
+    >
+      {{ t('auth.apiKeyMode') }}
     </div>
 
     <n-tabs v-model:value="activeTab" type="segment" class="unified-tabs">
@@ -279,21 +290,23 @@ import { useGlobalState } from '../store'
 import StatusIndicator from '../components/ai/StatusIndicator.vue'
 
 const { t } = useScopedI18n('unified')
-const { unifiedApiKey, adminAuth } = useGlobalState()
+const { unifiedApiKey, adminAuth, userJwt, userSettings } = useGlobalState()
 const router = useRouter()
 const message = useMessage()
 
+const isLoggedIn = computed(() => !!userJwt.value?.trim())
 const hasKey = computed(() => !!unifiedApiKey.value?.trim())
+const hasAccess = computed(() => isLoggedIn.value || hasKey.value)
 
 // ---- 顶部连接状态徽标 ----
 const connected = ref(false)
 const connStatus = computed(() => {
-  if (!hasKey.value) return 'offline'
+  if (!hasAccess.value) return 'offline'
   if (connected.value) return 'online'
   return 'connecting'
 })
 const connLabel = computed(() => {
-  if (!hasKey.value) return t('status.offline')
+  if (!hasAccess.value) return t('status.offline')
   if (connected.value) return t('status.online')
   return t('status.connecting')
 })
@@ -326,7 +339,7 @@ const listParams = computed(() => ({
 const filterActive = computed(() => !!(filterParams.value.source || filterParams.value.account_id || filterParams.value.unread || filterParams.value.q))
 
 const loadList = async () => {
-  if (!hasKey.value) return
+  if (!hasAccess.value) return
   loading.value = true
   listError.value = ''
   try {
@@ -358,7 +371,7 @@ const optionRows = ref([])
 const sourceOptions = computed(() => [...new Set(optionRows.value.map(r => r.source).filter(Boolean))].map(s => ({ label: s, value: s })))
 const accountOptions = computed(() => [...new Set(optionRows.value.map(r => r.account_id).filter(Boolean))].map(a => ({ label: a, value: a })))
 const loadOptions = async () => {
-  if (!hasKey.value) return
+  if (!hasAccess.value) return
   try {
     const res = await api.unified.listEmails({ limit: 300 })
     optionRows.value = res.results || []
@@ -380,7 +393,7 @@ const freshOptions = [
 ]
 
 const loadCodes = async () => {
-  if (!hasKey.value) return
+  if (!hasAccess.value) return
   if (!codesAddr.value.trim()) {
     codesError.value = t('codes.empty')
     codes.value = []
@@ -418,7 +431,7 @@ const statusError = ref('')
 const lastRefresh = ref(null)
 
 const loadStatus = async () => {
-  if (!hasKey.value) return
+  if (!hasAccess.value) return
   statusLoading.value = true
   statusError.value = ''
   try {
@@ -517,11 +530,14 @@ const refreshCurrent = () => {
   else if (activeTab.value === 'status') loadStatus()
 }
 
-// key 保存后自动刷新当前视图；首次挂载加载列表
-watch(hasKey, (v) => { if (v) { loadOptions(); refreshCurrent() } })
+// 登录态或 API-key 变化后自动刷新当前视图；首次挂载加载列表
+watch(hasAccess, (v) => { if (v) { loadOptions(); refreshCurrent() } })
 
-onMounted(() => {
-  if (hasKey.value) {
+onMounted(async () => {
+  if (userJwt.value && !userSettings.value.user_id) {
+    await api.getUserSettings(message)
+  }
+  if (hasAccess.value) {
     loadOptions()
     loadList()
   }

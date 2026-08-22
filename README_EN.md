@@ -55,16 +55,16 @@ Auth — separate from the temp-mail JWT base:
 
 API keys are `readonly` or `admin`, optionally scoped by `allowed_sources` / `allowed_accounts`.
 
-Key endpoints: `GET /api/unified/emails` · `/search` · `/count` · `/verifcodes` · `/:id` · `POST /:id/read` · `POST /admin/unified/ingest` · `POST /admin/unified/keys` · `POST /admin/unified/accounts`.
+Key endpoints: `GET /api/unified/emails` (list + `q=` keyword search) · `/count` · `/verifcodes` · `/:id` · `POST /:id/read` · `POST /admin/unified/ingest` · `POST /admin/unified/keys` · `GET /admin/unified/mail_accounts` (aggregator fetches enabled user mailboxes with decrypted credentials, `x-admin-auth`) · `POST /admin/unified/mail_accounts/:id/status` (aggregator writes back sync status / `last_error`, `x-admin-auth`).
 
 Aggregator notes:
 - **`protocol: auto`** — try IMAP, fall back to POP3 on `Unsafe Login` (verified on 163), then **pin** the account so no imap:/pop3: duplicates.
 - **Batched sync** — windowed by `BATCH_SIZE` (200) / `BATCH_BYTES` (64 MiB), advancing `last_uid`; oversized singles skipped above `MAX_SINGLE_BYTES` (30 MiB).
 - **Idempotent** — `(uidvalidity, imap_uid)` unique index on the Worker side.
 
-### Retention
+### Retention (D1)
 
-`scheduled` purges read emails older than 90 days, deleting related R2 attachment keys too.
+Each `scheduled` run paginates and deletes `is_read=1` emails whose `received_at` is older than 90 days (D1 rows). R2 attachment cleanup is reserved logic (`retention.ts` only fires it when an `ATTACHMENTS` bucket is bound **and** rows carry an `r2_key`); production has no R2 binding and the aggregator never writes `r2_key`, so in practice only D1 cleanup runs.
 
 ---
 
@@ -76,7 +76,7 @@ cd worker && cp wrangler.toml.template wrangler.toml && pnpm install && pnpm dep
 
 # 2. Aggregator (VPS)
 cd aggregator && cp config.example.json config.json   # accounts: protocol auto/imap/pop3
-pip install -e .                                      # run on a 5-min loop
+pip install -e .                                      # supervisord runs a 5-min loop (see deploy/README.md)
 
 # 3. Frontend
 cd frontend && cp .env.example .env.local   # VITE_API_BASE=https://<worker-domain>

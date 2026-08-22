@@ -11,6 +11,8 @@ export function buildEmailFilters(q: Record<string, string | undefined>): EmailF
     };
     if (q.source)      inClause("source", q.source);
     if (q.account_id)  inClause("account_id", q.account_id);
+    // to_addr：用户登录后的收件人地址归属过滤（用户 JWT 通道注入），同 inClause 多值模式
+    if (q.to_addr)     inClause("to_addr", q.to_addr);
     if (q.unread === "1") { clauses.push("is_read = 0"); }
     else if (q.unread === "0") { clauses.push("is_read = 1"); }
     if (q.since)       { clauses.push("received_at >= ?");  params.push(Number(q.since)); }

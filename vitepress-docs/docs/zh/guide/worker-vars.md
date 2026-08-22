@@ -131,7 +131,7 @@
 | `USER_DEFAULT_ROLE`                   | 文本      | 新用户默认角色, 仅在启用邮件验证时有效                                   | `vip`   |
 | `ADMIN_USER_ROLE`                     | 文本      | admin 角色配置, 如果用户角色等于 ADMIN_USER_ROLE 则可以访问 admin 控制台 | `admin` |
 | `USER_ROLES`                          | JSON      | -                                                                        | 见下方  |
-| `DISABLE_ANONYMOUS_USER_CREATE_EMAIL` | 文本/JSON | 禁用匿名用户创建邮箱，如果设置为 true，则用户只能在登录后创建邮箱地址    | `true`  |
+| `DISABLE_ANONYMOUS_USER_CREATE_EMAIL` | 文本/JSON | 禁用匿名用户创建邮箱，如果设置为 true，则用户只能在登录后创建邮箱地址。未设置时按 `true` 处理（fail-closed）：必须登录用户 token 才能建址，避免配置遗漏导致匿名建址暴露。显式设 `false` 才开放匿名建址 | `true`    |
 | `NO_LIMIT_SEND_ROLE`                  | 文本      | 可以无限发送邮件的角色, 多个角色使用逗号分割 `vip,admin`                 | `vip`   |
 
 > [!NOTE] USER_ROLES 用户角色配置说明
@@ -156,9 +156,10 @@
 | `DISABLE_SHOW_GITHUB`      | 文本/JSON   | 是否全局隐藏 GitHub 链接                         | `true`                |
 | `DISABLE_SHOW_GITHUB_FOR_USER` | 文本/JSON | 是否仅对普通用户隐藏 GitHub 链接，admin 仍显示   | `true`                |
 | `STATUS_URL`               | 文本        | 状态监控页面 URL，配置后显示 Status 菜单按钮     | `https://status.example.com` |
-| `CF_TURNSTILE_SITE_KEY`    | 文本/Secret | Turnstile 人机验证配置（用于新建邮箱、注册验证码等） | `xxx`                 |
-| `CF_TURNSTILE_SECRET_KEY`  | 文本/Secret | Turnstile 人机验证配置（用于新建邮箱、注册验证码等） | `xxx`                 |
-| `ENABLE_GLOBAL_TURNSTILE_CHECK` | 文本/JSON | 启用全局登录表单的 Turnstile 人机验证（管理员登录、用户登录、邮箱密码登录），需同时配置上述 Turnstile 密钥 | `true` |
+| `CF_TURNSTILE_SITE_KEY`    | 文本/Secret | Turnstile 人机验证配置（注册验证码、用户注册等关键注册接口） | `xxx`                 |
+| `CF_TURNSTILE_SECRET_KEY`  | 文本/Secret | Turnstile 人机验证配置（注册验证码、用户注册等关键注册接口） | `xxx`                 |
+| `ENABLE_GLOBAL_TURNSTILE_CHECK` | 文本/JSON | 启用全局登录表单的 Turnstile 人机验证（管理员登录、用户登录、邮箱密码登录），需同时配置上述 Turnstile 密钥。默认 `false`——2026-08-22 起 Turnstile 收紧到只守注册接口（`/user_api/verify_code` + `/user_api/register`），登录与建址的盾已移除以减少摩擦；建址另有 `DISABLE_ANONYMOUS_USER_CREATE_EMAIL` 强制登录 + 数量限制 + 限流三重防护。设 `true` 可重新为登录加盾。 | `false` |
+| `MAIL_CRED_ENCRYPTION_KEY` | 文本/Secret | AES-GCM 凭据加密密钥（32 字节 base64，`openssl rand -base64 32` 生成）。加密用户自助接入外部邮箱时存储的 IMAP/POP3 应用密码与 OAuth 配置（`user_mail_accounts.cred_enc`），聚合器经 `/admin/unified/mail_accounts` 拉取时解密。未配置时该功能 fail-closed 不可用。轮换密钥需重新加密全部凭据。 | `FTkhF6ZF...` |
 
 ## Telegram Bot 相关变量
 

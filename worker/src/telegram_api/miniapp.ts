@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { Jwt } from 'hono/utils/jwt'
 import { CONSTANTS } from "../constants";
 import { bindTelegramAddress, jwtListToAddressData, tgUserNewAddress, unbindTelegramAddress } from "./common";
-import { checkCfTurnstile, checkIsAdmin, getBooleanValue } from "../utils";
+import { checkIsAdmin, getBooleanValue } from "../utils";
 import { resolveRawEmailRow } from "../gzip";
 import { TelegramSettings } from "./settings";
 import i18n from "../i18n";
@@ -84,14 +84,10 @@ async function getTelegramBindAddress(c: Context<HonoCustomType>): Promise<Respo
 }
 
 async function newTelegramAddress(c: Context<HonoCustomType>): Promise<Response> {
-    const { initData, address, cf_token, enableRandomSubdomain } = await c.req.json();
+    const { initData, address, enableRandomSubdomain } = await c.req.json();
     const msgs = i18n.getMessagesbyContext(c);
-    // check cf turnstile
-    try {
-        await checkCfTurnstile(c, cf_token);
-    } catch (error) {
-        return c.text(msgs.TurnstileCheckFailedMsg, 400)
-    }
+    // Turnstile 已移除（2026-08-22 收紧到只守注册接口）：Telegram 建址本身走
+    // checkTelegramAuth 的 initData HMAC 签名校验，已是强鉴权，盾属多余摩擦。
     try {
         const userId = await checkTelegramAuth(c, initData);
         // get the address list from the KV

@@ -25,3 +25,9 @@ test("buildEmailFilters comma-separated source becomes IN clause (M4 multi-white
   assert.equal(f.where, "1=1 AND source IN (?,?)");
   assert.deepEqual(f.params, ["imap_qq", "imap_163"]);
 });
+
+test("buildEmailFilters scopes user mail by bound recipient addresses", () => {
+  const f = buildEmailFilters({ to_addr: "alice@example.com,bob@example.com", unread: "1" });
+  assert.equal(f.where, "1=1 AND to_addr IN (?,?) AND is_read = 0");
+  assert.deepEqual(f.params, ["alice@example.com", "bob@example.com"]);
+});

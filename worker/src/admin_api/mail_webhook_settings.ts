@@ -3,6 +3,7 @@ import { CONSTANTS } from "../constants";
 import { WebhookSettings, RawMailRow } from "../models";
 import { commonParseMail, sendWebhook } from "../common";
 import { resolveRawEmail } from "../gzip";
+import { isSafeWebhookUrl } from "../unified/webhook_url";
 
 async function getWebhookSettings(c: Context<HonoCustomType>): Promise<Response> {
     const settings = await c.env.KV.get<WebhookSettings>(
@@ -13,6 +14,10 @@ async function getWebhookSettings(c: Context<HonoCustomType>): Promise<Response>
 
 async function saveWebhookSettings(c: Context<HonoCustomType>): Promise<Response> {
     const settings = await c.req.json<WebhookSettings>();
+    // I7d：URL 保存时即校验 SSRF（拒私有/回环/元数据地址，坏 URL 不落库）
+    if (!isSafeWebhookUrl(settings.url)) {
+        return c.text("unsafe webhook url", 400);
+    }
     await c.env.KV.put(
         CONSTANTS.WEBHOOK_KV_ADMIN_MAIL_SETTINGS_KEY,
         JSON.stringify(settings));

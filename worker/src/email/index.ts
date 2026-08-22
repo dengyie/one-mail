@@ -45,8 +45,12 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
             { env: env } as Context<HonoCustomType>, CONSTANTS.EMAIL_RULE_SETTINGS_KEY
         );
         if (emailRuleSettings?.blockReceiveUnknowAddressEmail) {
+            // toAddress 只会是本站 mangoqwq 域地址（CF Email Routing 仅对本站域路由
+            // 到此 Worker；外部邮箱经聚合器 IMAP/POP3 抓取走 ingest 路径，不进这里）。
+            // 仍排除 source_meta='external' 引用行以明确语义：外部引用行不计作「本站已知
+            // 地址」，避免管理员误把外部引用当本站地址放行（防御性，域名不同本不冲突）。
             const db_address_id = await env.DB.prepare(
-                `SELECT id FROM address where name = ? `
+                `SELECT id FROM address where name = ? AND (source_meta IS NULL OR source_meta != 'external')`
             ).bind(toAddress).first("id");
             if (!db_address_id) {
                 message.setReject("Unknown address");

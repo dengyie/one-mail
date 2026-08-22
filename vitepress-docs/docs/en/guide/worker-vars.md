@@ -137,7 +137,7 @@
 | `USER_DEFAULT_ROLE`                   | Text      | Default role for new users, only effective when email verification is enabled                        | `vip`     |
 | `ADMIN_USER_ROLE`                     | Text      | Admin role configuration, if user role equals ADMIN_USER_ROLE, user can access admin console         | `admin`   |
 | `USER_ROLES`                          | JSON      | -                                                                                                    | See below |
-| `DISABLE_ANONYMOUS_USER_CREATE_EMAIL` | Text/JSON | Disable anonymous user mailbox creation, if set to true, users can only create addresses after login | `true`    |
+| `DISABLE_ANONYMOUS_USER_CREATE_EMAIL` | Text/JSON | Disable anonymous user mailbox creation, if set to true, users can only create addresses after login. When unset, treated as `true` (fail-closed): a logged-in user token is required to create an address, preventing anonymous-creation exposure on config omission. Explicitly set `false` to allow anonymous creation | `true`    |
 | `NO_LIMIT_SEND_ROLE`                  | Text      | Roles that can send unlimited emails, multiple roles separated by comma `vip,admin`                  | `vip`     |
 
 > [!NOTE] USER_ROLES User Role Configuration
@@ -162,9 +162,10 @@
 | `DISABLE_SHOW_GITHUB`      | Text/JSON   | Globally hide the GitHub link                                            | `true`                |
 | `DISABLE_SHOW_GITHUB_FOR_USER` | Text/JSON | Hide the GitHub link for normal users while keeping it visible to admin users | `true`                |
 | `STATUS_URL`               | Text        | Status monitoring page URL, shows Status menu button when configured     | `https://status.example.com` |
-| `CF_TURNSTILE_SITE_KEY`    | Text/Secret | Turnstile CAPTCHA configuration (for new address creation, registration code, etc.) | `xxx`                 |
-| `CF_TURNSTILE_SECRET_KEY`  | Text/Secret | Turnstile CAPTCHA configuration (for new address creation, registration code, etc.) | `xxx`                 |
-| `ENABLE_GLOBAL_TURNSTILE_CHECK` | Text/JSON | Enable global Turnstile CAPTCHA for all login forms (admin login, user login, address password login), requires Turnstile keys above | `true` |
+| `CF_TURNSTILE_SITE_KEY`    | Text/Secret | Turnstile CAPTCHA configuration (key registration endpoints: verification code, user registration, etc.) | `xxx`                 |
+| `CF_TURNSTILE_SECRET_KEY`  | Text/Secret | Turnstile CAPTCHA configuration (key registration endpoints: verification code, user registration, etc.) | `xxx`                 |
+| `ENABLE_GLOBAL_TURNSTILE_CHECK` | Text/JSON | Enable global Turnstile CAPTCHA for login forms (admin login, user login, address password login), requires the Turnstile keys above. Defaults to `false` — as of 2026-08-22 Turnstile is narrowed to registration endpoints only (`/user_api/verify_code` + `/user_api/register`); login and address-creation shields were removed to reduce friction, and address creation is separately guarded by `DISABLE_ANONYMOUS_USER_CREATE_EMAIL` forced login + quota + rate limiting. Set to `true` to re-enable the login shield. | `false` |
+| `MAIL_CRED_ENCRYPTION_KEY` | Text/Secret | AES-GCM credential encryption key (32 bytes base64, generate with `openssl rand -base64 32`). Encrypts the IMAP/POP3 app-passwords and OAuth configs users store when self-service connecting external mailboxes (`user_mail_accounts.cred_enc`); the aggregator decrypts them via `/admin/unified/mail_accounts`. When unset, this feature fails closed and is unavailable. Rotating the key requires re-encrypting all credentials. | `FTkhF6ZF...` |
 
 ## Telegram Bot Related Variables
 
