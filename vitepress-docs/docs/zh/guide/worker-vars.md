@@ -159,7 +159,7 @@
 | `CF_TURNSTILE_SITE_KEY`    | 文本/Secret | Turnstile 人机验证配置（注册验证码、用户注册等关键注册接口） | `xxx`                 |
 | `CF_TURNSTILE_SECRET_KEY`  | 文本/Secret | Turnstile 人机验证配置（注册验证码、用户注册等关键注册接口） | `xxx`                 |
 | `ENABLE_GLOBAL_TURNSTILE_CHECK` | 文本/JSON | 启用全局登录表单的 Turnstile 人机验证（管理员登录、用户登录、邮箱密码登录），需同时配置上述 Turnstile 密钥。默认 `false`——2026-08-22 起 Turnstile 收紧到只守注册接口（`/user_api/verify_code` + `/user_api/register`），登录与建址的盾已移除以减少摩擦；建址另有 `DISABLE_ANONYMOUS_USER_CREATE_EMAIL` 强制登录 + 数量限制 + 限流三重防护。设 `true` 可重新为登录加盾。 | `false` |
-| `MAIL_CRED_ENCRYPTION_KEY` | 文本/Secret | AES-GCM 凭据加密密钥（32 字节 base64，`openssl rand -base64 32` 生成）。加密用户自助接入外部邮箱时存储的 IMAP/POP3 应用密码与 OAuth 配置（`user_mail_accounts.cred_enc`），聚合器经 `/admin/unified/mail_accounts` 拉取时解密。未配置时该功能 fail-closed 不可用。轮换密钥需重新加密全部凭据。 | `FTkhF6ZF...` |
+| `MAIL_CRED_ENCRYPTION_KEY` | 文本/Secret | AES-GCM 凭据加密密钥（32 字节 base64，`openssl rand -base64 32` 生成）。加密用户自助接入外部邮箱时存储的 IMAP/POP3 应用密码与 OAuth 配置（`user_mail_accounts.cred_enc`），聚合器经 `/admin/unified/mail_accounts` 拉取时解密。无默认值，须由部署者自行生成。未配置时该功能 fail-closed 不可用。轮换密钥需重新加密全部凭据。 | `<openssl rand -base64 32 生成的 44 字符 base64>` |
 
 ## Telegram Bot 相关变量
 
