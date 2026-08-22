@@ -169,6 +169,10 @@ VITE_CF_WEB_ANALY_TOKEN=
 
 ## 4. Build / Deploy Matrix
 
+> [!NOTE] Prerequisite: monorepo workspace
+> The repo is now a pnpm workspace (monorepo). Before building the frontend, run `pnpm install` at the
+> repository root and, as needed, `pnpm --filter @one-mail/shared build` (shared contract pkg dist), then build the frontend.
+
 | Target | Command | Notes |
 |--------|---------|-------|
 | Local preview | `pnpm dev` | Vite dev server (proxy → 8787) |

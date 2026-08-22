@@ -153,6 +153,10 @@ VITE_CF_WEB_ANALY_TOKEN=
 
 ## 4. 构建 / 部署矩阵
 
+> [!NOTE] 前置：monorepo workspace
+> 仓库现为 pnpm workspace（monorepo），构建前端**前**需先在仓库根执行 `pnpm install`，并按需执行
+> `pnpm --filter @one-mail/shared build`（共享契约包 dist），然后才可构建前端。
+
 | 目标 | 命令 | 说明 |
 |------|------|------|
 | 本地预览 | `pnpm dev` | Vite dev server（proxy → 8787） |
