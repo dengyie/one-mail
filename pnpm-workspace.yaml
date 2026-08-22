@@ -1,0 +1,6 @@
+packages:
+  - "worker"
+  - "frontend"
+  - "packages/shared"
+patchedDependencies:
+  telegraf@4.16.3: worker/patches/telegraf@4.16.3.patch
