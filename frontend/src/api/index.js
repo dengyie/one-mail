@@ -7,6 +7,9 @@ import { getFingerprint } from '../utils/fingerprint'
 import { safeBearerHeader, safeHeaderValue } from '../utils/headers'
 import { sanitizeHtml } from '../utils/sanitize-html'
 
+// 契约类型来自 @one-mail/shared（架构重构 P8）：运行时零引用，仅供 JSDoc 标注。
+// ApiPath 已由 shared 导出（Task 1 定义），此处引用即可，勿重新声明。
+
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 const {
     loading, auth, jwt, settings, openSettings,
@@ -19,6 +22,80 @@ const instance = axios.create({
     baseURL: API_BASE,
     timeout: 30000,
     validateStatus: (status) => status >= 200 && status <= 500
+});
+
+// 统一请求核心（架构重构 P7）：4 个 wrapper 收敛为 1 个工厂。
+// headerInjector: () => headers（每次请求调用，取 .value 现值）；
+// hooks: { onRequest?, onDone?, onUnauthorized? }（loading/401 弹窗等副作用）。
+const createApiClient = (headerInjector, hooks = {}) => {
+    /** @param {import('@one-mail/shared').ApiPath} path 请求路径 */
+    const request = async (path, options = {}) => {
+        hooks.onRequest && hooks.onRequest();
+        try {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...(headerInjector() || {}),
+                ...(options.headers || {}),
+            };
+            const response = await instance.request(path, {
+                method: options.method || 'GET',
+                data: options.body || null,
+                headers,
+            });
+            if (response.status === 401 && hooks.onUnauthorized) {
+                hooks.onUnauthorized(response);
+            }
+            if (response.status >= 300) {
+                const detail = response.data && typeof response.data === 'object'
+                    ? response.data.error || JSON.stringify(response.data)
+                    : response.data;
+                throw new Error(`Code ${response.status}: ${detail || "error"}`);
+            }
+            return response.data;
+        } finally {
+            hooks.onDone && hooks.onDone();
+        }
+    };
+    return {
+        get: (p, o) => request(p, { ...o, method: 'GET' }),
+        post: (p, o) => request(p, { ...o, method: 'POST' }),
+        put: (p, o) => request(p, { ...o, method: 'PUT' }),
+        delete: (p, o) => request(p, { ...o, method: 'DELETE' }),
+        request,
+    };
+};
+
+// siteClient：站点全通道（x-lang + 五个鉴权头）+ loading + 401 弹窗。
+// 注：指纹异步、仅经 apiFetch 包装层注入——siteClient 不挂指纹。
+const siteClient = createApiClient(() => {
+    const h = { 'x-lang': i18n.global.locale.value };
+    const put = (k, v) => { const s = safeHeaderValue(v); if (s) h[k] = s; };
+    put('x-user-token', userJwt.value);
+    put('x-user-access-token', userSettings.value.access_token);
+    put('x-custom-auth', auth.value);
+    put('x-admin-auth', adminAuth.value);
+    const authz = safeBearerHeader(jwt.value);
+    if (authz) h['Authorization'] = authz;
+    return h;
+}, {
+    onRequest: () => { loading.value = true; },
+    onDone: () => { loading.value = false; },
+    onUnauthorized: (r) => {
+        if (r.config.url && r.config.url.startsWith("/admin")) showAdminAuth.value = true;
+        if (openSettings.value.needAuth) showAuth.value = true;
+    },
+});
+// unified：Bearer API-key 单通道（不触发全局 loading）。
+const unifiedClient = createApiClient(() => {
+    const b = safeBearerHeader(unifiedApiKey.value);
+    if (!b) throw new Error("unified api key not set");
+    return { 'Authorization': b };
+});
+// unified user：x-user-token 单通道。
+const unifiedUserClient = createApiClient(() => {
+    const t = safeHeaderValue(userJwt.value);
+    if (!t) throw new Error("not logged in");
+    return { 'x-user-token': t };
 });
 
 const apiFetch = async (path, options = {}) => {
@@ -35,38 +112,15 @@ const apiFetch = async (path, options = {}) => {
             'x-fingerprint': fingerprint,
             'Content-Type': 'application/json',
         };
-        const userTokenHeader = safeHeaderValue(options.userJwt || userJwt.value);
-        if (userTokenHeader) headers['x-user-token'] = userTokenHeader;
-        const userAccessHeader = safeHeaderValue(userSettings.value.access_token);
-        if (userAccessHeader) headers['x-user-access-token'] = userAccessHeader;
-        const customAuthHeader = safeHeaderValue(auth.value);
-        if (customAuthHeader) headers['x-custom-auth'] = customAuthHeader;
-        const adminAuthHeader = safeHeaderValue(adminAuth.value);
-        if (adminAuthHeader) headers['x-admin-auth'] = adminAuthHeader;
-        const authorizationHeader = safeBearerHeader(jwt.value);
-        if (authorizationHeader) headers['Authorization'] = authorizationHeader;
-
-        const response = await instance.request(path, {
-            method: options.method || 'GET',
-            data: options.body || null,
-            headers,
-        });
-        if (response.status === 401 && path.startsWith("/admin")) {
-            showAdminAuth.value = true;
-        }
-        if (response.status === 401 && openSettings.value.needAuth) {
-            showAuth.value = true;
-        }
-        if (response.status >= 300) {
-            throw new Error(`[${response.status}]: ${response.data}` || "error");
-        }
-        const data = response.data;
-        return data;
-    } catch (error) {
-        if (error.response) {
-            throw new Error(`Code ${error.response.status}: ${error.response.data}` || "error");
-        }
-        throw error;
+        const put = (k, v) => { const s = safeHeaderValue(v); if (s) headers[k] = s; };
+        put('x-user-token', options.userJwt || userJwt.value);
+        put('x-user-access-token', userSettings.value.access_token);
+        put('x-custom-auth', auth.value);
+        put('x-admin-auth', adminAuth.value);
+        const authz = safeBearerHeader(jwt.value);
+        if (authz) headers['Authorization'] = authz;
+        // 401 弹窗 / 状态码错误处理由 siteClient 的 hooks / 统一错误路径承担。
+        return await siteClient.request(path, { ...options, headers });
     } finally {
         loading.value = false;
     }
@@ -222,50 +276,12 @@ const bindUserAddress = async () => {
 
 // 统一收件箱 API：走 Bearer API-key，不复用站点 JWT/自定义密码头。
 // 与 apiFetch 的区别：只带 Authorization: Bearer <unifiedApiKey>，不触发全局 loading。
-const unifiedFetch = async (path, options = {}) => {
-    const bearer = safeBearerHeader(unifiedApiKey.value);
-    if (!bearer) {
-        throw new Error("unified api key not set");
-    }
-    const response = await instance.request(path, {
-        method: options.method || 'GET',
-        data: options.body || null,
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': bearer,
-        },
-    });
-    if (response.status >= 300) {
-        const detail = response.data && typeof response.data === 'object'
-            ? response.data.error || JSON.stringify(response.data)
-            : response.data;
-        throw new Error(`Code ${response.status}: ${detail || "error"}`);
-    }
-    return response.data;
-}
+// （无 API-key → throw "unified api key not set" 已迁进 unifiedClient 的 headerInjector。）
+const unifiedFetch = (path, options = {}) => unifiedClient.request(path, options);
 
 // 统一收件箱用户通道：浏览器登录后使用现有用户 JWT，不依赖共享 API-key。
-const unifiedUserFetch = async (path, options = {}) => {
-    const token = safeHeaderValue(userJwt.value);
-    if (!token) {
-        throw new Error("not logged in");
-    }
-    const response = await instance.request(path, {
-        method: options.method || 'GET',
-        data: options.body || null,
-        headers: {
-            'Content-Type': 'application/json',
-            'x-user-token': token,
-        },
-    });
-    if (response.status >= 300) {
-        const detail = response.data && typeof response.data === 'object'
-            ? response.data.error || JSON.stringify(response.data)
-            : response.data;
-        throw new Error(`Code ${response.status}: ${detail || "error"}`);
-    }
-    return response.data;
-}
+// （未登录 → throw "not logged in" 已迁进 unifiedUserClient 的 headerInjector。）
+const unifiedUserFetch = (path, options = {}) => unifiedUserClient.request(path, options);
 
 // 登录用户优先；没有用户登录时保留 Bearer API-key 兼容路径。
 const unifiedAuthFetch = (path, options = {}) =>
@@ -311,14 +327,14 @@ export const api = {
         markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
     },
     admin: {
-        // 走 apiFetch：它已自动附带 x-admin-auth（管理员密码）
-        createUnifiedKey: (body) => apiFetch('/admin/unified/keys', { method: 'POST', body }),
+        // 走 siteClient（即原 apiFetch 通道）：自动附带 x-admin-auth + x-user-token 等站点鉴权头。
+        createUnifiedKey: (body) => siteClient.post('/admin/unified/keys', { body }),
     },
-    // 用户自助接入外部邮箱归集：走 apiFetch，自动附带 x-user-token
+    // 用户自助接入外部邮箱归集：走 siteClient，自动附带 x-user-token
     userMailAccounts: {
-        list: () => apiFetch('/user_api/mail_accounts'),
-        create: (body) => apiFetch('/user_api/mail_accounts', { method: 'POST', body }),
-        remove: (id) => apiFetch(`/user_api/mail_accounts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-        toggle: (id) => apiFetch(`/user_api/mail_accounts/${encodeURIComponent(id)}/toggle`, { method: 'POST' }),
+        list: () => siteClient.get('/user_api/mail_accounts'),
+        create: (body) => siteClient.post('/user_api/mail_accounts', { body }),
+        remove: (id) => siteClient.delete(`/user_api/mail_accounts/${encodeURIComponent(id)}`),
+        toggle: (id) => siteClient.post(`/user_api/mail_accounts/${encodeURIComponent(id)}/toggle`),
     },
 }

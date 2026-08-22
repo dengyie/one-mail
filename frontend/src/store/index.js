@@ -135,10 +135,12 @@ export const useGlobalState = createGlobalState(
             /** @type {null | {domains: string[] | undefined | null, role: string, prefix: string | undefined | null}} */
             user_role: null,
         });
+        // 管理面板可见性：后端告知的策略信号（adminAuth=已输管理密码；is_admin=角色；disableAdminPasswordCheck=后端开关）。
+        // 表达式集中于一处，避免多处重演（架构重构 P8）；`=== true` 为显式比较，语义与原 truthy 判断等价。
         const showAdminPage = computed(() =>
             !!adminAuth.value
-            || userSettings.value.is_admin
-            || openSettings.value.disableAdminPasswordCheck
+            || userSettings.value.is_admin === true
+            || openSettings.value.disableAdminPasswordCheck === true
         );
         const telegramApp = ref(window.Telegram?.WebApp || {});
         const isTelegram = ref(!!window.Telegram?.WebApp?.initData);
