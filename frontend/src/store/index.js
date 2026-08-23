@@ -142,6 +142,17 @@ export const useGlobalState = createGlobalState(
             || userSettings.value.is_admin === true
             || openSettings.value.disableAdminPasswordCheck === true
         );
+        // 当前管理登录方式（单源判定，供组件消费）：与 showAdminPage 同一策略三源、同一严格比较语义。
+        // adminAuth（已输管理密码）→ 'admin'；is_admin === true → 'user_admin'；disableAdminPasswordCheck === true → 'disabled_check'；否则 ''。
+        const adminLoginMode = computed(() =>
+            adminAuth.value
+            ? 'admin'
+            : userSettings.value.is_admin === true
+                ? 'user_admin'
+                : openSettings.value.disableAdminPasswordCheck === true
+                    ? 'disabled_check'
+                    : ''
+        );
         const telegramApp = ref(window.Telegram?.WebApp || {});
         const isTelegram = ref(!!window.Telegram?.WebApp?.initData);
         const _oauth2StateSession = useSessionStorage('userOauth2SessionState', '');
@@ -195,6 +206,7 @@ export const useGlobalState = createGlobalState(
             telegramApp,
             isTelegram,
             showAdminPage,
+            adminLoginMode,
             userOauth2SessionState,
             userOauth2SessionClientID,
             useSimpleIndex,

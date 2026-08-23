@@ -33,7 +33,7 @@ import AiExtractSettings from './admin/AiExtractSettings.vue';
 
 const {
   adminAuth, showAdminAuth, adminTab, loading,
-  globalTabplacement, showAdminPage, userSettings,
+  globalTabplacement, showAdminPage, adminLoginMode, userSettings,
   openSettings, auth, jwt, userJwt,
   userOauth2SessionState, userOauth2SessionClientID,
   addressPassword
@@ -91,19 +91,21 @@ const { t, locale } = useScopedI18n('views.Admin')
 
 const showAdminPasswordModal = computed(() => !showAdminPage.value || showAdminAuth.value)
 const tmpAdminAuth = ref('')
-// 判断是否通过 admin password 登录（而非用户管理员权限）
-const isAdminPasswordLogin = computed(() => !!adminAuth.value)
+// 判断是否通过 admin password 登录（而非用户管理员权限）：消费 store 单源 adminLoginMode
+const isAdminPasswordLogin = computed(() => adminLoginMode.value === 'admin')
 
-// 获取当前登录方式
+// 获取当前登录方式：三态判定集中于 store 的 adminLoginMode（单源），组件仅做文案映射
 const currentLoginMethod = computed(() => {
-  if (adminAuth.value) {
-    return t('loginViaPassword');
-  } else if (userSettings.value.is_admin) {
-    return t('loginViaUserAdmin');
-  } else if (openSettings.value.disableAdminPasswordCheck) {
-    return t('loginViaDisabledCheck');
+  switch (adminLoginMode.value) {
+    case 'admin':
+      return t('loginViaPassword');
+    case 'user_admin':
+      return t('loginViaUserAdmin');
+    case 'disabled_check':
+      return t('loginViaDisabledCheck');
+    default:
+      return '';
   }
-  return '';
 })
 
 onMounted(async () => {
