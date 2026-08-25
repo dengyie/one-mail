@@ -8,6 +8,8 @@ import { NPopconfirm, NButton } from 'naive-ui'
 import { useGlobalState } from '../../store'
 // @ts-ignore
 import Login from '../common/Login.vue';
+// @ts-ignore
+import { LOCAL_ADDRESS_CACHE_KEY } from '../../utils/address-cache';
 
 const { jwt } = useGlobalState()
 // @ts-ignore
@@ -16,7 +18,7 @@ const message = useMessage()
 const { t } = useScopedI18n('views.index.LocalAddress')
 
 const tabValue = ref('address')
-const localAddressCache = useLocalStorage("LocalAddressCache", []);
+const localAddressCache = useLocalStorage(LOCAL_ADDRESS_CACHE_KEY, []);
 const data = computed(() => {
     // @ts-ignore
     if (!localAddressCache.value.includes(jwt.value)) {

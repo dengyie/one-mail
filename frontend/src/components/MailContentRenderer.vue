@@ -5,7 +5,7 @@ import { CloudDownloadRound, ReplyFilled, ForwardFilled, FullscreenRound, ImageR
 import ShadowHtmlComponent from "./ShadowHtmlComponent.vue";
 import AiExtractInfo from "./AiExtractInfo.vue";
 import { getDownloadEmlUrl } from '../utils/email-parser';
-import { blockRemoteContent } from '../utils/remote-content-policy';
+import { sanitizeHtmlMail } from '../utils/sanitize-html-mail';
 import { utcToLocalDate } from '../utils';
 import { useGlobalState } from '../store';
 
@@ -71,7 +71,7 @@ const processedMail = computed(() => {
   if (autoLoadRemoteImages.value || showRemoteImages.value) {
     return { message: props.mail.message, blocked: 0 };
   }
-  const { html, blocked } = blockRemoteContent(props.mail.message);
+  const { html, blocked } = sanitizeHtmlMail(props.mail.message);
   return { message: html, blocked };
 });
 

@@ -7,6 +7,7 @@ import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import { hashPassword } from '../../utils'
 import { getRouterPathWithLang } from '../../utils'
+import { clearLocalAddressCache } from '../../utils/address-cache'
 
 const {
     jwt, auth, userJwt, userOauth2SessionState, userOauth2SessionClientID,
@@ -35,6 +36,8 @@ const logout = async () => {
     userOauth2SessionClientID.value = '';
     // 一并清除统一收件箱 API key（共享设备凭据残留）
     unifiedApiKey.value = '';
+    // H5：清除 store 之外的 LocalAddressCache（地址 JWT 缓存，防共享设备残留）
+    clearLocalAddressCache();
     await router.push(getRouterPathWithLang("/", locale.value))
     location.reload()
 }
@@ -53,6 +56,8 @@ const deleteAccount = async () => {
         userOauth2SessionClientID.value = '';
         // 一并清除统一收件箱 API key（共享设备凭据残留）
         unifiedApiKey.value = '';
+        // H5：清除 store 之外的 LocalAddressCache（地址 JWT 缓存，防共享设备残留）
+        clearLocalAddressCache();
         await router.push(getRouterPathWithLang("/", locale.value))
         location.reload()
     } catch (error) {

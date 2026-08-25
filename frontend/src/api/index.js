@@ -85,18 +85,36 @@ const siteClient = createApiClient(() => {
         if (openSettings.value.needAuth) showAuth.value = true;
     },
 });
+// H6：统一收件箱统一 401 处置——清除当前通道的过期凭据（userJwt / unifiedApiKey）
+// 并跳转登录页，使 unified 与会话（siteClient 的 onUnauthorized）行为一致，
+// 不再静默抛 "Code 401..." 卡死。
+// 用动态 import 绕开 router→views→api 的静态环；hook 在运行时才触发，模块已缓存。
+const handleUnifiedUnauthorized = (r) => {
+    const usedUserChannel = Boolean(r?.config?.headers?.['x-user-token']);
+    if (usedUserChannel) {
+        userJwt.value = '';
+    } else {
+        unifiedApiKey.value = '';
+    }
+    import('../router').then(({ default: router }) => {
+        router.push('/user');
+    }).catch(() => {
+        window.location.href = '/user';
+    });
+};
+
 // unified：Bearer API-key 单通道（不触发全局 loading）。
 const unifiedClient = createApiClient(() => {
     const b = safeBearerHeader(unifiedApiKey.value);
     if (!b) throw new Error("unified api key not set");
     return { 'Authorization': b };
-});
+}, { onUnauthorized: handleUnifiedUnauthorized });
 // unified user：x-user-token 单通道。
 const unifiedUserClient = createApiClient(() => {
     const t = safeHeaderValue(userJwt.value);
     if (!t) throw new Error("not logged in");
     return { 'x-user-token': t };
-});
+}, { onUnauthorized: handleUnifiedUnauthorized });
 
 const apiFetch = async (path, options = {}) => {
     loading.value = true;

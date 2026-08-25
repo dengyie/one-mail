@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import { useGlobalState } from '../store'
 import { api } from '../api'
 import { getRouterPathWithLang, hashPassword } from '../utils'
+import { clearLocalAddressCache } from '../utils/address-cache'
 import Turnstile from '../components/Turnstile.vue'
 
 import SenderAccess from './admin/SenderAccess.vue'
@@ -81,6 +82,8 @@ const handleLogout = async () => {
   userOauth2SessionClientID.value = '';
   // 一并清除统一收件箱 API key（共享设备凭据残留）
   unifiedApiKey.value = '';
+  // H5：清除 store 之外的 LocalAddressCache（地址 JWT 缓存，防共享设备残留）
+  clearLocalAddressCache();
   // 重置管理员相关状态
   showAdminAuth.value = false;
   adminTab.value = 'account';

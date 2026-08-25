@@ -3,9 +3,10 @@ import { useRoute } from 'vue-router'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
-import { onMounted, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { processItem } from '../../utils/email-parser'
 import { utcToLocalDate } from '../../utils';
+import { sanitizeHtmlMail } from '../../utils/sanitize-html-mail';
 
 const { telegramApp, loading, useUTCDate } = useGlobalState()
 const route = useRoute()
@@ -42,6 +43,12 @@ const fetchMailData = async () => {
 onMounted(async () => {
     curMail.value = await fetchMailData();
 });
+
+// C2：与主邮件正文相同安全管道——srcdoc 只喂经 blockRemoteContent
+// （provablyLocal + DOMPurify 白名单）消毒后的 HTML，绝不直铺原始 parse 输出。
+const safeMailMessage = computed(() =>
+    sanitizeHtmlMail(curMail.value.message).html
+);
 </script>
 
 <template>
@@ -59,7 +66,10 @@ onMounted(async () => {
             <n-tag v-if="showEMailTo" type="info">
                 TO: {{ curMail.address }}
             </n-tag>
-            <iframe :srcdoc="curMail.message" style="margin-top: 10px;width: 100%; height: 100%;">
+            <iframe
+                :srcdoc="safeMailMessage"
+                sandbox="allow-same-origin"
+                style="margin-top: 10px;width: 100%; height: 100%;">
             </iframe>
         </n-card>
     </div>

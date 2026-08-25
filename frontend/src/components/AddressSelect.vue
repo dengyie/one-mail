@@ -8,6 +8,7 @@ import { Copy } from '@vicons/fa'
 
 import { useGlobalState } from '../store'
 import { api } from '../api'
+import { LOCAL_ADDRESS_CACHE_KEY } from '../utils/address-cache'
 
 const props = defineProps({
     showCopy: {
@@ -32,7 +33,7 @@ const { t } = useScopedI18n('components.AddressSelect')
 const addressOptions = ref([])
 const addressValue = ref(null)
 const addressLoading = ref(false)
-const localAddressCache = useLocalStorage("LocalAddressCache", [])
+const localAddressCache = useLocalStorage(LOCAL_ADDRESS_CACHE_KEY, [])
 const optionValueMap = new Map()
 
 const formatAddressLabel = (address) => {
