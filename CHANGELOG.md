@@ -59,6 +59,13 @@
 - fix: |建址| I6 DISABLE_ANONYMOUS_USER_CREATE_EMAIL 未设置时按 true（fail-closed）处理，消除配置遗漏导致匿名建址暴露；显式设 false 才开放
 - fix: |角色配额| C2 saveRoleAddressConfig 改 merge（PATCH 语义）：既存 role 保留、仅覆盖提交的 role，避免两 admin 并发改不同角色互覆盖
 - fix: |部署| I1 frontend/.env.pages 加入 .gitignore 并提供 .env.pages.example，杜绝密钥误入库；解跟踪需部署时单独执行
+- fix: |鉴权| security: `/open_api/credential_login` 改走 `core/auth` 的 `verifyAddressJwt`——此前裸 `Jwt.verify` 只查 `address` 非空，绕过 `REJECT_EXPLESS_JWT`（true 时无 exp 地址 JWT 应被拒）；现在与 `/api/*` 地址 JWT 中间件统一语义，被拒/无效返回 401（其余 `Jwt.verify` 残留为 user/telegram/config 类非地址 JWT，未改动）
+- fix: |auth| security: admin 凭据比较改恒定时间——`utils.checkIsAdmin`（`x-admin-auth` 头路径，Worker `/admin/*` 中间件与 telegram miniapp 共享）原先 `getAdminPasswords().includes(adminAuth)` 数组比较存在时序侧信道。新增 `core/timing.ts` `safeEqual(a,b)`（SHA-256 取等长摘要后逐字节 XOR 比较，天然抹平长度差异，且不依赖平台 `timingSafeEqual`——Workers/Node 均无此 API），`checkIsAdmin` 改为逐一恒定时间比较 `ADMIN_PASSWORDS` 条目。共享 admin-key 头路径（聚合器 `/admin/unified/*` 等多工具共用）**不加** IP 锁定，避免误伤无浏览器指纹的共享凭据调用方（交互式 `/open_api/admin_login` 已有独立 IP 锁定 `admin_lockout.ts`）
+- fix: |外部邮箱| security: `user_api/mail_accounts` 新增 oauth provider 白名单——`oauth.provider` 仅接受聚合器 `oauth.py` `_TOKEN_FN` 支持集 `gmail`/`outlook`，未知/畸形/缺 provider 一律 400 fail-closed。此前未知 provider 直接落库，线上聚合器 `oauth_client_factory` `_TOKEN_FN[provider]` KeyError 会冻结整轮同步
+- fix: |前端| security: 邮件正文渲染（SendBox 预览，桌面/移动两处）套用仓库既有 `sanitizeHtml()`（DOMPurify）消毒——此前 `is_html` 时 `<div v-html="curMail.content">` 直接渲染未消毒，恶意邮件 `<img onerror>` 可执行脚本（主收件通道 XSS）
+- fix: |前端| security: OAuth provider 登录按钮 icon 的 `v-html` 加 `sanitizeHtml()` 净化（`UserLogin.vue` / `UserOauth2Settings.vue`）——icon 来自接入配置，视为不可信输入
+- fix: |前端| security: 退出登录时清理 `unifiedApiKey`（Bearer API-key 凭据，`localStorage.unifiedApiKey`）——原先 Admin 注销、UserSettings/AccountSettings 退出与 `deleteAccount` 注销路径均未清除，共享设备会残留凭据
+- fix: |聚合器| security: 未知 OAuth provider 转为账号级隔离——`oauth_client_factory` 构造移入 per-account try，`_TOKEN_FN[provider]` KeyError 不再逃逸整轮同步冻结其后所有用户账号；坏账号写 `last_error: provider unsupported: <p>` 并跳过，其余账号照常同步
 
 ### Improvements
 
