@@ -1,7 +1,7 @@
 <script setup>
 import { ref, h, onMounted } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
-import { NBadge } from 'naive-ui'
+import { NBadge, useMessage } from 'naive-ui'
 
 import { api } from '../../api'
 

@@ -1,4 +1,5 @@
 <script setup>
+import { useMessage } from 'naive-ui'
 import { onMounted, ref } from 'vue';
 
 import { useGlobalState } from '../../store'

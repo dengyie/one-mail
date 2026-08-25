@@ -1,7 +1,7 @@
 <script setup>
 import { ref, h, onMounted, watch, computed } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
-import { NMenu, NButton, NBadge, NTag } from 'naive-ui';
+import { NMenu, NButton, NBadge, NTag, useMessage } from 'naive-ui';
 import { MenuFilled } from '@vicons/material'
 
 import { useGlobalState } from '../../store'

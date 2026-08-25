@@ -3,7 +3,7 @@ import { useRoute } from 'vue-router'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, watch, ref } from 'vue';
 import { processItem } from '../../utils/email-parser'
 import { utcToLocalDate } from '../../utils';
 import { sanitizeHtmlMail } from '../../utils/sanitize-html-mail';

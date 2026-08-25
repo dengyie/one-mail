@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, h } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
-import { NInputNumber, NTag, NSpace, NButton } from 'naive-ui';
+import { NInputNumber, NTag, NSpace, NButton, useMessage } from 'naive-ui';
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'

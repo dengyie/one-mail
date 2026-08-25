@@ -1,4 +1,5 @@
 <script setup>
+import { useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
 import { useRouter } from 'vue-router'

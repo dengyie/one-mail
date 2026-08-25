@@ -3,7 +3,7 @@ import { ref, h, onMounted } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
 
 import { api } from '../../api'
-import { NPopconfirm } from 'naive-ui';
+import { NPopconfirm, useMessage } from 'naive-ui';
 
 const message = useMessage()
 

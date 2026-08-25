@@ -1,4 +1,5 @@
 <script setup>
+import { useMessage } from 'naive-ui'
 import { ref, onMounted } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
 import { CleaningServicesFilled, AddFilled, DeleteFilled } from '@vicons/material'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, h, onMounted } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
-import { NPopconfirm, NButton } from 'naive-ui'
+import { NPopconfirm, NButton, useMessage } from 'naive-ui'
 
 // @ts-ignore
 import { useGlobalState } from '../../store'

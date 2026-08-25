@@ -1,4 +1,5 @@
 <script setup>
+import { useMessage } from 'naive-ui'
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
 import { useScopedI18n } from '@/i18n/app'

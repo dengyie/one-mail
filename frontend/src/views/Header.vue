@@ -18,7 +18,7 @@ import { DEFAULT_LOCALE, isSupportedLocale, replaceLocaleInFullPath } from '../i
 import { getLocaleLabel, SUPPORTED_LOCALES } from '../i18n/locale-registry'
 import Turnstile from '../components/Turnstile.vue'
 import ThemeToggle from '../components/ai/ThemeToggle.vue'
-import { NButton, NIcon } from 'naive-ui'
+import { NButton, NIcon, useMessage, useNotification } from 'naive-ui'
 
 const message = useMessage()
 const notification = useNotification()

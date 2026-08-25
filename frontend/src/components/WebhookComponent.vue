@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMessage } from 'naive-ui'
 import { onMounted, ref, h } from 'vue'
 import { useScopedI18n } from '@/i18n/app'
 import type { DropdownOption } from 'naive-ui'

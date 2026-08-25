@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, h } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
-import { NButton, NTag, NPopconfirm } from 'naive-ui'
+import { NButton, NTag, NPopconfirm, useMessage } from 'naive-ui'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
