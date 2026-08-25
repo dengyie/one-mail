@@ -16,6 +16,13 @@ const ALLOWED_SOURCES = new Set([
 ]);
 const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
 
+// OAuth provider 白名单（review W1-3）。唯一依据 = aggregator
+// `aggregator/src/one_mail_agg/oauth.py` 的 `_TOKEN_FN` 支持集：目前 gmail / outlook
+// 两个 provider（其它 provider 在 `oauth_client_factory` 里 `_TOKEN_FN[provider]`
+// 会直接 KeyError，冻结整轮聚合器同步）。未知 provider 一律 400 拒绝落库。
+// config 侧 provider 字符串由聚合器定义，不属 shared 契约，故内联于此。
+const OAUTH_PROVIDERS = new Set(["gmail", "outlook"]);
+
 interface MailAccountRow {
     id: string;
     user_id: number;
@@ -127,6 +134,24 @@ const UserMailAccountsModule = {
         }
         if (!ALLOWED_SOURCES.has(source)) return c.text(msgs.InvalidInputMsg, 400);
         if (!ALLOWED_PROTOCOLS.has(protocol)) return c.text(msgs.InvalidInputMsg, 400);
+
+        // review W1-3：oauth 是可选的 provider 白名单校验。body.oauth 是 JSON 字符串
+        // （聚合器 oauth_client_factory 直接 `account.oauth.get("provider")`）。
+        // 未知 provider 让聚合器 `_TOKEN_FN[provider]` KeyError 冻结整轮同步，故这里
+        // 在落库前先拒绝。带 oauth 但非字符串 / 畸形 JSON / 缺 provider / 未知
+        // provider 一律 400（fail-closed）。
+        if (body.oauth != null && (typeof body.oauth !== "string" || body.oauth.trim() !== "")) {
+            let oauthObj: { provider?: unknown } | null;
+            try {
+                oauthObj = JSON.parse(body.oauth) as { provider?: unknown };
+            } catch {
+                oauthObj = null;
+            }
+            if (!oauthObj || typeof oauthObj.provider !== "string"
+                || !OAUTH_PROVIDERS.has(oauthObj.provider)) {
+                return c.text(msgs.InvalidInputMsg, 400);
+            }
+        }
 
         // 接入操作限流，防止刷凭据/占资源（与注册同源 KV 限流器）
         if (!(await checkRegistrationRateLimit(c, "mail_account_create", 5, 60))) {

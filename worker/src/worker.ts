@@ -242,7 +242,7 @@ app.use('/user_api/*', async (c, next) => {
 app.use('/admin/*', async (c, next) => {
 
 	// check header x-admin-auth
-	if (checkIsAdmin(c)) {
+	if (await checkIsAdmin(c)) {
 		await next();
 		return;
 	}

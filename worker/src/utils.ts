@@ -6,8 +6,12 @@ import { compressText } from "./gzip";
 import { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
 // settings 表读写唯一实现已迁至 core/settings.ts。此处既以 named re-export 保持
 // `import { getSetting, ... } from '../utils'` 调用方不变，又在 default 对象里引用同名
-// import 绑定（简写 `getSetting` 等价 `getSetting: getSetting`），utils.getSetting 照常可用。
+// import 变量（简写 `getSetting` 等价 `getSetting: getSetting`），utils.getSetting 照常可用。
 export { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
+import { safeEqual } from './core/timing.ts';
+// admin 凭据的恒定时间比较 helper 迁至 core/timing.ts（review W1-2）。此处 named import
+// 供 checkIsAdmin 使用；core/timing.ts 只引 WebCrypto（crypto.subtle），node --test 可直跑。
+export { safeEqual } from './core/timing.ts';
 
 export const getJsonObjectValue = <T = any>(
     value: string | any
@@ -284,11 +288,19 @@ export const getAdminPasswords = (c: Context<HonoCustomType>): string[] => {
     return c.env.ADMIN_PASSWORDS.filter((item) => item.length > 0);
 }
 
-export const checkIsAdmin = (c: Context<HonoCustomType>): boolean => {
+export const checkIsAdmin = async (c: Context<HonoCustomType>): Promise<boolean> => {
     const adminPasswords = getAdminPasswords(c);
     if (!adminPasswords.length) return false;
     const adminAuth = c.req.raw.headers.get("x-admin-auth");
-    return !!adminAuth && adminPasswords.includes(adminAuth);
+    if (!adminAuth) return false;
+    // review W1-2：恒定时间逐一比较 ADMIN_PASSWORDS 条目，命中即放行。
+    // 顺序迭代（不排序）保持与配置顺序一致的语义。共享 admin-key 头路径
+    // （聚合器 /admin/unified/* 等多工具共用）不做 IP 锁定——锁定会误伤
+    // 无浏览器指纹的共享凭据调用方（见 core/timing.ts 文档注释）。
+    for (const candidate of adminPasswords) {
+        if (await safeEqual(candidate, adminAuth)) return true;
+    }
+    return false;
 }
 
 export const getEnvStringList = (value: string | string[] | undefined): string[] => {

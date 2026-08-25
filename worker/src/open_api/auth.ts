@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
-import { Jwt } from 'hono/utils/jwt'
 
 import utils, { checkCfTurnstile, getPasswords, getAdminPasswords, hashPassword } from '../utils';
 import { isAdminLockedOut, recordAdminFailure, clearAdminFailures } from '../unified/admin_lockout';
+import { verifyAddressJwt } from '../core/auth';
 import i18n from '../i18n';
 
 const api = new Hono<HonoCustomType>()
@@ -73,12 +73,12 @@ api.post('/open_api/credential_login', async (c) => {
     if (!credential) {
         return c.text(msgs.InvalidAddressCredentialMsg, 401)
     }
-    try {
-        const payload = await Jwt.verify(credential, c.env.JWT_SECRET, "HS256");
-        if (!payload.address) {
-            return c.text(msgs.InvalidAddressCredentialMsg, 401)
-        }
-    } catch (error) {
+    // review W1：统一走 core/auth verifyAddressJwt —— 它读取 REJECT_EXPLESS_JWT
+    // （true 时拒绝无 exp 的地址 JWT），内部 try/catch，无效/被拒一律返回 null。
+    // 此前这里用裸 Jwt.verify 只查 address 非空，绕过 REJECT_EXPLESS_JWT 语义。
+    // 其余 Jwt.verify 残留（user/telegram/config 类）非地址 JWT，不在本次范围。
+    const payload = await verifyAddressJwt(c, credential);
+    if (!payload || !payload.address) {
         return c.text(msgs.InvalidAddressCredentialMsg, 401)
     }
     return c.json({ success: true })
