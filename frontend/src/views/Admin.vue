@@ -36,7 +36,7 @@ const {
   globalTabplacement, showAdminPage, adminLoginMode, userSettings,
   openSettings, auth, jwt, userJwt,
   userOauth2SessionState, userOauth2SessionClientID,
-  addressPassword
+  addressPassword, unifiedApiKey
 } = useGlobalState()
 const message = useMessage()
 const router = useRouter()
@@ -79,6 +79,8 @@ const handleLogout = async () => {
   addressPassword.value = '';
   userOauth2SessionState.value = '';
   userOauth2SessionClientID.value = '';
+  // 一并清除统一收件箱 API key（共享设备凭据残留）
+  unifiedApiKey.value = '';
   // 重置管理员相关状态
   showAdminAuth.value = false;
   adminTab.value = 'account';

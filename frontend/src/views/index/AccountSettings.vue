@@ -10,7 +10,7 @@ import { getRouterPathWithLang } from '../../utils'
 
 const {
     jwt, auth, userJwt, userOauth2SessionState, userOauth2SessionClientID,
-    addressPassword,
+    addressPassword, unifiedApiKey,
     settings, showAddressCredential, loading, openSettings
 } = useGlobalState()
 const router = useRouter()
@@ -33,6 +33,8 @@ const logout = async () => {
     addressPassword.value = '';
     userOauth2SessionState.value = '';
     userOauth2SessionClientID.value = '';
+    // 一并清除统一收件箱 API key（共享设备凭据残留）
+    unifiedApiKey.value = '';
     await router.push(getRouterPathWithLang("/", locale.value))
     location.reload()
 }
@@ -49,6 +51,8 @@ const deleteAccount = async () => {
         addressPassword.value = '';
         userOauth2SessionState.value = '';
         userOauth2SessionClientID.value = '';
+        // 一并清除统一收件箱 API key（共享设备凭据残留）
+        unifiedApiKey.value = '';
         await router.push(getRouterPathWithLang("/", locale.value))
         location.reload()
     } catch (error) {

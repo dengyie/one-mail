@@ -10,6 +10,7 @@ import { api } from '../../api'
 const {
     userJwt, userSettings, auth, jwt,
     addressPassword, userOauth2SessionState, userOauth2SessionClientID,
+    unifiedApiKey,
 } = useGlobalState()
 const message = useMessage()
 
@@ -32,6 +33,8 @@ const logout = async () => {
     addressPassword.value = '';
     userOauth2SessionState.value = '';
     userOauth2SessionClientID.value = '';
+    // 一并清除统一收件箱 API key（共享设备凭据残留）
+    unifiedApiKey.value = '';
     location.reload()
 }
 

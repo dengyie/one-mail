@@ -7,6 +7,7 @@ import { KeyFilled } from '@vicons/material'
 import { api } from '../../api';
 import { useGlobalState } from '../../store'
 import { hashPassword } from '../../utils';
+import { sanitizeHtml } from '../../utils/sanitize-html';
 import { startAuthentication } from '@simplewebauthn/browser';
 
 import Turnstile from '../../components/Turnstile.vue';
@@ -207,7 +208,7 @@ onMounted(async () => {
                     <n-button @click="oauth2Login(item.clientID)" v-for="item in userOpenSettings.oauth2ClientIDs"
                         :key="item.clientID" block secondary strong>
                         <template #icon v-if="item.icon">
-                            <span class="oauth2-icon" v-html="item.icon"></span>
+                            <span class="oauth2-icon" v-html="sanitizeHtml(item.icon)"></span>
                         </template>
                         {{ t('loginWith', { provider: item.name }) }}
                     </n-button>

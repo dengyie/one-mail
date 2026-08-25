@@ -5,6 +5,7 @@ import { useScopedI18n } from '@/i18n/app'
 import { useGlobalState } from '../store'
 import { useIsMobile } from '../utils/composables'
 import { utcToLocalDate } from '../utils';
+import { sanitizeHtml } from '../utils/sanitize-html';
 import { SendRound } from '@vicons/material'
 
 const message = useMessage()
@@ -41,6 +42,9 @@ const pageSize = ref(20)
 
 const curMail = ref(null);
 const showCode = ref(false)
+
+// 邮件正文为 HTML 时消毒后再渲染（与 MailContentRenderer/ShadowHtmlComponent 同一 sanitize 机制，防 XSS）
+const safeContent = computed(() => sanitizeHtml(curMail.value?.content || ''))
 
 const multiActionMode = ref(false)
 const showMultiActionDelete = ref(false)
@@ -273,7 +277,7 @@ onMounted(async () => {
             </n-space>
             <pre v-if="showCode" style="margin-top: 10px;">{{ curMail.raw }}</pre>
             <pre v-else-if="!curMail.is_html" style="margin-top: 10px;">{{ curMail.content }}</pre>
-            <div v-else v-html="curMail.content" style="margin-top: 10px;"></div>
+            <div v-else v-html="safeContent" style="margin-top: 10px;"></div>
           </n-card>
           <n-card :bordered="false" embedded class="mail-item" v-else>
             <n-result status="info" :title="count === 0 ? t('emptySent') : t('pleaseSelectMail')">
@@ -345,7 +349,7 @@ onMounted(async () => {
             </n-space>
             <pre v-if="showCode" style="margin-top: 10px;">{{ curMail.raw }}</pre>
             <pre v-else-if="!curMail.is_html" style="margin-top: 10px;">{{ curMail.content }}</pre>
-            <div v-else v-html="curMail.content" style="margin-top: 10px;"></div>
+            <div v-else v-html="safeContent" style="margin-top: 10px;"></div>
           </n-card>
         </n-drawer-content>
       </n-drawer>

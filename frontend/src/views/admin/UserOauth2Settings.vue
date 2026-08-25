@@ -7,6 +7,8 @@ import { useGlobalState } from '../../store'
 // @ts-ignore
 import { api } from '../../api'
 import constant from '../../constant'
+// @ts-ignore
+import { sanitizeHtml } from '../../utils/sanitize-html'
 import { UserOauth2Settings } from '../../models';
 
 const { loading } = useGlobalState()
@@ -176,7 +178,7 @@ onMounted(async () => {
                                 :autosize="{ minRows: 2, maxRows: 5 }" style="width: 100%;" />
                         </n-form-item-row>
                         <n-form-item-row v-if="item.icon" :label="t('iconPreview')">
-                            <span class="oauth2-icon-preview" v-html="item.icon"></span>
+                            <span class="oauth2-icon-preview" v-html="sanitizeHtml(item.icon)"></span>
                         </n-form-item-row>
                         <n-form-item-row label="Client ID" required>
                             <n-input v-model:value="item.clientID" />
