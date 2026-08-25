@@ -122,139 +122,162 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="userSettings.fetched">
+  <div v-if="userSettings.fetched" class="space-y-6">
     <n-modal v-model:show="showAdminPasswordModal" :closable="false" :closeOnEsc="false" :maskClosable="false"
-      preset="dialog" :title="t('accessHeader')">
-      <p>{{ t('accessTip') }}</p>
-      <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" @keyup.enter="authFunc" />
+      preset="dialog" :title="t('accessHeader')" class="rounded-3xl">
+      <p class="text-sm text-slate-500 mb-3">{{ t('accessTip') }}</p>
+      <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" @keyup.enter="authFunc" class="rounded-xl mb-3" />
       <Turnstile ref="turnstileRef" v-if="openSettings.enableGlobalTurnstileCheck" v-model:value="cfToken" />
       <template #action>
-        <n-button @click="authFunc" type="primary" :loading="loading">
+        <n-button @click="authFunc" type="primary" :loading="loading" class="rounded-xl px-4">
           {{ t('ok') }}
         </n-button>
       </template>
     </n-modal>
-    <n-tabs v-if="showAdminPage" type="card" v-model:value="adminTab" :placement="globalTabplacement">
-      <n-tab-pane name="qucickSetup" :tab="t('qucickSetup')">
-        <n-tabs type="bar" justify-content="center" animated>
-          <n-tab-pane name="database" :tab="t('database')">
-            <DatabaseManager />
-          </n-tab-pane>
-          <n-tab-pane name="account_settings" :tab="t('account_settings')">
-            <AccountSettings />
-          </n-tab-pane>
-          <n-tab-pane name="user_settings" :tab="t('user_settings')">
-            <UserSettings />
-          </n-tab-pane>
-          <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
-            <WorkerConfig />
-          </n-tab-pane>
-        </n-tabs>
-      </n-tab-pane>
-      <n-tab-pane name="account" :tab="t('account')">
-        <n-tabs type="bar" justify-content="center" animated>
-          <n-tab-pane name="account" :tab="t('account')">
-            <Account />
-          </n-tab-pane>
-          <n-tab-pane name="account_create" :tab="t('account_create')">
-            <CreateAccount />
-          </n-tab-pane>
-          <n-tab-pane name="account_settings" :tab="t('account_settings')">
-            <AccountSettings />
-          </n-tab-pane>
-          <n-tab-pane name="senderAccess" :tab="t('senderAccess')">
-            <SenderAccess />
-          </n-tab-pane>
-          <n-tab-pane name="ipBlacklistSettings" :tab="t('ipBlacklistSettings')">
-            <IpBlacklistSettings />
-          </n-tab-pane>
-          <n-tab-pane name="aiExtractSettings" :tab="t('aiExtractSettings')">
-            <AiExtractSettings />
-          </n-tab-pane>
-          <n-tab-pane name="webhook" :tab="t('webhookSettings')">
-            <Webhook />
-          </n-tab-pane>
-        </n-tabs>
-      </n-tab-pane>
-      <n-tab-pane name="user" :tab="t('user')">
-        <n-tabs type="bar" justify-content="center" animated>
-          <n-tab-pane name="user_management" :tab="t('user_management')">
-            <UserManagement />
-          </n-tab-pane>
-          <n-tab-pane name="user_settings" :tab="t('user_settings')">
-            <UserSettings />
-          </n-tab-pane>
-          <n-tab-pane name="userOauth2Settings" :tab="t('userOauth2Settings')">
-            <UserOauth2Settings />
-          </n-tab-pane>
-          <n-tab-pane name="roleAddressConfig" :tab="t('roleAddressConfig')">
-            <RoleAddressConfig />
-          </n-tab-pane>
-        </n-tabs>
-      </n-tab-pane>
-      <n-tab-pane name="mails" :tab="t('mails')">
-        <n-tabs type="bar" justify-content="center" animated>
-          <n-tab-pane name="mails" :tab="t('mails')">
-            <Mails />
-          </n-tab-pane>
-          <n-tab-pane name="unknow" :tab="t('unknow')">
-            <MailsUnknow />
-          </n-tab-pane>
-          <n-tab-pane name="sendBox" :tab="t('sendBox')">
-            <SendBox />
-          </n-tab-pane>
-          <n-tab-pane name="sendMail" :tab="t('sendMail')">
-            <SendMail />
-          </n-tab-pane>
-          <n-tab-pane name="mailWebhook" :tab="t('mailWebhook')">
-            <MailWebhook />
-          </n-tab-pane>
-        </n-tabs>
-      </n-tab-pane>
-      <n-tab-pane name="telegram" :tab="t('telegram')">
-        <Telegram />
-      </n-tab-pane>
-      <n-tab-pane name="statistics" :tab="t('statistics')">
-        <Statistics />
-      </n-tab-pane>
-      <n-tab-pane name="maintenance" :tab="t('maintenance')">
-        <n-tabs type="bar" justify-content="center" animated>
-          <n-tab-pane name="database" :tab="t('database')">
-            <DatabaseManager />
-          </n-tab-pane>
-          <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
-            <WorkerConfig />
-          </n-tab-pane>
-          <n-tab-pane name="maintenance" :tab="t('maintenance')">
-            <Maintenance />
-          </n-tab-pane>
-        </n-tabs>
-      </n-tab-pane>
-      <n-tab-pane name="appearance" :tab="t('appearance')">
-        <Appearance />
-      </n-tab-pane>
-      <n-tab-pane name="adminAccount" :tab="t('adminAccount')">
-        <div style="display: flex; justify-content: center; padding: 20px;">
-          <n-card style="width: 600px;">
-            <n-space vertical>
-              <n-text strong>{{ t('loginMethod') }}</n-text>
-              <n-text>{{ currentLoginMethod }}</n-text>
-              <n-divider v-if="isAdminPasswordLogin" />
-              <n-button v-if="isAdminPasswordLogin" type="warning" @click="showLogoutModal = true" block>
-                {{ t('logout') }}
-              </n-button>
-            </n-space>
-          </n-card>
-        </div>
-      </n-tab-pane>
-      <n-tab-pane name="about" :tab="t('about')">
-        <About />
-      </n-tab-pane>
-    </n-tabs>
-    <n-modal v-model:show="showLogoutModal" preset="dialog" :title="t('logoutConfirmTitle')">
+    
+    <div v-if="showAdminPage" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-4 sm:p-6 shadow-sm">
+      <n-tabs type="segment" animated v-model:value="adminTab" class="mb-4">
+        <n-tab-pane name="qucickSetup" :tab="t('qucickSetup')">
+          <div class="pt-2">
+            <n-tabs type="bar" justify-content="center" animated>
+              <n-tab-pane name="database" :tab="t('database')">
+                <DatabaseManager />
+              </n-tab-pane>
+              <n-tab-pane name="account_settings" :tab="t('account_settings')">
+                <AccountSettings />
+              </n-tab-pane>
+              <n-tab-pane name="user_settings" :tab="t('user_settings')">
+                <UserSettings />
+              </n-tab-pane>
+              <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
+                <WorkerConfig />
+              </n-tab-pane>
+            </n-tabs>
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="account" :tab="t('account')">
+          <div class="pt-2">
+            <n-tabs type="bar" justify-content="center" animated>
+              <n-tab-pane name="account" :tab="t('account')">
+                <Account />
+              </n-tab-pane>
+              <n-tab-pane name="account_create" :tab="t('account_create')">
+                <CreateAccount />
+              </n-tab-pane>
+              <n-tab-pane name="account_settings" :tab="t('account_settings')">
+                <AccountSettings />
+              </n-tab-pane>
+              <n-tab-pane name="senderAccess" :tab="t('senderAccess')">
+                <SenderAccess />
+              </n-tab-pane>
+              <n-tab-pane name="ipBlacklistSettings" :tab="t('ipBlacklistSettings')">
+                <IpBlacklistSettings />
+              </n-tab-pane>
+              <n-tab-pane name="aiExtractSettings" :tab="t('aiExtractSettings')">
+                <AiExtractSettings />
+              </n-tab-pane>
+              <n-tab-pane name="webhook" :tab="t('webhookSettings')">
+                <Webhook />
+              </n-tab-pane>
+            </n-tabs>
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="user" :tab="t('user')">
+          <div class="pt-2">
+            <n-tabs type="bar" justify-content="center" animated>
+              <n-tab-pane name="user_management" :tab="t('user_management')">
+                <UserManagement />
+              </n-tab-pane>
+              <n-tab-pane name="user_settings" :tab="t('user_settings')">
+                <UserSettings />
+              </n-tab-pane>
+              <n-tab-pane name="userOauth2Settings" :tab="t('userOauth2Settings')">
+                <UserOauth2Settings />
+              </n-tab-pane>
+              <n-tab-pane name="roleAddressConfig" :tab="t('roleAddressConfig')">
+                <RoleAddressConfig />
+              </n-tab-pane>
+            </n-tabs>
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="mails" :tab="t('mails')">
+          <div class="pt-2">
+            <n-tabs type="bar" justify-content="center" animated>
+              <n-tab-pane name="mails" :tab="t('mails')">
+                <Mails />
+              </n-tab-pane>
+              <n-tab-pane name="unknow" :tab="t('unknow')">
+                <MailsUnknow />
+              </n-tab-pane>
+              <n-tab-pane name="sendBox" :tab="t('sendBox')">
+                <SendBox />
+              </n-tab-pane>
+              <n-tab-pane name="sendMail" :tab="t('sendMail')">
+                <SendMail />
+              </n-tab-pane>
+              <n-tab-pane name="mailWebhook" :tab="t('mailWebhook')">
+                <MailWebhook />
+              </n-tab-pane>
+            </n-tabs>
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="telegram" :tab="t('telegram')">
+          <div class="pt-2">
+            <Telegram />
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="statistics" :tab="t('statistics')">
+          <div class="pt-2">
+            <Statistics />
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="maintenance" :tab="t('maintenance')">
+          <div class="pt-2">
+            <n-tabs type="bar" justify-content="center" animated>
+              <n-tab-pane name="database" :tab="t('database')">
+                <DatabaseManager />
+              </n-tab-pane>
+              <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
+                <WorkerConfig />
+              </n-tab-pane>
+              <n-tab-pane name="maintenance" :tab="t('maintenance')">
+                <Maintenance />
+              </n-tab-pane>
+            </n-tabs>
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="appearance" :tab="t('appearance')">
+          <div class="pt-2">
+            <Appearance />
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="adminAccount" :tab="t('adminAccount')">
+          <div class="flex justify-center p-6">
+            <div class="w-full max-w-lg p-6 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/60">
+              <n-space vertical size="large">
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">{{ t('loginMethod') }}</div>
+                  <div class="text-sm font-bold text-slate-800 dark:text-white">{{ currentLoginMethod }}</div>
+                </div>
+                <n-divider v-if="isAdminPasswordLogin" />
+                <n-button v-if="isAdminPasswordLogin" type="warning" @click="showLogoutModal = true" block class="rounded-xl font-medium">
+                  {{ t('logout') }}
+                </n-button>
+              </n-space>
+            </div>
+          </div>
+        </n-tab-pane>
+        <n-tab-pane name="about" :tab="t('about')">
+          <div class="pt-2">
+            <About />
+          </div>
+        </n-tab-pane>
+      </n-tabs>
+    </div>
+    <n-modal v-model:show="showLogoutModal" preset="dialog" :title="t('logoutConfirmTitle')" class="rounded-2xl">
       <p>{{ t('logoutConfirmContent') }}</p>
       <template #action>
-        <n-button :loading="loading" @click="handleLogout" size="small" tertiary type="warning">
+        <n-button :loading="loading" @click="handleLogout" size="small" tertiary type="warning" class="rounded-xl">
           {{ t('confirm') }}
         </n-button>
       </template>

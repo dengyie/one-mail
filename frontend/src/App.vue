@@ -2,12 +2,13 @@
 import {
   darkTheme,
 } from 'naive-ui'
-import { computed, onMounted, watchEffect } from 'vue'
+import { ref, computed, onMounted, watchEffect } from 'vue'
 import { useScript } from '@unhead/vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalState } from './store'
 import { useIsMobile } from './utils/composables'
-import Header from './views/Header.vue';
+import AppSidebar from './components/layout/AppSidebar.vue'
+import AppNavbar from './components/layout/AppNavbar.vue'
 import Footer from './views/Footer.vue';
 import { api } from './api'
 import { getNaiveLocaleConfig } from './i18n/naive-locale'
@@ -22,9 +23,13 @@ const { locale } = useI18n({ useScope: 'global' });
 const theme = computed(() => isDark.value ? darkTheme : null)
 const localeConfig = computed(() => getNaiveLocaleConfig(isSupportedLocale(locale.value) ? locale.value : DEFAULT_LOCALE))
 const isMobile = useIsMobile()
-const showSideMargin = computed(() => !isMobile.value && useSideMargin.value);
-const showAd = computed(() => !isMobile.value && adClient && adSlot);
-const gridMaxCols = computed(() => showAd.value ? 8 : 12);
+
+const sidebarCollapsed = ref(false)
+const showMobileDrawer = ref(false)
+
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
 
 watchEffect(() => {
   if (typeof document === 'undefined') return
@@ -32,7 +37,7 @@ watchEffect(() => {
 })
 
 // Load Google Ad script at top level (not inside onMounted)
-if (showAd.value) {
+if (adClient && adSlot) {
   useScript({
     src: `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${adClient}`,
     async: true,
@@ -59,11 +64,10 @@ onMounted(async () => {
   }
 
   // check if google ad is enabled
-  if (showAd.value) {
+  if (adClient && adSlot) {
     (window.adsbygoogle = window.adsbygoogle || []).push({});
     (window.adsbygoogle = window.adsbygoogle || []).push({});
   }
-
 
   // check if telegram is enabled
   const enableTelegram = import.meta.env.VITE_IS_TELEGRAM;
@@ -91,38 +95,47 @@ onMounted(async () => {
     <n-spin description="loading..." :show="loading">
       <n-notification-provider container-style="margin-top: 60px;">
         <n-message-provider container-style="margin-top: 20px;">
-          <n-grid x-gap="12" :cols="gridMaxCols">
-            <n-gi v-if="showSideMargin" span="1">
-              <div class="side" v-if="showAd">
-                <ins class="adsbygoogle" style="display:block" :data-ad-client="adClient" :data-ad-slot="adSlot"
-                  data-ad-format="auto" data-full-width-responsive="true"></ins>
-              </div>
-            </n-gi>
-            <n-gi :span="!showSideMargin ? gridMaxCols : (gridMaxCols - 2)">
-              <div class="main">
-                <n-space vertical>
-                  <n-layout style="min-height: 80vh;">
-                    <Header />
-                    <router-view></router-view>
-                  </n-layout>
+          <!-- Modern Workspace Shell with Sleek Sidebar & Dynamic Navbar -->
+          <div class="flex h-screen w-screen overflow-hidden bg-slate-100/70 dark:bg-slate-950 text-slate-800 dark:text-slate-100 antialiased font-sans transition-colors">
+            
+            <!-- Desktop Collapsible Sidebar -->
+            <div class="hidden md:block shrink-0 h-full">
+              <AppSidebar
+                :collapsed="sidebarCollapsed"
+                @update:collapsed="sidebarCollapsed = $event"
+              />
+            </div>
+
+            <!-- Mobile Drawer Sidebar -->
+            <n-drawer v-model:show="showMobileDrawer" placement="left" :width="280">
+              <AppSidebar
+                :collapsed="false"
+                @navigate="showMobileDrawer = false"
+              />
+            </n-drawer>
+
+            <!-- Main Content Viewport -->
+            <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+              <AppNavbar
+                :sidebar-collapsed="sidebarCollapsed"
+                @toggle-sidebar="toggleSidebar"
+                @open-mobile-menu="showMobileDrawer = true"
+              />
+
+              <main class="flex-1 overflow-y-auto px-3 sm:px-8 py-6">
+                <div class="max-w-6xl mx-auto w-full space-y-6">
+                  <router-view></router-view>
                   <Footer />
-                </n-space>
-              </div>
-            </n-gi>
-            <n-gi v-if="showSideMargin" span="1">
-              <div class="side" v-if="showAd">
-                <ins class="adsbygoogle" style="display:block" :data-ad-client="adClient" :data-ad-slot="adSlot"
-                  data-ad-format="auto" data-full-width-responsive="true"></ins>
-              </div>
-            </n-gi>
-          </n-grid>
+                </div>
+              </main>
+            </div>
+          </div>
           <n-back-top />
         </n-message-provider>
       </n-notification-provider>
     </n-spin>
   </n-config-provider>
 </template>
-
 
 <style>
 .n-switch {
@@ -139,27 +152,19 @@ onMounted(async () => {
     --n-font-size: 16px !important;
   }
 }
-</style>
 
-<style scoped>
-.side {
-  height: 100vh;
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
-
-.main {
-  height: 100vh;
-  text-align: center;
+::-webkit-scrollbar-track {
+  background: transparent;
 }
-
-.n-grid {
-  height: 100%;
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 9999px;
 }
-
-.n-gi {
-  height: 100%;
-}
-
-.n-space {
-  height: 100%;
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.45);
 }
 </style>

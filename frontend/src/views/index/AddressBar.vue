@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useScopedI18n } from '@/i18n/app'
 import { useRouter } from 'vue-router'
 import { User, ExchangeAlt } from '@vicons/fa'
+import { MailOutlined, ShieldOutlined } from '@vicons/material'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
@@ -13,6 +14,7 @@ import AddressManagement from '../user/AddressManagement.vue'
 import { getRouterPathWithLang } from '../../utils'
 import AddressSelect from '../../components/AddressSelect.vue'
 import AddressCredentialModal from '../../components/AddressCredentialModal.vue'
+import StatusIndicator from '../../components/ai/StatusIndicator.vue'
 
 const router = useRouter()
 
@@ -35,50 +37,73 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div>
-        <n-card :bordered="false" embedded v-if="!settings.fetched">
-            <n-skeleton style="height: 50vh" />
+    <div class="mb-5">
+        <n-card :bordered="false" embedded v-if="!settings.fetched" class="rounded-2xl shadow-sm border border-slate-200/60 dark:border-slate-800/80">
+            <n-skeleton style="height: 40vh" class="rounded-xl" />
         </n-card>
-        <div v-else-if="settings.address">
-            <n-alert type="info" :show-icon="false" :bordered="false">
-                <AddressSelect>
-                    <template #actions>
-                        <n-button class="address-manage" size="small" tertiary type="primary"
-                            @click="showAddressManage = true">
-                            <n-icon :component="ExchangeAlt" />
-                            {{ t('addressManage') }}
-                        </n-button>
-                    </template>
-                </AddressSelect>
-            </n-alert>
+
+        <div v-else-if="settings.address" class="p-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-sm transition-all">
+            <AddressSelect>
+                <template #actions>
+                    <n-button class="address-manage rounded-xl font-medium" size="small" tertiary type="primary"
+                        @click="showAddressManage = true">
+                        <n-icon :component="ExchangeAlt" class="mr-1" />
+                        {{ t('addressManage') }}
+                    </n-button>
+                </template>
+            </AddressSelect>
         </div>
+
         <div v-else-if="isTelegram">
             <TelegramAddress />
         </div>
+
         <div v-else-if="userJwt" class="center">
-            <n-card :bordered="false" embedded style="max-width: 900px; width: 100%;">
+            <div class="w-full max-w-4xl p-6 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-sm">
                 <AddressManagement />
-            </n-card>
+            </div>
         </div>
-        <div v-else class="center">
-            <n-card :bordered="false" embedded style="max-width: 600px;">
-                <n-alert v-if="jwt" type="warning" :show-icon="false" :bordered="false" closable>
+
+        <div v-else class="hero-auth-container flex flex-col items-center justify-center my-6">
+            <!-- Modern Hero Badge -->
+            <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 text-xs font-semibold tracking-wide border border-blue-200/60 dark:border-blue-800/60 mb-4 shadow-xs">
+                <StatusIndicator status="online" size="sm" />
+                <span>Next-Gen Temporary & Unified Mailbox</span>
+            </div>
+
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight text-center mb-2">
+                智能隐私收件箱
+            </h1>
+            <p class="text-sm sm:text-base text-slate-500 dark:text-slate-400 text-center max-w-md mb-6">
+                即时生成临时邮箱、智能提取验证码，多账号多源合一
+            </p>
+
+            <div class="w-full max-w-[540px] p-6 sm:p-8 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-xl shadow-slate-200/40 dark:shadow-black/40">
+                <n-alert v-if="jwt" type="warning" :show-icon="false" :bordered="false" closable class="mb-4 rounded-xl">
                     <span>{{ t('fetchAddressError') }}</span>
                 </n-alert>
+
                 <Login />
-                <n-divider />
-                <n-button @click="onUserLogin" type="primary" block secondary strong>
+
+                <div class="relative flex py-4 items-center">
+                    <div class="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                    <span class="flex-shrink mx-4 text-xs font-medium text-slate-400 uppercase tracking-wider">或已有账号</span>
+                    <div class="flex-grow border-t border-slate-200 dark:border-slate-800"></div>
+                </div>
+
+                <n-button @click="onUserLogin" type="primary" block secondary size="large" class="rounded-xl font-medium">
                     <template #icon>
                         <n-icon :component="User" />
                     </template>
                     {{ t('userLogin') }}
                 </n-button>
-            </n-card>
+            </div>
         </div>
+
         <AddressCredentialModal v-model:show="showAddressCredential" :address="settings.address" :jwt="jwt"
             :address-password="addressPassword" />
         <n-modal v-model:show="showAddressManage" preset="card" :title="t('addressManage')"
-            style="width: 720px;">
+            style="width: 720px;" class="rounded-3xl">
             <TelegramAddress v-if="isTelegram" />
             <AddressManagement v-else-if="userJwt" />
             <LocalAddress v-else />
@@ -87,27 +112,13 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.n-alert {
-    margin-top: 10px;
-    margin-bottom: 10px;
-    text-align: center;
-}
-
-.n-card {
-    margin-top: 10px;
-}
-
 .center {
     display: flex;
-    text-align: left;
-    place-items: center;
     justify-content: center;
-    margin: 20px;
 }
 
 .address-manage {
     flex: 0 0 auto;
     white-space: nowrap;
 }
-
 </style>
