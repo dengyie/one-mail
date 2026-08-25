@@ -66,9 +66,8 @@ jobs:
       - name: Prepare Frontend env
         run: |
           cd frontend
-          if [ ! -f .env.pages ]; then
-            cp .env.pages.example .env.pages
-          fi
+          echo "VITE_API_BASE=https://mail-api.mangoqwq.cc.cd" > .env.pages
+          echo "VITE_API_BASE=https://mail-api.mangoqwq.cc.cd" > .env.production
 
       - name: Build Frontend (Production & Pages)
         run: |
