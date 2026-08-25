@@ -60,7 +60,7 @@ jobs:
         run: |
           cd aggregator
           python -m pip install --upgrade pip
-          pip install -e ".[test]"
+          pip install -e ".[dev]"
           pytest
 
       - name: Prepare Frontend env
