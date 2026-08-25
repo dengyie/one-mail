@@ -179,6 +179,56 @@ def test_sync_imap_all_bad_still_advances_watermark(tmp_path, monkeypatch):
     assert state.get_last_uid("163-main", "INBOX") == 102   # 水印照进
 
 
+def test_sync_imap_unknown_size_no_loss_next_round(tmp_path, monkeypatch):
+    """H1 端到端回归：服务器不支持 RFC822.SIZE（imap_custom 常见）时，整批新邮件
+    不能再被静默推进水位丢光——必须跳过但**不推水印**，计入 dropped 可观测，
+    下一轮从原起点重试拉到全部。
+    """
+    class NoSizeClient:
+        def __init__(self):
+            self.ok = False                       # 第一轮 SIZE 不支持；第二轮恢复
+        def select_folder(self, folder, readonly=True):
+            return {b"UIDVALIDITY": 7}
+        def search(self, criteria, charset=None):
+            lo = int(criteria[1].split(":")[0])
+            if lo <= 1:
+                return [1, 2, 3]                  # 起点或水位之下：返回全部
+            return []
+        def fetch(self, uids, data):
+            if b"RFC822.SIZE" in data:
+                return {} if not self.ok else {u: {b"RFC822.SIZE": 100} for u in uids}
+            if b"RFC822" in data:
+                return {u: {b"RFC822": b"From: a@b\r\nSubject: x\r\n\r\nbody\r\n",
+                            b"INTERNALDATE": None} for u in uids}
+            return {}
+        def logout(self):
+            pass
+
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="imap")
+    client = NoSizeClient()
+
+    # 第一轮：SIZE 全缺失 → 0 synced，3 dropped，水印不推进
+    res = sync_mod.sync_account(lambda acc: client, _cfg([acc]), acc, state)
+    assert res["synced"] == 0
+    assert res["dropped"] == 3                    # 未知-size 封计入 dropped，可观测
+    assert state.get_last_uid("163-main", "INBOX") == 0   # 水印未动
+
+    # 第二轮：服务器恢复返回 SIZE → 1..3 从起点重拉并上传，一封不丢
+    client.ok = True
+    res2 = sync_mod.sync_account(lambda _c: client, _cfg([acc]), acc, state)
+    assert res2["synced"] == 3
+    assert res2["dropped"] == 0
+    assert len(calls) == 1 and len(calls[0]) == 3  # 一整批 3 封都上传
+    assert state.get_last_uid("163-main", "INBOX") == 3
+    assert [e["imap_uid"] for e in calls[0]] == [
+        "163-main:imap.163.com:INBOX:7:1",
+        "163-main:imap.163.com:INBOX:7:2",
+        "163-main:imap.163.com:INBOX:7:3",
+    ]
+
+
 def test_sync_imap_oversize_skips_count_in_dropped(tmp_path, monkeypatch):
     """fetch 层 MAX_SINGLE_BYTES 跳过的大封要计入 dropped（review Important-2）：
     oversize 跳过不能再只靠隐式 per-message warning，必须聚合进 sync_account 结果。"""

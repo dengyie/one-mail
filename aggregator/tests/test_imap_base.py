@@ -106,7 +106,8 @@ def test_fetch_byte_budget_caps_window(tmp_path, monkeypatch):
 def test_fetch_missing_size_fail_closed_skips_all(tmp_path):
     """修复 #4：RFC822.SIZE 服务器不支持（imap_custom 常见）→ 每封 size 缺失。
     旧行为每封 size=0，永不触发 MAX_SINGLE_BYTES → 超大邮件整封进内存。
-    新行为「未知 = 超限」fail-closed 跳过全部，水印推进，绝不在未知大小上拉正文。"""
+    新行为「未知 = 超限」fail-closed 跳过全部（计入 oversize/dropped 可观测），
+    但**不推进水印**（H1）——全部未知时 last_uid 保持 0，整批绝不永久丢失。"""
     class NoSizeClient(FakeClient):
         def fetch(self, uids, data):
             if b"RFC822.SIZE" in data:
@@ -119,13 +120,43 @@ def test_fetch_missing_size_fail_closed_skips_all(tmp_path):
     oversize = []
     msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
     assert msgs == []                     # 未拉任何正文
-    assert oversize == [1, 2, 3]          # 全部按未知尺寸跳过
-    assert state.get_last_uid("qq", "INBOX") == 3   # 水印推进，不卡同一窗口
+    assert oversize == [1, 2, 3]          # 全部按未知尺寸跳过（计入 dropped）
+    assert state.get_last_uid("qq", "INBOX") == 0   # 水印未动：整批留待下轮重试，绝不丢信
+
+
+def test_fetch_missing_size_retries_next_success_no_loss(tmp_path):
+    """H1 回归：SIZE 全缺失时整批跳过且**不推进 last_uid**；下一轮服务器恢复
+    返回 SIZE → 从 `last_uid+1`（起点）重新 fetch 能拉到全部——绝不丢信。"""
+    class NoSizeThenOkClient(FakeClient):
+        def __init__(self):
+            super().__init__([1, 2, 3])
+            self.ok = False                       # 可变：第二轮翻转为 True
+        def fetch(self, uids, data):
+            if b"RFC822.SIZE" in data and not self.ok:
+                return {}                         # SIZE 不支持期：空响应
+            return super().fetch(uids, data)
+
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    client = NoSizeThenOkClient()
+
+    # 第一轮：全未知（fail-closed 跳过，dropped 可观测），水印不前
+    oversize = []
+    assert fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize) == []
+    assert oversize == [1, 2, 3]
+    assert state.get_last_uid("qq", "INBOX") == 0
+
+    # 第二轮：服务器恢复返回 SIZE → 起点 (0+1):* 重新拉到全部，一封不丢
+    client.ok = True
+    oversize.clear()
+    msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
+    assert [m.uid for m in msgs] == [1, 2, 3]
+    assert oversize == []
 
 
 def test_fetch_partial_missing_size_skips_only_unknown(tmp_path):
     """修复 #4 部分缺失：服务器对多数封有 SIZE、对个别封无响应 → 只跳过未知那个，
-    已知大小的照常拉取。"""
+    已知大小的照常拉取；且未知封不推进水印（H1）。"""
     class PartialSizeClient(FakeClient):
         def fetch(self, uids, data):
             if b"RFC822.SIZE" in data:
@@ -145,8 +176,42 @@ def test_fetch_partial_missing_size_skips_only_unknown(tmp_path):
     msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
     assert [m.uid for m in msgs] == [1, 3]    # uid=2 被跳过
     assert oversize == [2]
-    # 未知封在水印推进（2）；picked 封由 sync 层在 upload 后推进（到 3）
-    assert state.get_last_uid("qq", "INBOX") == 2
+    # 未知封（uid=2）写在 oversize/dropped、但 fetch 层未推水印——sync 层在
+    # upload 后把水印推进到窗口 max（3）；此处 fetch 本身不擅自推进到 2。
+    assert state.get_last_uid("qq", "INBOX") == 0
+
+
+def test_fetch_mixed_known_advances_unknown_stays(tmp_path):
+    """H1 边界：SIZE 全缺失的服务器偶发对个别封返回 SIZE（如网络抖动/服务器
+    部分恢复）——已知封照常挑出，未知封跳过且不推水印；sync 层在 upload 后把
+    水印推进到**已挑出**的最大 uid，未知封留在下轮起点内再试（而真超限封仍
+    立即推过水印，语义分离）。"""
+    class PartlyKnownClient(FakeClient):
+        def fetch(self, uids, data):
+            if b"RFC822.SIZE" in data:
+                out = {}
+                for u in uids:
+                    if u in (2, 5):
+                        out[u] = {}            # 这两个未知（服务器无响应）
+                    else:
+                        out[u] = {b"RFC822.SIZE": self._sizes.get(u, 100)}
+                return out
+            return super().fetch(uids, data)
+
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    client = PartlyKnownClient([1, 2, 3, 4, 5])
+    oversize = []
+    msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
+    assert [m.uid for m in msgs] == [1, 3, 4]    # 2、5 未知跳过
+    assert oversize == [2, 5]
+    # 未知封 2、5 不推水位——fetch 层保持 0，sync 层 upload 后推进到 picked max=4
+    assert state.get_last_uid("qq", "INBOX") == 0
+    state.set_last_uid_max("qq", "INBOX", 4)     # 模拟 sync 层 upload 后推进
+    # 下一轮从 5 起步：uid=5（上次未知）现在能拿到 SIZE → 拉到，不丢
+    client2 = FakeClient([5, 6], sizes={5: 10, 6: 20})
+    msgs2 = fetch_new_messages(client2, acc(), "INBOX", state)
+    assert [m.uid for m in msgs2] == [5, 6]
 
 
 def test_fetch_huge_single_message_skipped(tmp_path, monkeypatch):

@@ -48,9 +48,11 @@ def _to_ms(dt) -> int | None:
 
 def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncState,
                        oversize: list[int] | None = None) -> list[RawMessage]:
-    """`oversize`（可选）：记录被 MAX_SINGLE_BYTES 跳过的大封 uid 的可变计数器。
-    由 sync 层传入，把「本该在批次里的邮件为何缺席」从隐式 warning 提升为
-    可聚合观测值（review Important-2 / 聚合器 dropped）。
+    """`oversize`（可选）：记录被 MAX_SINGLE_BYTES 跳过的大封 **以及未知 SIZE
+    （RFC822.SIZE 缺失）被 fail-closed 跳过**的 uid 的可变计数器。由 sync 层传入，
+    把「本该在批次里的邮件为何缺席」从隐式 warning 提升为可聚合观测值
+    （review Important-2 / 聚合器 dropped）。注意两者水印语义不同：真大封推过
+    水印（永久放弃），未知 SIZE 不推水印（下轮重试，绝不丢信，见 H1）。
     """
     sel = client.select_folder(folder, readonly=True)
     uidvalidity = int(sel[b"UIDVALIDITY"])
@@ -90,16 +92,24 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
         elif isinstance(raw_size, int):           # 其他服务器/库直接返回 int
             size, size_known = raw_size, True
         if (not size_known) or size > MAX_SINGLE_BYTES:
-            # 单封超限：跳过该封并把 water mark 推过该封，否则每次窗口都卡在这封
-            # （该封极可能是超大附件，整体拉取会顶爆容器内存）。
-            # SIZE 缺失（服务器不支持 RFC822.SIZE，如部分 imap_custom）：按
-            # 「未知 = 超限」fail-closed 跳过，绝不把未知大小的邮件整封塞进内存
-            # （与 POP3 LIST 缺失口径一致）。
+            # 单封超限：跳过（连同把 water mark 推过该封），否则每轮窗口都卡在这封
+            # （该封极可能是超大附件，会拉取顶爆容器内存）。
+            if not size_known:
+                # SIZE 缺失（服务器不支持 RFC822.SIZE，如部分 imap_custom）：
+                # 按「未知 = 超限」fail-closed 跳过、绝不把未知大小的邮件整条塞进
+                # 内存（与 POP3 LIST 缺失口径一致）；但**不推进 water mark**——
+                # 一旦推过，`last_uid+1:*` 永不重试这批，整批新邮件静默丢失
+                # （H1）。下一轮仍在原起点重试（repeated attempts 只会多拉
+                # SIZE 列表，绝不丢邮件）；待服务器恢复返回 SIZE（或邮件进了
+                # size 探测成功的窗口）即自愈。
+                if oversize is not None:
+                    oversize.append(u)  # H1：unknown-size 同样计入 dropped，synced=0 时有可见计数
+                log.warning("unknown-size skip uid=%s folder=%s account=%s "
+                            "(RFC822.SIZE missing -> fail-closed, watermark not advanced, will retry)",
+                            u, folder, account.id)
+                continue                # 关键是：这里不 set_last_uid(u)
             if oversize is not None:
                 oversize.append(u)
-            if not size_known:
-                log.warning("imap skip unknown-size uid=%s folder=%s account=%s "
-                            "(RFC822.SIZE missing -> fail-closed)", u, folder, account.id)
             if u > state.get_last_uid(account.id, folder):
                 state.set_last_uid(account.id, folder, u)
             continue
