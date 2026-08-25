@@ -51,9 +51,10 @@ type Bindings = {
     ADMIN_PASSWORDS: string | string[] | undefined
     DISABLE_ADMIN_PASSWORD_CHECK: string | boolean | undefined
     JWT_SECRET: string
-    // 地址 JWT 过期天数（默认 90，见 core/auth.ts）；REJECT_EXPLESS_JWT=true
-    // 时拒绝无 exp 的旧地址 JWT（Phase 7 / I7a）
+    // 地址 JWT 过期天数（默认 90，见 core/auth.ts）。自 H2 起无条件拒绝无 exp/
+    // 过期地址 JWT；REJECT_EXPLESS_JWT 仅为向后兼容保留，无行为作用。
     ADDRESS_JWT_TTL_DAYS: string | number | undefined
+    // 向后兼容保留（H2 移除门控后不再生效），勿再使用。
     REJECT_EXPLESS_JWT: string | boolean | undefined
     BLACK_LIST: string | undefined
     ENABLE_AUTO_REPLY: string | boolean | undefined
@@ -110,6 +111,7 @@ type Bindings = {
 
     // telegram config
     TELEGRAM_BOT_TOKEN: string
+    TELEGRAM_SECRET_TOKEN: string | undefined
     TG_MAX_ADDRESS: number | undefined
     TG_BOT_INFO: string | object | undefined
     TG_ALLOW_USER_LANG: string | boolean | undefined

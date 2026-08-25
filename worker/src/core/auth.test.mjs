@@ -69,10 +69,18 @@ test("verifyAddressJwt: wrong secret → null", async () => {
   assert.equal(await verifyAddressJwt({ env: { JWT_SECRET: "b" } }, token), null);
 });
 
-test("verifyAddressJwt: REJECT_EXPLESS_JWT=true rejects exp-less, false accepts", async () => {
+test("verifyAddressJwt: exp-less token always rejected", async () => {
   const token = await Jwt.sign({ address: "x", address_id: 1 }, "test-secret", "HS256");
-  const strict = { env: { JWT_SECRET: "test-secret", REJECT_EXPLESS_JWT: "true" } };
-  assert.equal(await verifyAddressJwt(strict, token), null);
-  const lenient = { env: { JWT_SECRET: "test-secret" } };
-  assert.equal((await verifyAddressJwt(lenient, token)).address, "x");
+  const c = { env: { JWT_SECRET: "test-secret" } };
+  assert.equal(await verifyAddressJwt(c, token), null);
+});
+
+test("verifyAddressJwt: expired token always rejected", async () => {
+  const token = await Jwt.sign(
+    { address: "x", address_id: 1, exp: Math.floor(Date.now() / 1000) - 100 },
+    "test-secret",
+    "HS256"
+  );
+  const c = { env: { JWT_SECRET: "test-secret" } };
+  assert.equal(await verifyAddressJwt(c, token), null);
 });

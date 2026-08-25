@@ -5,6 +5,7 @@ import i18n from '../i18n';
 import { getJsonSetting, getMailDomain, getStringValue, getUserRoles, includesDomain } from '../utils';
 import { UserOauth2Settings } from '../models';
 import { CONSTANTS } from '../constants';
+import { storeOAuthState, verifyOAuthState } from '../unified/oauth_state';
 
 
 export default {
@@ -16,14 +17,31 @@ export default {
         if (!setting) {
             return c.text(msgs.Oauth2ClientIDNotFoundMsg, 400);
         }
+        // H6: 后端状态存储 —— 将 state 存入 KV（校验防 CSRF 换 code 用，10min TTL）。
+        // 存 KV 失败则 400，绝不在无后端状态的前提下放行换取授权码的请求。
+        if (!state || !(await storeOAuthState(c, state, clientID))) {
+            return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
+        }
         const url = `${setting.authorizationURL}?client_id=${setting.clientID}&response_type=code&redirect_uri=${setting.redirectURL}&scope=${setting.scope}&state=${state}`
         return c.json({ url });
     },
     oauth2Login: async (c: Context<HonoCustomType>) => {
-        const { clientID, code } = await c.req.json<{ clientID?: string, code?: string }>();
+        const body = await c.req.json<{ clientID?: string, code?: string, state?: string }>();
+        const { clientID, code } = body;
         const msgs = i18n.getMessagesbyContext(c);
         if (!clientID || !code) {
             return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
+        }
+        // H6: callback 时校验 state（防 CSRF 换 code）。state 既可从请求体传入
+        // （前端后续将 route.query.state 放进 callback body），也可从 URL query 传入。
+        // 未提供 state 时保持向后兼容（前端 sessionStorage 对比兜底）；提供 state 时
+        // 校验失败（不存在/过期/clientID 不匹配）则 400 拒绝换 code。
+        const state = body.state || c.req.query("state");
+        if (state && typeof state === "string") {
+            const valid = await verifyOAuthState(c, state, clientID);
+            if (!valid) {
+                return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
+            }
         }
         const settings = await getJsonSetting<UserOauth2Settings[]>(c, CONSTANTS.OAUTH2_SETTINGS_KEY);
         const setting = settings?.find(s => s.clientID === clientID);

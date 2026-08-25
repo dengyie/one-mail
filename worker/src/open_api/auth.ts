@@ -73,9 +73,9 @@ api.post('/open_api/credential_login', async (c) => {
     if (!credential) {
         return c.text(msgs.InvalidAddressCredentialMsg, 401)
     }
-    // review W1：统一走 core/auth verifyAddressJwt —— 它读取 REJECT_EXPLESS_JWT
-    // （true 时拒绝无 exp 的地址 JWT），内部 try/catch，无效/被拒一律返回 null。
-    // 此前这里用裸 Jwt.verify 只查 address 非空，绕过 REJECT_EXPLESS_JWT 语义。
+    // review W1：统一走 core/auth verifyAddressJwt —— H2 起无条件拒绝无 exp / 过期
+    // 的地址 JWT（REJECT_EXPLESS_JWT 门控已移除），内部 try/catch，无效一律返回 null。
+    // 此前这里用裸 JWT.verify 只查 address 非空，绕过该语义。
     // 其余 Jwt.verify 残留（user/telegram/config 类）非地址 JWT，不在本次范围。
     const payload = await verifyAddressJwt(c, credential);
     if (!payload || !payload.address) {

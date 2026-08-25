@@ -18,6 +18,7 @@ import { email } from './email';
 import { scheduled } from './scheduled';
 import { getPasswords, getBooleanValue, getDomains, checkIsAdmin } from './utils';
 import { checkAccessControl } from './ip_blacklist';
+import { isAdminLockedOut, recordAdminFailure, clearAdminFailures } from './unified/admin_lockout';
 
 const API_PATHS = [
 	"/api/",
@@ -241,10 +242,30 @@ app.use('/user_api/*', async (c, next) => {
 // admin auth
 app.use('/admin/*', async (c, next) => {
 
+	// H3: 头路径失败锁定——只作用于 x-admin-auth 头；无该头跳过锁定
+	// （可能走 x-user-access-token 兜底）。仅错误 x-admin-auth 才计数
+	// （聚合器固定强 token 永不触发），KV 不可达时 isAdminLockedOut
+	// fail-closed 返回否 → 429（宁可误伤 admin 面不可放行爆破）。
+	const hasAdminAuth = !!c.req.raw.headers.get("x-admin-auth");
+
+	// 存在 x-admin-auth 且 IP 已锁定 → 直接 429（锁定判定先于口令校验）
+	if (hasAdminAuth && await isAdminLockedOut(c)) {
+		const lockLang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
+		return c.text(i18n.getMessages(lockLang).RateLimitExceededMsg, 429);
+	}
+
 	// check header x-admin-auth
 	if (await checkIsAdmin(c)) {
+		// 正确 token 命中 → 清零本窗口失败计数（H3：防误伤后的自动恢复）
+		if (hasAdminAuth) {
+			await clearAdminFailures(c);
+		}
 		await next();
 		return;
+	}
+	// 携带 x-admin-auth 但校验失败 → 计入失败（达阈值后 isAdminLockedOut 拦截）
+	if (hasAdminAuth) {
+		await recordAdminFailure(c);
 	}
 	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
 	const msgs = i18n.getMessages(lang);

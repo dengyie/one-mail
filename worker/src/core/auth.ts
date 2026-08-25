@@ -9,13 +9,10 @@ import { JWT_DEFAULTS } from "@one-mail/shared";
  * AddressJwtPayload 类型来自 @one-mail/shared（唯一来源，不在此内联）。
  *
  * 与原实现行为等价：
- *  - addressJwtExpSeconds 逻辑自 unified/address_token.ts 迁入，原文件已删除（Task 9 清理）
- *  - REJECT_EXPLESS_JWT 语义与 worker.ts 中间件一致（getBooleanValue：true/"true"→真）
+ *  - addressJwtExpSeconds 逻辑自 unified/address_token.ts 迁入，原文件保留（Task 9 清理）
+ *  - 无 exp 或 exp 过期一律拒绝（H2，移除 REJECT_EXPLESS_JWT 门控）
  *  - verify 内部 try/catch → 失效返回 null；调用方按 null 处理（与原 catch 语义等价）
  */
-
-const boolEnv = (v: unknown): boolean =>
-  typeof v === "boolean" ? v : typeof v === "string" ? v === "true" : false;
 
 export const addressJwtExpSeconds = (c: Context): number => {
   const daysRaw = (c.env as any)?.ADDRESS_JWT_TTL_DAYS;
@@ -40,7 +37,8 @@ export const verifyAddressJwt = async (
 ): Promise<AddressJwtPayload | null> => {
   try {
     const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
-    if (boolEnv((c.env as any)?.REJECT_EXPLESS_JWT) && !payload.exp) return null;
+    if (!payload.exp) return null;
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload as AddressJwtPayload;
   } catch {
     return null;
