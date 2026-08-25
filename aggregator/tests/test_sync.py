@@ -490,3 +490,54 @@ def test_sync_pop3_upload_failure_marks_nothing_seen(tmp_path, monkeypatch):
         sync_mod.sync_account(None, _cfg([acc]), acc, state)
     # 什么都没标记 seen：下轮重新拉 UL-1 再试
     assert state.get_pop3_seen("163-main", "INBOX") == set()
+
+
+def test_run_once_unknown_oauth_provider_only_affects_that_account(tmp_path, monkeypatch):
+    """review A1：主循环里账号 `oauth.provider` 不在 `_TOKEN_FN` 支持集时，
+
+    `oauth_client_factory` 内部 `_TOKEN_FN[provider]` 直索引抛 KeyError。修复前该
+    KeyError 发生在 per-account `try` 之外，整个循环直接跳出、冻结其后所有账号；
+    修复后必须降级为**该账号**的 last_error（不抛、不影响其它账号、循环继续）。
+
+    线上事故形态的端到端回归：一个恶意/坏配置账号让其后所有用户账号全部断信。
+    """
+    import one_mail_agg.main as main_mod
+
+    bad_provider = {"id": "user-bad", "source": "imap_custom",
+                    "host": "imap.corp.example", "port": 993,
+                    "username": "u@corp.example", "password": "pw",
+                    "folders": ["INBOX"], "protocol": "imap",
+                    "oauth": {"provider": "some_unknown_provider"}}
+    good_provider = {"id": "user-good", "source": "imap_qq",
+                     "host": "imap.qq.com", "port": 993,
+                     "username": "u@qq.com", "password": "pw",
+                     "folders": ["INBOX"], "protocol": "auto", "oauth": None}
+
+    def fake_load_config(path):
+        return Config(worker_base_url="https://one-mail.x.workers.dev", admin_token="secret",
+                      accounts=[AccountConfig(**good_provider)],
+                      state_path=str(tmp_path / "st.json"))
+    monkeypatch.setattr(main_mod, "load_config", fake_load_config)
+    # bad 账号由 fetch_user_accounts 返回（user id="user-bad"）→ 属于用户账号，
+    # last_error 才会回写；good 账号是 admin config 账号，成功路径也回写（404 无害）。
+    monkeypatch.setattr(main_mod, "fetch_user_accounts",
+                        lambda *a: [AccountConfig(**bad_provider)])
+    # bad 是用户账号（id 进 user_account_ids）→ 失败时回写 last_error；
+    # good 是 admin config 账号（非 user）→ 只记日志、不写状态回写。
+    synced = []
+    monkeypatch.setattr(main_mod, "sync_account",
+                        lambda factory, config, account, state: synced.append(account.id)
+                        or {"synced": 0, "dropped": 0, "protocol": "imap"})
+    status = []
+    monkeypatch.setattr(main_mod, "report_sync_status",
+                        lambda base, token, aid, err: status.append((aid, err)))
+
+    res = main_mod.run_once("whatever.json")
+
+    # 未知 provider 账号：账号级错误，不抛、不冻结循环
+    assert res["user-bad"] == {"error": "provider unsupported: some_unknown_provider"}
+    # 后续 admin config 账号照常被同步（sync_account 对 user-good 被调用）
+    assert synced == ["user-good"]
+    # last_error 只回写坏用户账号；good 是 admin config 账号（非 user），不写回
+    assert status == [("user-bad", "provider unsupported: some_unknown_provider")]
+

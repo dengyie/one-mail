@@ -39,7 +39,22 @@ def run_once(config_path: str) -> dict:
     results = {}
     for account in accounts:
         is_user = account.id in user_account_ids
-        factory = oauth_client_factory(account) if account.oauth else default_client_factory
+        # provider 解析 / client 工厂构造单独包裹：未知 OAuth provider 抛 KeyError
+        # （_TOKEN_FN 直索引）时只降级为「该账号错误」，绝不让整个循环跳出冻结
+        # 后续所有用户账号（review A1）。隔离这一小段避免把 sync_account 内部
+        # 可能的 KeyError（如 UIDVALIDITY 缺失）误归类为 provider 问题。
+        try:
+            factory = oauth_client_factory(account) if account.oauth else default_client_factory
+        except KeyError:
+            provider = (account.oauth or {}).get("provider") or "<missing>"
+            results[account.id] = {"error": f"provider unsupported: {provider}"}
+            log.error("sync %s failed: provider unsupported: %s", account.id, provider)
+            # 不支持的 OAuth provider 属于配置级错误：回写账号级 last_error，
+            # 仅用户账号供用户在「我的邮箱」页看到；admin config 账号只记日志。
+            if is_user:
+                report_sync_status(config.worker_base_url, config.admin_token,
+                                   account.id, f"provider unsupported: {provider}")
+            continue  # 跳过该账号且不影响后续账号；下一轮运行会重试同批
         try:
             results[account.id] = sync_account(factory, config, account, state)
             r = results[account.id]
