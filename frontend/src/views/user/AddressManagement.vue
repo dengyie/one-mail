@@ -1,5 +1,6 @@
 <script setup>
 import { ref, h, onMounted, watch } from 'vue';
+import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
 import { useRouter } from 'vue-router';
 import { NBadge, NPopconfirm, NButton } from 'naive-ui'

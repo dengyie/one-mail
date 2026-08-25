@@ -92,7 +92,7 @@ onMounted(async () => {
 <template>
   <n-config-provider :locale="localeConfig.locale" :date-locale="localeConfig.dateLocale" :theme="theme">
     <n-global-style />
-    <n-spin description="loading..." :show="loading">
+    <n-dialog-provider>
       <n-notification-provider container-style="margin-top: 60px;">
         <n-message-provider container-style="margin-top: 20px;">
           <!-- Modern Workspace Shell with Sleek Sidebar & Dynamic Navbar -->
@@ -124,7 +124,9 @@ onMounted(async () => {
 
               <main class="flex-1 overflow-y-auto px-3 sm:px-8 py-6">
                 <div class="max-w-6xl mx-auto w-full space-y-6">
-                  <router-view></router-view>
+                  <n-spin description="loading..." :show="loading">
+                    <router-view></router-view>
+                  </n-spin>
                   <Footer />
                 </div>
               </main>
@@ -133,7 +135,7 @@ onMounted(async () => {
           <n-back-top />
         </n-message-provider>
       </n-notification-provider>
-    </n-spin>
+    </n-dialog-provider>
   </n-config-provider>
 </template>
 

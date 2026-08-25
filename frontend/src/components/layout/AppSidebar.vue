@@ -110,15 +110,13 @@ const handleNavigate = (path) => {
   >
     <!-- Brand / Logo Area -->
     <div class="h-16 flex items-center px-4 gap-3 border-b border-slate-800/80">
-      <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
-        <n-icon size="22" class="text-white" :component="InboxFilled" />
-      </div>
+      <img src="/logo.png" alt="MangoHub Logo" class="w-10 h-10 rounded-2xl object-cover shadow-lg shadow-blue-500/20 shrink-0" />
       <div v-if="!collapsed" class="flex flex-col min-w-0">
         <span class="font-bold text-base tracking-tight text-white truncate flex items-center gap-1.5">
-          One-Mail
+          MangoHub Mail
           <span class="px-1.5 py-0.5 text-[10px] uppercase font-mono font-semibold bg-blue-500/20 text-blue-400 rounded-md border border-blue-500/30">AI</span>
         </span>
-        <span class="text-xs text-slate-400 truncate">隐私与统一收件箱</span>
+        <span class="text-xs text-slate-400 truncate">统一智能收件箱</span>
       </div>
     </div>
 
@@ -182,32 +180,9 @@ const handleNavigate = (path) => {
       </div>
     </div>
 
-    <!-- Bottom User & Utility Area -->
-    <div class="p-3 border-t border-slate-800/80 space-y-2">
-      <!-- Theme & Lang Quick Controls -->
-      <div class="flex items-center justify-between gap-1" :class="collapsed ? 'flex-col' : ''">
-        <ThemeToggle />
-        
-        <n-dropdown :options="languageOptions" @select="changeLocale" trigger="click">
-          <button class="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors" title="切换语言">
-            <n-icon size="18" :component="LanguageFilled" />
-          </button>
-        </n-dropdown>
-
-        <a
-          v-if="showGithub"
-          href="https://github.com/dengyie/one-mail"
-          target="_blank"
-          class="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors"
-          title="GitHub"
-        >
-          <n-icon size="18" :component="GithubAlt" />
-        </a>
-      </div>
-
-      <!-- User Account Capsule -->
+    <!-- Bottom User Area (无需重复放语言/GitHub，仅保留用户信息) -->
+    <div v-if="userSettings?.user_email" class="p-3 border-t border-slate-800/80">
       <div
-        v-if="userSettings?.user_email"
         @click="handleNavigate('/user')"
         class="flex items-center gap-2.5 p-2 rounded-xl bg-slate-800/50 hover:bg-slate-800 cursor-pointer border border-slate-700/50 transition-all group"
         :class="collapsed ? 'justify-center p-2' : ''"
