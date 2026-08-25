@@ -22,7 +22,7 @@ def test_normalize_basic_fields():
     assert e["to_addr"] == "me@qq.com"
     assert e["subject"] == "Code 123456"
     assert "123456" in e["text_body"]
-    assert e["imap_uid"] == "imap.qq.com:INBOX:7:123"
+    assert e["imap_uid"] == "qq:imap.qq.com:INBOX:7:123"
     assert e["internal_date"] == 1700000000000
     assert e["is_read"] == 0
 
@@ -56,11 +56,11 @@ def test_normalize_pop3_uid_override():
                         pop3_host="pop.163.com", pop3_port=995, pop3_ssl=True)
     e = normalize_message(RAW, pop, "INBOX", uidvalidity=1, uid=42,
                           internal_date_ms=None,
-                          imap_uid_override="pop3:pop.163.com:INBOX:UIDL-ABC123")
-    assert e["imap_uid"] == "pop3:pop.163.com:INBOX:UIDL-ABC123"
-    # 不传 override 时必须严格保持旧 IMAP 输出
+                          imap_uid_override="pop3:163:pop.163.com:INBOX:UIDL-ABC123")
+    assert e["imap_uid"] == "pop3:163:pop.163.com:INBOX:UIDL-ABC123"
+    # 不传 override 时用含账号维度的 IMAP 键
     e_imap = normalize_message(RAW, acc(), "INBOX", uidvalidity=7, uid=123, internal_date_ms=None)
-    assert e_imap["imap_uid"] == "imap.qq.com:INBOX:7:123"
+    assert e_imap["imap_uid"] == "qq:imap.qq.com:INBOX:7:123"
 
 
 def test_normalize_header_values_coerced():
@@ -120,7 +120,7 @@ def test_normalize_corrupt_attachment_does_not_wedge_sync():
     仍能被规范化成一行、imap_uid 可用，attachments_json 是合法数组。"""
     raw = _raw_with_bad_attachment(b"@@@@@@not-valid-base64@@@@@@")
     e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1001, internal_date_ms=None)
-    assert e["imap_uid"] == "imap.qq.com:INBOX:7:1001"  # 水印照常，同步不卡死
+    assert e["imap_uid"] == "qq:imap.qq.com:INBOX:7:1001"  # 水印照常，同步不卡死
     atts = json.loads(e["attachments_json"])
     assert isinstance(atts, list)                     # attachments_json 恒为合法数组
     assert all({"name", "size", "mimeType"} <= set(a) for a in atts)  # 条目结构完整

@@ -64,8 +64,9 @@ def connect_pop3(account: AccountConfig):
 
 def uidl_to_key(account: AccountConfig, folder: str, uidl: str) -> str:
     """POP3 稳定键：imap_uid 字段保存的 `pop3:` 命名空间值，与 IMAP 的
-    host:folder:uidvalidity:uid 区分，且不会被 message-number 重排影响。"""
-    return f"{POP3_UID_PREFIX}{account.resolve_pop3_host()}:{folder}:{uidl}"
+    account:host:folder:uidvalidity:uid 区分，且不会被 message-number 重排影响。
+    键含账号维度（同 IMAP）：同主机多账号的 UIDL 集合互不侵犯唯一索引。"""
+    return f"{POP3_UID_PREFIX}{account.id}:{account.resolve_pop3_host()}:{folder}:{uidl}"
 
 
 def fetch_new_pop3_messages(conn, account: AccountConfig, folder: str,

@@ -152,8 +152,8 @@ def test_sync_imap_skips_bad_single_message_others_uploaded(tmp_path, monkeypatc
     assert res["dropped"] == 1                     # uid=102 归一化失败被跳过（可观测）
     assert len(calls) == 1 and len(calls[0]) == 2   # 只上传正常的两封
     assert [e["imap_uid"] for e in calls[0]] == [
-        "imap.163.com:INBOX:7:101",
-        "imap.163.com:INBOX:7:103",
+        "163-main:imap.163.com:INBOX:7:101",
+        "163-main:imap.163.com:INBOX:7:103",
     ]
     # watermark 推进到窗口最大 uid（103），哪怕中间那封 skip 也不再重拉
     assert state.get_last_uid("163-main", "INBOX") == 103
@@ -196,8 +196,8 @@ def test_sync_imap_oversize_skips_count_in_dropped(tmp_path, monkeypatch):
     assert res["synced"] == 2                 # 只有正常的两封上传
     assert res["dropped"] == 1                # 大封被跳过 → 计入 dropped
     assert [e["imap_uid"] for e in calls[0]] == [
-        "imap.163.com:INBOX:7:2",
-        "imap.163.com:INBOX:7:3",
+        "163-main:imap.163.com:INBOX:7:2",
+        "163-main:imap.163.com:INBOX:7:3",
     ]
     # 水印推进过 uid=1（跳过内容不丢水位），不再卡在同一大封上
     assert state.get_last_uid("163-main", "INBOX") == 3

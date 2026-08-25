@@ -39,16 +39,32 @@ def run_once(config_path: str) -> dict:
     results = {}
     for account in accounts:
         is_user = account.id in user_account_ids
-        # provider 解析 / client 工厂构造单独包裹：未知 OAuth provider 抛 KeyError
-        # （_TOKEN_FN 直索引）时只降级为「该账号错误」，绝不让整个循环跳出冻结
-        # 后续所有用户账号（review A1）。隔离这一小段避免把 sync_account 内部
-        # 可能的 KeyError（如 UIDVALIDITY 缺失）误归类为 provider 问题。
+        # ===== 连续失败退避守卫（修复 #2）：退避窗口内直接跳过该账号，不再尝试连接 =====
+        if state.should_skip_account(account.id):
+            fail_count, skip_until_ts = state.get_fail_state(account.id)
+            msg = ("skipped (consecutive_failures=%d, backoff window open until ts=%.0f)"
+                   % (fail_count, skip_until_ts))
+            results[account.id] = {"error": msg}
+            log.warning("sync %s %s", account.id, msg)
+            if is_user:
+                report_sync_status(config.worker_base_url, config.admin_token,
+                                   account.id, msg)
+            continue  # 仍在退避：不尝试连接，避免无意义轰炸目标服务器触发封 IP
+        # provider 解析 / client 工厂构造单独包裹：未知 OAuth provider 抛
+        # KeyError/AttributeError/TypeError（_TOKEN_FN 直索引 / oauth 非 dict）时
+        # 只降级为「该账号错误」，绝不让整个循环跳出冻结其后所有账号（修复 #3）。
         try:
-            factory = oauth_client_factory(account) if account.oauth else default_client_factory
-        except KeyError:
-            provider = (account.oauth or {}).get("provider") or "<missing>"
+            # oauth is not None（含空 dict {}、字符串等畸形值）：都当 OAuth 账号走
+            # 工厂——空 dict 若按 falsy 回落 default_client_factory，会用 refresh_token
+            # 当密码连 IMAP，报错含糊且浪费一次连接；防御式识别成「缺 provider」更清晰。
+            factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
+        except (KeyError, AttributeError, TypeError):
+            provider = (account.oauth.get("provider")
+                        if isinstance(account.oauth, dict)
+                        else "<malformed:not-dict>") or "<missing>"
             results[account.id] = {"error": f"provider unsupported: {provider}"}
             log.error("sync %s failed: provider unsupported: %s", account.id, provider)
+            state.record_failure(account.id)   # 配置级错误同样计入连续失败退避
             # 不支持的 OAuth provider 属于配置级错误：回写账号级 last_error，
             # 仅用户账号供用户在「我的邮箱」页看到；admin config 账号只记日志。
             if is_user:
@@ -60,18 +76,22 @@ def run_once(config_path: str) -> dict:
             r = results[account.id]
             log.info("synced %s: protocol=%s synced=%d dropped=%d",
                      account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
+            # 成功（含 0 新邮件——账号可达即健康）：清零失败计数、解除退避
+            state.record_success(account.id)
             # 成功：回写清空 last_error、刷新 last_sync_at（仅用户账号）
             if is_user:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, None)
         except Exception as e:
             results[account.id] = {"error": str(e)}
             log.error("sync %s failed: %s", account.id, e)
+            # 失败：累计连续失败计数，达到阈值进入退避（下轮直接跳过该账号）
+            state.record_failure(account.id)
             # 失败：回写 last_error 供用户在「我的邮箱」页看到（如「IMAP 登录失败」），
             # 仅用户账号——admin config 账号的错误只在日志里。
             if is_user:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e))
             # 单账号失败不影响其他；下次运行重试
-            time.sleep(min(2 ** 0 + random.random(), 3))
+            time.sleep(min(1 + random.random(), 3))
     return results
 
 

@@ -1,17 +1,34 @@
 import json
 import os
+import time
+
+# 连续失败 N 轮后进入退避；退避时长（秒）
+FAILBACK_MAX_FAILS = 3
+FAILBACK_BACKOFF_SEC = 900      # 15 分钟起步
+# POP3 seen 集合单账号(FIFO)上限：POP3 没有 IMAP 的水印删档，已见 UIDL 无限
+# 增长会让 state 文件越滚越大；超出时裁剪最旧（set 保序 → 掐头）。
+POP3_SEEN_MAX = 2000
+
+
+def next_backoff_offset(fail_count: int, backoff_sec: int = FAILBACK_BACKOFF_SEC,
+                        max_fail: int = FAILBACK_MAX_FAILS) -> int:
+    """纯函数：给定当前累计失败数，达到退避阈值则返回退避秒数，否则 0。"""
+    if fail_count >= max_fail:
+        return backoff_sec
+    return 0
 
 
 class SyncState:
     def __init__(self, path: str):
         self.path = path
-        self._data = {"last_uid": {}, "uidvalidity": {}, "pop3_seen": {}, "fallback": {}}
+        self._data = {"last_uid": {}, "uidvalidity": {}, "pop3_seen": {}, "fallback": {},
+                      "per_account": {}}
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
                 try:
                     self._data = json.load(f)
                 except (json.JSONDecodeError, OSError):
-                    # 半截 JSON（旧版非原子写被 kill 的残留）：降级为全新状态、
+                    # 半截 JSON（旧版非原子写被写坏）：降级为全新状态、
                     # 构造不抛错——否则一个坏文件就让所有账号的同步状态清零。
                     self._data = {}
         # 旧/手工编辑的 state 可能缺键，补默认，避免 KeyError
@@ -19,6 +36,7 @@ class SyncState:
         self._data.setdefault("uidvalidity", {})
         self._data.setdefault("pop3_seen", {})
         self._data.setdefault("fallback", {})
+        self._data.setdefault("per_account", {})
 
     def _key(self, account_id: str, folder: str) -> str:
         return f"{account_id}|{folder}"
@@ -57,11 +75,18 @@ class SyncState:
     def get_pop3_seen(self, account_id: str, folder: str) -> set[str]:
         return set(self._data["pop3_seen"].get(self._key(account_id, folder), []))
 
+    def _trim_pop3_seen(self, seen: set[str]) -> list[str]:
+        """FIFO 裁剪：保留最近 POP3_SEEN_MAX 条；老数据兼容（超限旧集合首次 add 时裁剪）。"""
+        ordered = sorted(seen)
+        if len(ordered) > POP3_SEEN_MAX:
+            ordered = ordered[-POP3_SEEN_MAX:]
+        return ordered
+
     def add_pop3_seen(self, account_id: str, folder: str, uidl: str) -> None:
         key = self._key(account_id, folder)
         seen = set(self._data["pop3_seen"].get(key, []))
         seen.add(uidl)
-        self._data["pop3_seen"][key] = sorted(seen)
+        self._data["pop3_seen"][key] = self._trim_pop3_seen(seen)
         self.save()
 
     def add_pop3_seen_many(self, account_id: str, folder: str, uidls: list[str]) -> None:
@@ -71,7 +96,7 @@ class SyncState:
         key = self._key(account_id, folder)
         seen = set(self._data["pop3_seen"].get(key, []))
         seen.update(uidls)
-        self._data["pop3_seen"][key] = sorted(seen)
+        self._data["pop3_seen"][key] = self._trim_pop3_seen(seen)
         self.save()
 
     # --- 降级固定（fallback pin）---
@@ -84,6 +109,58 @@ class SyncState:
     def set_fallback_pinned(self, account_id: str, pinned: bool) -> None:
         self._data["fallback"][account_id] = bool(pinned)
         self.save()
+
+    # --- 账号级失败管理（连续失败退避）---
+    # 每账号维护连续失败计数与「跳过到刻」。连续 FAILBACK_MAX=3 轮失败后进入
+    # 退避（skip_until_ts），期间不再尝试该账号，避免无意义重连轰炸目标服务器
+    # 触发封 IP；成功（或上传任意一条）即清零。老 state 文件缺字段视为 0/None
+    # （向后兼容：不 break）。
+
+    def get_fail_state(self, account_id: str) -> tuple[int, float]:
+        """返回 `(fail_count, skip_until_ts)`；缺失视为 `(0, 0)`。"""
+        pa = self._data["per_account"].get(account_id) or {}
+        return int(pa.get("fail_count", 0) or 0), float(pa.get("skip_until", 0) or 0)
+
+    def record_failure(self, account_id: str, max_fail: int = FAILBACK_MAX_FAILS,
+                       backoff_sec: int = FAILBACK_BACKOFF_SEC,
+                       now: float | None = None) -> float:
+        """记一次失败：fail_count+1；达到退避阈值时设 skip_until_ts = now+退避。
+
+        返回本轮 skip_until_ts（未达到退避时为原值）。`now` 可注入便于测试。
+        """
+        now = float(now) if now is not None else time.time()
+        pa = dict(self._data["per_account"].get(account_id) or {})
+        n = int(pa.get("fail_count", 0) or 0) + 1
+        skip_until = pa.get("skip_until", 0) or 0
+        if next_backoff_offset(n, backoff_sec, max_fail):
+            # 达到退避阈值：skip_until_ts 从失败时刻起延后 backoff_sec
+            skip_until = now + backoff_sec
+        pa["fail_count"] = n
+        pa["skip_until"] = skip_until
+        self._data["per_account"][account_id] = pa
+        self.save()
+        return float(skip_until)
+
+    def record_success(self, account_id: str) -> None:
+        """同步成功（含上传任意一条）：清零失败计数，解除退避。"""
+        if account_id not in self._data["per_account"]:
+            return
+        pa = self._data["per_account"].get(account_id) or {}
+        if not pa.get("fail_count") and not pa.get("skip_until"):
+            return
+        pa.pop("fail_count", None)
+        pa.pop("skip_until", None)
+        if not pa:
+            self._data["per_account"].pop(account_id, None)
+        else:
+            self._data["per_account"][account_id] = pa
+        self.save()
+
+    def should_skip_account(self, account_id: str, now: float | None = None) -> bool:
+        """当前是否处于退避窗口（返回 True 则本轮跳过该账号）。"""
+        _fail, skip_until = self.get_fail_state(account_id)
+        now = float(now) if now is not None else time.time()
+        return skip_until > now
 
     def save(self) -> None:
         # 原子写：先写临时文件再 os.replace 替换，避免进程被 kill（240s 超时/OOM/重启）

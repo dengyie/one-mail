@@ -9,7 +9,8 @@ def acc():
 
 
 def test_make_imap_uid_format():
-    assert make_imap_uid("imap.qq.com", "INBOX", 7, 123) == "imap.qq.com:INBOX:7:123"
+    # 键含账号维度：account_id 打头，同主机多账号不同 uid 不撞唯一索引
+    assert make_imap_uid("qq", "imap.qq.com", "INBOX", 7, 123) == "qq:imap.qq.com:INBOX:7:123"
 
 
 def test_state_roundtrip(tmp_path):
@@ -102,8 +103,54 @@ def test_fetch_byte_budget_caps_window(tmp_path, monkeypatch):
     assert [m.uid for m in msgs] == [1, 2]
 
 
+def test_fetch_missing_size_fail_closed_skips_all(tmp_path):
+    """修复 #4：RFC822.SIZE 服务器不支持（imap_custom 常见）→ 每封 size 缺失。
+    旧行为每封 size=0，永不触发 MAX_SINGLE_BYTES → 超大邮件整封进内存。
+    新行为「未知 = 超限」fail-closed 跳过全部，水印推进，绝不在未知大小上拉正文。"""
+    class NoSizeClient(FakeClient):
+        def fetch(self, uids, data):
+            if b"RFC822.SIZE" in data:
+                return {}            # 服务器对 SIZE 无响应（不支持）
+            return super().fetch(uids, data)
+
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    client = NoSizeClient([1, 2, 3])
+    oversize = []
+    msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
+    assert msgs == []                     # 未拉任何正文
+    assert oversize == [1, 2, 3]          # 全部按未知尺寸跳过
+    assert state.get_last_uid("qq", "INBOX") == 3   # 水印推进，不卡同一窗口
+
+
+def test_fetch_partial_missing_size_skips_only_unknown(tmp_path):
+    """修复 #4 部分缺失：服务器对多数封有 SIZE、对个别封无响应 → 只跳过未知那个，
+    已知大小的照常拉取。"""
+    class PartialSizeClient(FakeClient):
+        def fetch(self, uids, data):
+            if b"RFC822.SIZE" in data:
+                out = {}
+                for u in uids:
+                    if u == 2:
+                        out[u] = {}            # uid=2 无 SIZE
+                    else:
+                        out[u] = {b"RFC822.SIZE": self._sizes.get(u, 100)}
+                return out
+            return super().fetch(uids, data)
+
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    client = PartialSizeClient([1, 2, 3])
+    oversize = []
+    msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
+    assert [m.uid for m in msgs] == [1, 3]    # uid=2 被跳过
+    assert oversize == [2]
+    # 未知封在水印推进（2）；picked 封由 sync 层在 upload 后推进（到 3）
+    assert state.get_last_uid("qq", "INBOX") == 2
+
+
 def test_fetch_huge_single_message_skipped(tmp_path, monkeypatch):
-    """单封超预算（66MB QQ 附件）拉取会撑爆容器内存（pxed K8s cgroup）：
+    """超 #预算（IMAP QQ 附件）拉取会撑爆容器内存（pxed K8s cgroup）：
     必须跳过该封并已推过水印，避免反复卡在同一封。"""
     from one_mail_agg import imap_base
     monkeypatch.setattr(imap_base, "BATCH_BYTES", 1000 ** 2)   # 1MB 预算

@@ -1,8 +1,11 @@
+import logging
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 
 from .config import AccountConfig
 from .state import SyncState
+
+log = logging.getLogger("one-mail-agg")
 
 # 单轮最多拉取的邮件数：明显小于远程邮箱总量，避免首次全量同步 fetch 卡死。
 BATCH_SIZE = 200
@@ -22,8 +25,11 @@ class RawMessage:
     uidl: str | None = None     # POP3 稳定 UIDL；IMAP 路径为 None
 
 
-def make_imap_uid(host: str, folder: str, uidvalidity: int, uid: int) -> str:
-    return f"{host}:{folder}:{uidvalidity}:{uid}"
+def make_imap_uid(account_id: str, host: str, folder: str, uidvalidity: int, uid: int) -> str:
+    # 键含账号维度：同主机多账号 + UIDVALIDITY 恒 1 + 每邮箱 uid 从 1 起时，
+    # 旧 host-only 键会让不同账号的同一 uid 撞 Worker 的 imap_uid 唯一索引，
+    # INSERT OR IGNORE 静默吞掉后续用户整封邮件（高危隐性丢信）。
+    return f"{account_id}:{host}:{folder}:{uidvalidity}:{uid}"
 
 
 def _to_ms(dt) -> int | None:
@@ -76,15 +82,24 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
             break
         raw_size = sizes.get(u, {})
         size = 0
+        size_known = False
         if isinstance(raw_size, dict):            # imapclient: {b"RFC822.SIZE": int}
-            size = raw_size.get(b"RFC822.SIZE", 0) or 0
+            v = raw_size.get(b"RFC822.SIZE")
+            if isinstance(v, int):
+                size, size_known = v, True
         elif isinstance(raw_size, int):           # 其他服务器/库直接返回 int
-            size = raw_size
-        if size > MAX_SINGLE_BYTES:
+            size, size_known = raw_size, True
+        if (not size_known) or size > MAX_SINGLE_BYTES:
             # 单封超限：跳过该封并把 water mark 推过该封，否则每次窗口都卡在这封
-            # （该封极可能是超大附件，整体拉取会顶爆容器内存）
+            # （该封极可能是超大附件，整体拉取会顶爆容器内存）。
+            # SIZE 缺失（服务器不支持 RFC822.SIZE，如部分 imap_custom）：按
+            # 「未知 = 超限」fail-closed 跳过，绝不把未知大小的邮件整封塞进内存
+            # （与 POP3 LIST 缺失口径一致）。
             if oversize is not None:
                 oversize.append(u)
+            if not size_known:
+                log.warning("imap skip unknown-size uid=%s folder=%s account=%s "
+                            "(RFC822.SIZE missing -> fail-closed)", u, folder, account.id)
             if u > state.get_last_uid(account.id, folder):
                 state.set_last_uid(account.id, folder, u)
             continue

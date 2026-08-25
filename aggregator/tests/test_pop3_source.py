@@ -50,7 +50,7 @@ def _raw(subject="hi", body="body"):
 
 def test_uidl_to_key_pop3_namespace():
     key = uidl_to_key(_acc(), "INBOX", "UIDL-ABC")
-    assert key == "pop3:pop.163.com:INBOX:UIDL-ABC"
+    assert key == "pop3:163-main:pop.163.com:INBOX:UIDL-ABC"
     assert key.startswith(POP3_UID_PREFIX)
 
 
