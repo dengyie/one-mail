@@ -162,10 +162,18 @@ const passkeyLogin = async () => {
     }
 };
 
+// 32 字节 CSPRNG state（crypto.getRandomValues），取代 Math.random：
+// state 会出现在 OAuth 授权页与回调 URL 中，弱随机数会被猜测后用于 CSRF 换 code。
+const newOauth2State = () => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+};
+
 const oauth2Login = async (clientID) => {
     try {
         userOauth2SessionClientID.value = clientID;
-        userOauth2SessionState.value = Math.random().toString(36).substring(2);
+        userOauth2SessionState.value = newOauth2State();
         const res = await api.fetch(`/user_api/oauth2/login_url?clientID=${clientID}&state=${userOauth2SessionState.value}`);
         // redirect to oauth2 login page
         location.href = res.url;

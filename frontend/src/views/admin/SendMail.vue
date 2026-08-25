@@ -2,14 +2,19 @@
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
 import { useScopedI18n } from '@/i18n/app'
-import { onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { useSessionStorage } from '@vueuse/core'
 import { api } from '../../api'
+import { sanitizeHtml } from '../../utils/sanitize-html'
 
 const message = useMessage()
 const isPreview = ref(false)
 const editorRef = shallowRef()
 const sending = ref(false)
+
+// 富文本/HTML 预览先消毒再 v-html（自伤防护），与 index/SendMail 同一
+// `sanitizeHtml` 策略：javascript:/data:text/html/form-action 与事件属性剥除。
+const safePreviewContent = computed(() => sanitizeHtml(sendMailModel.value?.content || ''))
 
 const sendMailModel = useSessionStorage('sendMailByAdminModel', {
     fromName: "",
@@ -180,7 +185,7 @@ const handleCreated = (editor) => {
                     </n-form-item>
                     <n-form-item :label="t('content')" label-placement="top">
                         <n-card :bordered="false" embedded v-if="isPreview">
-                            <div v-html="sendMailModel.content" />
+                            <div v-html="safePreviewContent" />
                         </n-card>
                         <div v-else-if="sendMailModel.contentType == 'rich'" style="border: 1px solid #ccc">
                             <Toolbar style="border-bottom: 1px solid #ccc" :defaultConfig="toolbarConfig"

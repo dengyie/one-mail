@@ -70,4 +70,49 @@ describe('sanitizeHtmlMail', () => {
         expect(sanitizeHtmlMail(null).html).toBe('');
         expect(sanitizeHtmlMail('').html).toBe('');
     });
+
+    // R1：autoLoadRemoteImages=true 只是「额外放行远程图片」，绝不绕过消毒。
+    // 恶意 <script>/事件属性在 allowRemote 下仍被剥，只有远程 <img src> 被保留。
+    describe('allowRemote 仅放行远程图片、不漏脚本', () => {
+        const allow = (html) => blockRemoteContent(html, { allowRemote: true });
+
+        it('script/事件处理在 allowRemote 下仍被剥离', () => {
+            const full = allow('<img src="https://evil.example/x.png" onerror="alert(1)">' +
+                '<script>alert(1)</script>');
+            expect(full.html).not.toMatch(/<script/i);
+            expect(full.html).not.toMatch(/onerror/i);
+            expect(full.html).not.toMatch(/alert\(1\)/);
+        });
+
+        it('远程 <img src> 在 allowRemote 下保留、默认路径下剥除', () => {
+            const raw = '<img src="https://evil.example/remote.png">';
+            const allowed = allow(raw);
+            const blocked = blockRemoteContent(raw);
+            expect(allowed.html).toMatch(/src="https:\/\/evil\.example\/remote\.png"/);
+            expect(blocked.html).not.toMatch(/remote\.png/);
+            expect(blocked.blocked).toBeGreaterThan(0);
+        });
+
+        it('javascript:/data: 导航与远程 CSS 资源即使 allowRemote 也剥除', () => {
+            const produced = allow(
+                '<a href="javascript:alert(document.cookie)">a</a>' +
+                '<div style="background:url(https://evil.example/bg.png)">x</div>' +
+                '<a href="data:text/html,<script>alert(1)</script>">d</a>'
+            );
+            expect(produced.html).not.toMatch(/javascript:/i);
+            expect(produced.html).not.toMatch(/data:text\/html/i);
+            // CSS url() 仍被替换为透明占位，不随 allowRemote 放开
+            expect(produced.html).not.toMatch(/bg\.png/);
+            expect(produced.html).toMatch(/data:image\/gif/);
+            expect(produced.blocked).toBeGreaterThan(0);
+        });
+
+        it('调用间状态不泄漏：allowRemote 只作用于单次调用', () => {
+            const raw = '<img src="https://evil.example/remote.png">';
+            allow(raw); // 先开一次 allow
+            const after = sanitizeHtmlMail(raw); // 下一次严格调用必须回到阻断
+            expect(after.html).not.toMatch(/remote\.png/);
+            expect(after.blocked).toBeGreaterThan(0);
+        });
+    });
 });

@@ -125,6 +125,12 @@ function blockCssUrls(cssText, onBlocked) {
 
 let purifier = null;
 let blockedCount = 0;
+// Per-call, toggled by the `allowRemote` option: permits a user to opt into
+// loading genuinely remote <img> sources, while keeping every other block
+// (event handlers, javascript:/data: URLs, CSS fetches, other URL attrs)
+// exactly as strict as the default path. The shared purifier can stay a
+// singleton because the hook reads this flag fresh on every sanitize call.
+let allowRemoteRefs = false;
 
 /**
  * An isolated DOMPurify instance. The hooks below must not reach the shared
@@ -146,6 +152,15 @@ function getPurifier() {
         }
         const isSrcset = data.attrName === 'srcset' || data.attrName === 'imagesrcset';
         if (isSrcset ? srcsetIsLocal(data.attrValue) : provablyLocal(data.attrValue)) {
+            return;
+        }
+
+        // The user opted into remote images for this mail: <img src> is the one
+        // attribute the opt-in lifts. It stays subject to the strict
+        // ALLOWED_URI_REGEXP (so javascript:/data: and friends still die) and to
+        // DOMPurify's own handler stripping -- this only opens the remote-image
+        // channel, it never re-arms script execution.
+        if (allowRemoteRefs && data.attrName === 'src' && node.tagName === 'IMG') {
             return;
         }
 
@@ -196,14 +211,17 @@ function getPurifier() {
  * cleaner never saw.
  *
  * @param {string} html
+ * @param {{ allowRemote?: boolean }} [options] allowRemote lifts the remote-<img>-src
+ * block (a per-mail user opt-in) without weakening any other defence.
  * @returns {{ html: string, blocked: number }} blocked counts the references removed
  */
-export function blockRemoteContent(html) {
+export function blockRemoteContent(html, options) {
     if (!html || typeof html !== 'string') {
         return { html: html || '', blocked: 0 };
     }
 
     blockedCount = 0;
+    allowRemoteRefs = Boolean(options?.allowRemote);
     const sanitised = getPurifier().sanitize(html, {
         FORBID_TAGS: FORBIDDEN,
         // Mail layout leans on <style> blocks, so they are kept and their
@@ -216,5 +234,8 @@ export function blockRemoteContent(html) {
         ALLOW_DATA_ATTR: true,
     });
 
+    // Reset per-call state so the next invocation without the option is
+    // guaranteed to start from the strict default.
+    allowRemoteRefs = false;
     return { html: sanitised, blocked: blockedCount };
 }

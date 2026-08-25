@@ -6,6 +6,7 @@ import ShadowHtmlComponent from "./ShadowHtmlComponent.vue";
 import AiExtractInfo from "./AiExtractInfo.vue";
 import { getDownloadEmlUrl } from '../utils/email-parser';
 import { sanitizeHtmlMail } from '../utils/sanitize-html-mail';
+import { blockRemoteContent } from '../utils/remote-content-policy';
 import { utcToLocalDate } from '../utils';
 import { useGlobalState } from '../store';
 
@@ -67,9 +68,16 @@ watch(() => props.mail.id, () => {
   showRemoteImages.value = false;
 });
 
+// The body is ALWAYS sanitised before it reaches ShadowHtmlComponent / iframe
+// srcdoc, regardless of autoLoadRemoteImages: remote-image loading is only an
+// extra *resource* permission granted on the already-clean HTML (it re-runs the
+// same DOMPurify pipeline with allowRemote lifting the remote-<img>-src block,
+// while event handlers, javascript:/data: URLs, CSS fetches and forbidden tags
+// stay stripped). Setting the pref from true to false is not a path to XSS.
 const processedMail = computed(() => {
   if (autoLoadRemoteImages.value || showRemoteImages.value) {
-    return { message: props.mail.message, blocked: 0 };
+    const { html, blocked } = blockRemoteContent(props.mail.message, { allowRemote: true });
+    return { message: html, blocked };
   }
   const { html, blocked } = sanitizeHtmlMail(props.mail.message);
   return { message: html, blocked };

@@ -6,6 +6,7 @@ import i18n from '../i18n'
 import { getFingerprint } from '../utils/fingerprint'
 import { safeBearerHeader, safeHeaderValue } from '../utils/headers'
 import { sanitizeHtml } from '../utils/sanitize-html'
+import { getRouterPathWithLang } from '../utils'
 
 // 契约类型来自 @one-mail/shared（架构重构 P8）：运行时零引用，仅供 JSDoc 标注。
 // ApiPath 已由 shared 导出（Task 1 定义），此处引用即可，勿重新声明。
@@ -96,10 +97,11 @@ const handleUnifiedUnauthorized = (r) => {
     } else {
         unifiedApiKey.value = '';
     }
+    const locale = i18n.global.locale.value;
     import('../router').then(({ default: router }) => {
-        router.push('/user');
+        router.push(getRouterPathWithLang('/user', locale));
     }).catch(() => {
-        window.location.href = '/user';
+        window.location.href = getRouterPathWithLang('/user', locale);
     });
 };
 

@@ -18,7 +18,7 @@ const { t } = useScopedI18n('views.user.UserOauth2Callback')
 
 onMounted(async () => {
     try {
-        const state = route.query.state;
+        const state = route.query.state || userOauth2SessionState.value;
         if (state != userOauth2SessionState.value) {
             console.error('state not match');
             message.error(t('stateNotMatch'));
@@ -30,11 +30,16 @@ onMounted(async () => {
             message.error(t('codeNotFound'));
             return;
         }
+        // R3: worker 侧 callback 无条件要求 state（防 CSRF 换 code，fail-closed）。
+        // body 固定携带 state：取 route.query.state，缺省回退 sessionStorage 存的
+        // 会话 state（store 的 userOauth2SessionState 双通道：session + fallback）。
+        const stateForBody = (typeof state === 'string' && state) || '';
         const res = await api.fetch(`/user_api/oauth2/callback`, {
             method: 'POST',
             body: JSON.stringify({
                 code: code,
-                clientID: userOauth2SessionClientID.value
+                clientID: userOauth2SessionClientID.value,
+                state: stateForBody
             })
         });
         userJwt.value = res.jwt;

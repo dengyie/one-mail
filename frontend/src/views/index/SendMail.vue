@@ -2,17 +2,23 @@
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
 import { useScopedI18n } from '@/i18n/app'
-import { onMounted, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, shallowRef } from 'vue'
 import AdminContact from '../common/AdminContact.vue'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
+import { sanitizeHtml } from '../../utils/sanitize-html'
 
 const message = useMessage()
 const isPreview = ref(false)
 const editorRef = shallowRef()
 const sending = ref(false)
 
+// 富文本/HTML 预览一律先消毒再 v-html（自伤防护）：编辑器内容可含外部粘贴
+// 的 HTML（如 "回信时引用原始邮件"），javascript:/data:text/html/form-action
+// 与事件属性在此层剥除。后端 send_mail 按 is_html=content 原样发出，故本层
+// 是发送前唯一的富文本防线；仍建议仅对自己的可见内容开启正文加载。
+const safePreviewContent = computed(() => sanitizeHtml(sendMailModel.value?.content || ''))
 
 const { settings, sendMailModel, indexTab, userSettings } = useGlobalState()
 
@@ -203,7 +209,7 @@ onMounted(async () => {
                         </n-form-item>
                         <n-form-item :label="t('content')" label-placement="top">
                             <n-card :bordered="false" embedded v-if="isPreview">
-                                <div v-html="sendMailModel.content" />
+                                <div v-html="safePreviewContent" />
                             </n-card>
                             <div v-else-if="sendMailModel.contentType == 'rich'" style="border: 1px solid #ccc">
                                 <Toolbar style="border-bottom: 1px solid #ccc" :defaultConfig="toolbarConfig"
