@@ -1,12 +1,13 @@
 # Admin 控制台
 
 > [!NOTE]
-> 需要配置 `ADMIN_PASSWORDS` 或者 `ADMIN_USER_ROLE` 才可以访问 admin 控制台
-> admin 角色配置, 如果用户角色等于 ADMIN_USER_ROLE 则可以访问 admin 控制台
+> 需要配置 `ADMIN_PASSWORDS` 才可以访问 admin 控制台；`ADMIN_USER_ROLE` 仅控制
+> 登录用户能否在**前端界面**看到 admin 面板（UX），不构成后端 `/admin/*` 授权面
+> （R2：user-role 兜底不绕过 admin 头通道）。
 
 部署前端应用之后，点击 左上角 logo 5 次 或者访问 `/admin` 路径即可进入管理控制台。
 
-需要在后端配置 `ADMIN_PASSWORDS` 或者当前用户角色为 `ADMIN_USER_ROLE`，否则不允许访问控制台。
+后端 `/admin/*` 授权面**只认管理口令头**（`x-admin-auth`）——`ADMIN_PASSWORDS` 配置的任一密码均视为有效。登录后的用户即使 `user_role=admin`，也必须持有入口口令才能访问受保护的管理 API；角色仅决定前端界面是否展示「管理员已登录」外观。
 
 ## 管理口令和用户账号的区别
 
@@ -14,7 +15,12 @@
 
 站点用户账号存储在 `users` 表中，需要通过用户登录体系进入；用户是否能收信取决于是否创建或绑定了邮箱地址。即使你创建了一个邮箱为 `admin@example.com` 或用户名看起来像 `admin` 的普通用户，它也不会自动获得后台权限。
 
-如果希望某个用户也能进入 Admin 控制台，请配置 `ADMIN_USER_ROLE`，并在用户管理中给该用户设置相同的角色。
+如果希望某个用户也能进入 Admin 控制台：配置 `ADMIN_USER_ROLE` 并在用户管理中给该用户设置相同角色（前端打开管理面板），**同时**仍需该用户（或其浏览器）持有管理口令（通过弹窗输入后走 `x-admin-auth`）才能调用管理接口——角色本身不再直接放行（R2 修复）。
+
+> [!WARNING]
+> 旧版本中「用户角色等于 `ADMIN_USER_ROLE` 即可访问控制台」的行为已被 R2 修复移除：
+> 仅凭 `x-user-access-token` 携带 `user_role=admin` 不再构成授权面，任意持有合法
+> 用户 token 的账号都不能伪造 admin 角色绕过口令面。
 
 ![admin](/feature/admin.png)
 

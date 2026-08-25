@@ -61,6 +61,12 @@ https://你的前端域名/user/oauth2/callback
 
 如果你的站点使用语言前缀路由，也仍然建议在 OAuth 平台中配置无语言前缀的回调地址，避免不同语言路径导致回调不一致。
 
+> [!NOTE] OAuth state（防 CSRF 换 code）
+> 登录申请 URL（`/user_api/oauth2/login_url`）会把 `state` 存入后端 KV（10 分钟 TTL）；
+> 回调（`/user_api/oauth2/callback`）**无条件要求**携带 `state`（body 或 query 均可），
+> 缺失 / 不匹配 / 过期一律 400——R3 起不再有无 state 的向后兼容窗口。
+> 前端已同步把 `route.query.state`（或会话存储的 state）放进 callback body 的 `state` 字段。
+
 ### 邮箱格式转换
 
 当 OAuth2 返回的不是标准邮箱格式时（如返回用户 ID），可以启用邮箱格式转换功能。

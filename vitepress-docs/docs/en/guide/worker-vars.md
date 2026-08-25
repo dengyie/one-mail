@@ -177,7 +177,7 @@
 | `TG_BOT_INFO`        | Text      | Optional, telegram BOT_INFO, predefined BOT_INFO can reduce webhook latency | `{}`    |
 | `TG_ALLOW_USER_LANG` | Text/JSON | Allow users to switch language via `/lang` command, default `false`         | `true`  |
 | `ENABLE_TG_PUSH_ATTACHMENT` | Boolean | Enable sending email attachments via Telegram push, default `false`, 50MB per file limit | `true` |
-| `TELEGRAM_SECRET_TOKEN` | Text/Secret | Telegram Bot API webhook secret token; when configured, `/telegram/webhook` validates the `X-Telegram-Bot-Api-Secret-Token` header and returns 401 on mismatch. **When unset, the webhook only logs and does not process updates** (fail-closed) | (empty) |
+| `TELEGRAM_SECRET_TOKEN` | Text/Secret | Telegram Bot API webhook secret token; when configured, `/telegram/webhook` validates the `X-Telegram-Bot-Api-Secret-Token` header and returns 401 on mismatch, and `/admin/telegram/init` passes `secret_token` to `setWebhook`. **When unset, the webhook fails closed (returns 503 so the operator can notice the bot is disconnected)** | (empty) |
 
 > [!NOTE]
 > Telegram functionality requires email parsing, free tier CPU is limited, may cause large email parsing timeout

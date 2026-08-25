@@ -66,6 +66,13 @@ default frontend callback path is:
 https://your-frontend-domain/user/oauth2/callback
 ```
 
+> [!NOTE] OAuth state (anti-CSRF code swap)
+> The login URL endpoint (`/user_api/oauth2/login_url`) stores `state` in backend KV (10-min TTL);
+> the callback (`/user_api/oauth2/callback`) **unconditionally requires** `state` (body or query
+> both satisfy), missing / mismatched / expired are all rejected with 400 — starting from R3 there
+> is no backward-compatible window without `state`. The frontend has been updated to put
+> `route.query.state` (or the session-stored state) into the callback body's `state` field.
+
 Even if your site uses locale-prefixed routes, it is still recommended to configure the OAuth
 provider with the callback URL without a locale prefix to avoid callback mismatches between
 languages.
