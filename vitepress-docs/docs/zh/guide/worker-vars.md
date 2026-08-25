@@ -45,7 +45,7 @@
 | `ENABLE_ADDRESS_PASSWORD`             | 文本/JSON | 启用邮箱地址密码功能，启用后创建新地址时会自动生成密码，并支持密码登录和修改                                                      | `true`                                    |
 | `ENABLE_AGENT_EMAIL_INFO`             | 文本/JSON | 是否在前端“地址凭证与连接方式”弹窗中展示 AI Agent 接入信息（Address JWT、parsed-mail API、skill 链接）                         | `true`                                    |
 | `ADDRESS_JWT_TTL_DAYS`                | 数字      | 地址 JWT 过期天数，默认 `90`；签发/校验逻辑统一在 worker core/auth（原散落多处）                                                                                             | `90`                                      |
-| `REJECT_EXPLESS_JWT`                  | 文本/JSON | 为 `true` 时拒绝无 `exp` 的旧版地址 JWT（默认 `false`，留约 90 天宽限）；校验逻辑统一在 worker core/auth，并对每个地址 JWT 校验入口（含 `/open_api/credential_login`）生效 | `false`                                   |
+| `REJECT_EXPLESS_JWT`                  | 文本/JSON | （已废弃语义）地址 JWT 现**无条件**拒绝无 `exp` 或已过期 `exp` 的 token；此开关仅保留为兼容占位，不再影响校验行为（见 core/auth） | `false`                                   |
 | `SMTP_IMAP_PROXY_CONFIG`              | JSON      | 在前端“地址凭证与连接方式”弹窗中展示 SMTP/IMAP 代理连接信息；仅用于展示给用户，不会启动代理服务，代理服务仍需单独部署           | 见下方示例                                |
 | `SEND_MAIL_DOMAINS`                   | JSON      | 限制 `SEND_MAIL` binding 可用于哪些发件域名；留空或不配置时允许所有域名                                                            | `["example.com", "mail.example.com"]`     |
 
@@ -171,6 +171,7 @@
 | `TG_BOT_INFO`       | 文本      | 可不配置，telegram BOT_INFO，预定义的 BOT_INFO 可以降低 webhook 的延迟 | `{}`  |
 | `TG_ALLOW_USER_LANG`| 文本/JSON | 是否允许用户通过 `/lang` 命令切换语言，默认 `false`                    | `true`|
 | `ENABLE_TG_PUSH_ATTACHMENT`| 布尔值 | 是否启用 Telegram 推送邮件附件，默认 `false`，单文件限制 50MB           | `true`|
+| `TELEGRAM_SECRET_TOKEN` | 文本/Secret | Telegram Bot API webhook 来源校验 secret token；配置后 `/telegram/webhook` 会比对 `X-Telegram-Bot-Api-Secret-Token` 头，失配返回 401。**未配置时 webhook 只打日志不处理 update**（fail-closed） | （空） |
 
 > [!NOTE]
 > Telegram 功能需要解析邮件，免费版 CPU 有限，可能会导致大邮件解析超时

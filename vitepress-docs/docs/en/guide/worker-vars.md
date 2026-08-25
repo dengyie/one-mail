@@ -45,7 +45,7 @@
 | `ENABLE_ADDRESS_PASSWORD`             | Text/JSON | Enable address password feature, when enabled, passwords will be auto-generated for new addresses, supports password login and modification                                                                       | `true`                                    |
 | `ENABLE_AGENT_EMAIL_INFO`             | Text/JSON | Whether to show AI Agent access info in the frontend "Address Credentials & Connection Methods" dialog (Address JWT, parsed-mail APIs, skill link)                                      | `true`                                    |
 | `ADDRESS_JWT_TTL_DAYS`                | Number    | Address JWT expiry in days, default `90`; sign/verify logic unified in worker core/auth (previously scattered)                                                                                  | `90`                                      |
-| `REJECT_EXPLESS_JWT`                  | Text/JSON | When `true`, reject legacy address JWTs without an `exp` claim (default `false`, ~90-day grace); verify logic unified in worker core/auth and enforced on every address-JWT entry point including `/open_api/credential_login` (previously scattered) | `false`                                   |
+| `REJECT_EXPLESS_JWT`                  | Text/JSON | (Deprecated) Address JWTs are now always rejected when they lack an `exp` claim or have an expired `exp`; this var is kept only as a no-op placeholder and no longer affects verification | `false`                                   |
 | `SMTP_IMAP_PROXY_CONFIG`              | JSON      | Show SMTP/IMAP proxy connection info in the frontend "Address Credentials & Connection Methods" dialog; display-only, does not start the proxy service, which must be deployed separately | See example below                         |
 | `SEND_MAIL_DOMAINS`                   | JSON      | Restrict which sender domains can use the `SEND_MAIL` binding; when unset or empty, all domains are allowed                                                                                                     | `["example.com", "mail.example.com"]`     |
 
@@ -177,6 +177,7 @@
 | `TG_BOT_INFO`        | Text      | Optional, telegram BOT_INFO, predefined BOT_INFO can reduce webhook latency | `{}`    |
 | `TG_ALLOW_USER_LANG` | Text/JSON | Allow users to switch language via `/lang` command, default `false`         | `true`  |
 | `ENABLE_TG_PUSH_ATTACHMENT` | Boolean | Enable sending email attachments via Telegram push, default `false`, 50MB per file limit | `true` |
+| `TELEGRAM_SECRET_TOKEN` | Text/Secret | Telegram Bot API webhook secret token; when configured, `/telegram/webhook` validates the `X-Telegram-Bot-Api-Secret-Token` header and returns 401 on mismatch. **When unset, the webhook only logs and does not process updates** (fail-closed) | (empty) |
 
 > [!NOTE]
 > Telegram functionality requires email parsing, free tier CPU is limited, may cause large email parsing timeout
