@@ -13,6 +13,10 @@ ADMIN_PASSWORDS = ["<REDACTED>"]
 ENABLE_USER_CREATE_EMAIL = true
 ENABLE_USER_DELETE_EMAIL = true
 ENABLE_AUTO_REPLY = false
+# Telegram webhook 来源校验 secret token；配置后 /admin/telegram/init 的 setWebhook
+# 会携带 secret_token，/telegram/webhook 对比 X-Telegram-Bot-Api-Secret-Token 头。
+# 未配置时 webhook 处理 fail-closed（503）。
+# TELEGRAM_SECRET_TOKEN = ""
 
 [[d1_databases]]
 binding = "DB"

@@ -64,3 +64,87 @@ export const isAdminLockedOut = async (c: Context): Promise<boolean> => {
     const count = await getAdminFailCount(c);
     return count < 0 || count >= MAX_FAILURES;
 };
+
+/* ----------------------------------- R2 ----------------------------------- */
+
+/**
+ * R2（CRITICAL）：/admin/* 授权的纯函数判定——user-role 兜底不再构成授权面。
+ *
+ * 项目约定：被 node --test 加载的模块只引 hono、零相对 import。worker.ts 调用方
+ * 后可相对 import。把「admin 中间件」的判定抽成无副作用纯函数，使 R2 组合门
+ * （头通道 + 锁定）可被单测直接覆盖。
+ *
+ * 语义（与 worker.ts /admin/* 中间件逐字对齐）：
+ *  1. 有过admin凭据（x-admin-auth 或 x-user-access-token）且已锁定/ KV 不可达
+ *     → 429，不再校验凭据（fail-closed）。
+ *  2. x-admin-auth 校验通过 → 放行（调用方负责清失败计数）。
+ *  3. 头通道失败后：user-role 兜底（x-user-access-token + ADMIN_USER_ROLE）——
+ *     除「签名校验抛错」走 disable 逃生舱外，所有情况（过期/角色不符/角色命中但
+ *     缺头通道）一律 401 且计失败。user_role 仅作前端 UX 信号，不构成授权面。
+ *  4. DISABLE_ADMIN_PASSWORD_CHECK（运维显式逃生舱）→ 放行。
+ *  5. 其余 → 401（NeedAdminPassword）。
+ */
+
+export type AdminAuthCheckInput = {
+  hasAdminAuth: boolean;
+  hasAccessToken: boolean;
+  adminAuthValid: boolean;   // checkIsAdmin(c) 结果
+  adminFailCount: number;    // -1 = KV 不可达（fail-closed 视同锁定）
+  adminUserRole: string | undefined;
+  disableAdminPasswordCheck: boolean;
+  // x-user-access-token verify 结果；null = verify 抛错（签名无效）。
+  accessTokenPayload: { exp?: number; user_role?: unknown } | null;
+};
+
+export type AdminAuthDecision =
+  | { relay: true; status: 0 }
+  | {
+      relay: false;
+      status: number;          // 401 | 429
+      recordFailure: boolean;  // 是否记录一次失败（计入同一 IP 失败桶）
+      kind: "rate_limit" | "access_token_expired" | "role_not_admin" | "need_admin_password";
+    };
+
+export const decideAdminAuth = (input: AdminAuthCheckInput): AdminAuthDecision => {
+  const locked = input.adminFailCount < 0 || input.adminFailCount >= MAX_FAILURES;
+
+  // (1) 锁定门：有 admin 凭据的请求在锁定窗口内 → 429（KV 不可达 fail-closed）
+  if ((input.hasAdminAuth || input.hasAccessToken) && locked) {
+    return { relay: false, status: 429, recordFailure: false, kind: "rate_limit" };
+  }
+
+  // (2) 头通道命中 → 放行（调用方负责 clearAdminFailures）
+  if (input.adminAuthValid) {
+    return { relay: true, status: 0 };
+  }
+
+  // 记录头通道失败（x-admin-auth 校验不过且携带该头）
+  let recordFailure = input.hasAdminAuth;
+
+  // (3) R2：user-role 兜底不再放行授权面
+  if (input.adminUserRole && input.hasAccessToken) {
+    const payload = input.accessTokenPayload;
+    if (payload === null) {
+      // verify 抛错（无效签名/过期签名异常）→ 继续走逃生舱判定，先计失败
+      recordFailure = true;
+    } else {
+      const expired = !payload.exp || payload.exp < Math.floor(Date.now() / 1000);
+      if (expired) {
+        return { relay: false, status: 401, recordFailure: true, kind: "access_token_expired" };
+      }
+      if (payload.user_role !== input.adminUserRole) {
+        return { relay: false, status: 401, recordFailure: true, kind: "role_not_admin" };
+      }
+      // user_role 确为 ADMIN_USER_ROLE，但仍需头通道（checkIsAdmin 已在此之上
+      // 失败）→ 拒绝。R2 关键：角色命中也不再放行，且计失败（锁定对兜底有效）。
+      return { relay: false, status: 401, recordFailure: true, kind: "need_admin_password" };
+    }
+  }
+
+  // (4) 运维显式逃生舱
+  if (input.disableAdminPasswordCheck) {
+    return { relay: true, status: 0 };
+  }
+
+  return { relay: false, status: 401, recordFailure, kind: "need_admin_password" };
+};

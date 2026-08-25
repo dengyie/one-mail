@@ -18,7 +18,7 @@ import { email } from './email';
 import { scheduled } from './scheduled';
 import { getPasswords, getBooleanValue, getDomains, checkIsAdmin } from './utils';
 import { checkAccessControl } from './ip_blacklist';
-import { isAdminLockedOut, recordAdminFailure, clearAdminFailures } from './unified/admin_lockout';
+import { recordAdminFailure, clearAdminFailures, decideAdminAuth, getAdminFailCount } from './unified/admin_lockout';
 
 const API_PATHS = [
 	"/api/",
@@ -242,61 +242,61 @@ app.use('/user_api/*', async (c, next) => {
 // admin auth
 app.use('/admin/*', async (c, next) => {
 
-	// H3: 头路径失败锁定——只作用于 x-admin-auth 头；无该头跳过锁定
-	// （可能走 x-user-access-token 兜底）。仅错误 x-admin-auth 才计数
-	// （聚合器固定强 token 永不触发），KV 不可达时 isAdminLockedOut
-	// fail-closed 返回否 → 429（宁可误伤 admin 面不可放行爆破）。
+	// 授权判定集中在 admin_lockout.ts 的 decideAdminAuth 纯函数（零相对 import，
+	// 单测直跑），worker 只负责：解析输入 -> 调判定 -> 按 output 记账/回复。
+	// 覆盖 R2（user-role 兜底不构成授权面）+ H3（锁定先于凭据，含兜底不绕过）。
 	const hasAdminAuth = !!c.req.raw.headers.get("x-admin-auth");
+	const hasAccessToken = !!c.req.raw.headers.get("x-user-access-token");
+	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
 
-	// 存在 x-admin-auth 且 IP 已锁定 → 直接 429（锁定判定先于口令校验）
-	if (hasAdminAuth && await isAdminLockedOut(c)) {
-		const lockLang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
-		return c.text(i18n.getMessages(lockLang).RateLimitExceededMsg, 429);
+	// 解析 x-user-access-token（verify 抛错 -> null，decideAdminAuth 按 R2 处理）
+	let accessTokenPayload: { exp?: number; user_role?: unknown } | null = null;
+	if (hasAccessToken) {
+		try {
+			const raw = c.req.raw.headers.get("x-user-access-token") as string;
+			accessTokenPayload = await Jwt.verify(raw, c.env.JWT_SECRET, "HS256") as { exp?: number; user_role?: unknown };
+		} catch { /* verify 抛错 -> null */ }
 	}
 
-	// check header x-admin-auth
-	if (await checkIsAdmin(c)) {
-		// 正确 token 命中 → 清零本窗口失败计数（H3：防误伤后的自动恢复）
+	const decision = await decideAdminAuth({
+		hasAdminAuth,
+		hasAccessToken,
+		adminAuthValid: await checkIsAdmin(c),
+		adminFailCount: await getAdminFailCount(c),
+		adminUserRole: c.env.ADMIN_USER_ROLE,
+		disableAdminPasswordCheck: getBooleanValue(c.env.DISABLE_ADMIN_PASSWORD_CHECK),
+		accessTokenPayload,
+	});
+
+	if (decision.relay) {
+		// 命中（头通道有效 -> 清零本窗口失败计数，H3 防误伤后自动恢复）
 		if (hasAdminAuth) {
 			await clearAdminFailures(c);
 		}
 		await next();
 		return;
 	}
-	// 携带 x-admin-auth 但校验失败 → 计入失败（达阈值后 isAdminLockedOut 拦截）
-	if (hasAdminAuth) {
+
+	if (decision.recordFailure) {
 		await recordAdminFailure(c);
 	}
-	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
+
 	const msgs = i18n.getMessages(lang);
-	// check if user is admin
-	const access_token = c.req.raw.headers.get("x-user-access-token");
-	if (c.env.ADMIN_USER_ROLE && access_token) {
-		try {
-			const payload = await Jwt.verify(access_token, c.env.JWT_SECRET, "HS256");
-			// check expired
-			if (!payload.exp) return c.text(msgs.UserAcceesTokenExpiredMsg, 401);
-			// exp is in seconds
-			if (payload.exp < Math.floor(Date.now() / 1000)) {
-				return c.text(msgs.UserAcceesTokenExpiredMsg, 401)
-			}
-			if (payload.user_role !== c.env.ADMIN_USER_ROLE) {
-				return c.text(msgs.UserRoleIsNotAdminMsg, 401)
-			}
-			await next();
-			return;
-		} catch (e) {
-			console.error(e);
-		}
+	let body: string;
+	switch (decision.kind) {
+		case "rate_limit":
+			body = msgs.RateLimitExceededMsg;
+			break;
+		case "access_token_expired":
+			body = msgs.UserAcceesTokenExpiredMsg;
+			break;
+		case "role_not_admin":
+			body = msgs.UserRoleIsNotAdminMsg;
+			break;
+		default:
+			body = msgs.NeedAdminPasswordMsg;
 	}
-
-	// disable admin api check
-	if (getBooleanValue(c.env.DISABLE_ADMIN_PASSWORD_CHECK)) {
-		await next();
-		return;
-	}
-
-	return c.text(msgs.NeedAdminPasswordMsg, 401)
+	return c.text(body, decision.status);
 });
 
 

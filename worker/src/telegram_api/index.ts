@@ -48,10 +48,11 @@ api.post("/telegram/webhook", async (c) => {
             return c.text("Unauthorized", 401);
         }
     } else {
-        console.log("TELEGRAM_SECRET_TOKEN not configured, skipping webhook processing");
-        const reqJson = await c.req.json().catch(() => null);
-        console.log(`telegram webhook update received (unverified, not processed): ${reqJson ? JSON.stringify(reqJson).slice(0, 500) : "invalid-json"}`);
-        return c.body(null);
+        // H2：未配置 secret → 回传 503（非静默 200），使 operator 能察觉 bot 断开。
+        // 此前这里无条件 200 + 日志；当 setWebhook 因 TELEGRAM_SECRET_TOKEN 存在而
+        // 必须要求 secret 校验时，未配置即等于 bot 回调永远无法通过校验，断送静默。
+        console.log("TELEGRAM_SECRET_TOKEN not configured, rejecting webhook (fail-closed)");
+        return c.text("Service Unavailable: TELEGRAM_SECRET_TOKEN not configured", 503);
     }
     const token = c.env.TELEGRAM_BOT_TOKEN;
     const bot = newTelegramBot(c, token);
@@ -73,10 +74,20 @@ api.post("/admin/telegram/init", async (c) => {
     const webhookUrl = `https://${domain}/telegram/webhook`;
     console.log(`setting webhook to ${webhookUrl}`);
     const bot = newTelegramBot(c, token);
-    await bot.telegram.setWebhook(webhookUrl)
+    // H2: setWebhook 必须携带 secret_token（当 TELEGRAM_SECRET_TOKEN 配置时）。
+    // Telegram webhook 来源校验依赖 setWebhook 时的 secret_token —— 若不传，
+    // 后续每次回调都缺 X-Telegram-Bot-Api-Secret-Token 头 → webhook handler 401
+    // 静默断送。仅当 env 存在时附加（未配置的分支不做 setWebhook 变更，
+    // 保持开机即用的旧语义：webhook handler 对未配置 secret 返回 503 让
+    // operator 察觉）。
+    const setWebhookExtra = c.env.TELEGRAM_SECRET_TOKEN
+        ? { secret_token: c.env.TELEGRAM_SECRET_TOKEN }
+        : {};
+    await bot.telegram.setWebhook(webhookUrl, setWebhookExtra)
     await initTelegramBotCommands(c, bot);
     return c.json({
         message: "webhook set successfully",
+        secretTokenConfigured: !!c.env.TELEGRAM_SECRET_TOKEN,
     });
 });
 

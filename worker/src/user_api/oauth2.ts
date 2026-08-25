@@ -5,7 +5,7 @@ import i18n from '../i18n';
 import { getJsonSetting, getMailDomain, getStringValue, getUserRoles, includesDomain } from '../utils';
 import { UserOauth2Settings } from '../models';
 import { CONSTANTS } from '../constants';
-import { storeOAuthState, verifyOAuthState } from '../unified/oauth_state';
+import { storeOAuthState, verifyOAuthState, resolveOAuthState } from '../unified/oauth_state';
 
 
 export default {
@@ -32,16 +32,20 @@ export default {
         if (!clientID || !code) {
             return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
         }
-        // H6: callback 时校验 state（防 CSRF 换 code）。state 既可从请求体传入
-        // （前端后续将 route.query.state 放进 callback body），也可从 URL query 传入。
-        // 未提供 state 时保持向后兼容（前端 sessionStorage 对比兜底）；提供 state 时
-        // 校验失败（不存在/过期/clientID 不匹配）则 400 拒绝换 code。
-        const state = body.state || c.req.query("state");
-        if (state && typeof state === "string") {
-            const valid = await verifyOAuthState(c, state, clientID);
-            if (!valid) {
-                return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
-            }
+        // R3（CRITICAL）: OAuth callback 无条件 require state（fail-closed 防
+        // CSRF 换 code）。原实现在 state 缺失时跳过校验（向后兼容窗口），攻击者可
+        // 携带他人 code 而不带 state 直接换 code。现无 state/state 不匹配/
+        // 过期/clientID 不匹配一律 400 拒绝；state 由 getOauth2LoginUrl 写入 KV
+        // （10min TTL，一次性消费）。前端 UserOauth2Callback.vue 已同步：callback
+        // body 固定携带 `state`（route.query.state || sessionStorage 存储的 state）。
+        // 旧前端在升级前因不发 state 会被拒绝（新 worker 是权威，fail-closed）。
+        const state = resolveOAuthState(body.state, c.req.query("state"));
+        if (!state) {
+            return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
+        }
+        const valid = await verifyOAuthState(c, state, clientID);
+        if (!valid) {
+            return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
         }
         const settings = await getJsonSetting<UserOauth2Settings[]>(c, CONSTANTS.OAUTH2_SETTINGS_KEY);
         const setting = settings?.find(s => s.clientID === clientID);

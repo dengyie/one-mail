@@ -5,6 +5,7 @@ import {
   recordAdminFailure,
   clearAdminFailures,
   isAdminLockedOut,
+  decideAdminAuth,
 } from "./admin_lockout.ts";
 
 // I7c 回归：admin 登录失败锁定（按 IP 计数，15min 窗口 ≥10 次锁定，KV 不可达 fail-closed）。
@@ -101,4 +102,139 @@ test("KV error → fail-closed", async () => {
   assert.equal(await recordAdminFailure(c), -1);
   // clearAdminFailures 是 best-effort，KV 挂也不应抛
   await clearAdminFailures(c);
+});
+
+// H3 补充：不同 IP 独立失败桶——一个 IP 锁定不影响其他 IP。
+test("different IPs have independent failure buckets", async () => {
+  const kv = new MemoryKV();
+  const cA = makeCtx(kv);
+  const cB = {
+    req: { raw: { headers: { get: (h) => (h === "cf-connecting-ip" ? "5.6.7.8" : null) } } },
+    env: { KV: kv },
+  };
+  for (let i = 0; i < 10; i++) await recordAdminFailure(cA);
+  assert.equal(await isAdminLockedOut(cA), true);
+  // 另一 IP 仍可尝试（独立桶）
+  assert.equal(await isAdminLockedOut(cB), false);
+  assert.equal(await getAdminFailCount(cB), 0);
+  // 另一 IP 失败后各自锁定
+  for (let i = 0; i < 10; i++) await recordAdminFailure(cB);
+  assert.equal(await isAdminLockedOut(cB), true);
+});
+
+// ---- R2（CRITICAL）user-role 兜底不再构成授权面 ----
+// 真实 admin 中间件的判定逻辑在 decideAdminAuth（worker.ts 调用），
+// 这里直接覆盖 R2 组合门：头通道 + 锁定，user-role 兜底不能绕过。
+
+const payloadFactory = (overrides = {}) => ({
+  user_role: "admin",
+  exp: Math.floor(Date.now() / 1000) + 600,
+  ...overrides,
+});
+
+test("R2: user token without admin role in payload → /admin/* rejected (401)", async () => {
+  const d = decideAdminAuth({
+    hasAdminAuth: false,
+    hasAccessToken: true,
+    adminAuthValid: false,
+    adminFailCount: 0,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: payloadFactory({ user_role: "user" }),
+  });
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 401);
+  assert.equal(d.kind, "role_not_admin");
+  assert.equal(d.recordFailure, true);
+});
+
+test("R2: forged user_role=admin WITHOUT admin credentials → rejected (401, recorded)", async () => {
+  const d = decideAdminAuth({
+    hasAdminAuth: false,
+    hasAccessToken: true,
+    adminAuthValid: false,
+    adminFailCount: 0,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: payloadFactory({ user_role: "admin" }),
+  });
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 401);
+  assert.equal(d.kind, "need_admin_password");
+  assert.equal(d.recordFailure, true);
+});
+
+test("R2: forged user_role=admin WITH admin credentials → allowed (clears failures)", () => {
+  const d = decideAdminAuth({
+    hasAdminAuth: false,
+    hasAccessToken: true,
+    adminAuthValid: true,
+    adminFailCount: 0,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: payloadFactory({ user_role: "admin" }),
+  });
+  assert.equal(d.relay, true);
+});
+
+test("R2: expired user access token while locked window → still remembered as failure", async () => {
+  const d = decideAdminAuth({
+    hasAdminAuth: false,
+    hasAccessToken: true,
+    adminAuthValid: false,
+    adminFailCount: 0,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: {
+      user_role: "admin",
+      exp: Math.floor(Date.now() / 1000) - 60,
+    },
+  });
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 401);
+  assert.equal(d.recordFailure, true);
+});
+
+test("R2: user-role fallback does NOT bypass lockout (H3 combined gate)", async () => {
+  // 已锁定（failCount >= 10）：有 x-user-access-token 的请求仍 429
+  const d = decideAdminAuth({
+    hasAdminAuth: false,
+    hasAccessToken: true,
+    adminAuthValid: false,
+    adminFailCount: 10,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: payloadFactory({ user_role: "admin" }),
+  });
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 429);
+  assert.equal(d.kind, "rate_limit");
+  // 且不 record（锁定本身就是拒绝）
+  assert.equal(d.recordFailure, false);
+});
+
+test("R2: KV unreachable (failCount -1) → 429 for any credentialed admin request", async () => {
+  const d = decideAdminAuth({
+    hasAdminAuth: true,
+    hasAccessToken: false,
+    adminAuthValid: true,
+    adminFailCount: -1,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: null,
+  });
+  // 注意：checkIsAdmin 为 true 但 KV 不可达 → 锁定门先执行 429（宁可误伤不放行爆破）
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 429);
+});
+
+test("R2: correct admin token clears failures via caller contract", async () => {
+  const kv = new MemoryKV();
+  const c = makeCtx(kv);
+  for (let i = 0; i < 6; i++) await recordAdminFailure(c);
+  assert.equal(await getAdminFailCount(c), 6);
+  await clearAdminFailures(c);
+  assert.equal(await getAdminFailCount(c), 0);
+  // 正确 admin 头命中后清零 → 之后错误不再 429
+  assert.equal(await isAdminLockedOut(c), false);
 });
