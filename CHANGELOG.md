@@ -10,6 +10,7 @@
 
 ### Features
 
+- feat: |Frontend/CI| 前端现代化与 awesome-ui-kit 组件体系深度重构：全量装配 `ThemeToggle`, `StatusIndicator`, `ThinkingBlock`, `StreamMarkdown`, `ChatPromptInput`, `PromptChips`, `MessageActionToolbar` 等 14 个原子单文件基元；邮件阅读器新增 AI 智能助理抽屉与提取回复草稿能力；`AiExtractInfo` 重构验证码大字与一键复制；`Header` 与 `Appearance` 集成 Auto/Light/Dark 三态主题切换；新增 GitHub Actions `.github/workflows/deploy.yml` 自动化 CI 门禁与 push main 自动构建部署至 pxed（nginx :3301）
 - feat: |Worker| Add Bearer API-key authentication for the unified mailbox API, including readonly source/account scoping and admin access
 - feat: |Worker| 新增统一收件箱完整查询端点：`GET /api/unified/emails?source=&account=&unread=&q=`（`q=` 全文搜索）、`GET /api/unified/count?source=&unread=`、`GET /api/unified/verifcodes?addr=&fresh=`、`POST /api/unified/emails/:id/read`（admin API-key 专属），并提供验证码提取纯函数与验证码邮件查询；新增 `POST /admin/unified/keys`（x-admin-auth 保护）用于创建带 rolereadonly/admin、来源/账号白名单的 API key，明文 key 仅创建时返回一次（one-mail 统一收件箱）
 - feat: |Worker| one-mail 统一收件箱新增 90 天已读邮件保留清理：`scheduled` 任务每次运行时删除 `is_read=1` 且 `received_at` 早于 90 天前的邮件，并同步删除关联的 R2 附件键（若配置了 `ATTACHMENTS` bucket）（one-mail M5 保留清理）

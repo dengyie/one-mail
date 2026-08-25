@@ -17,6 +17,7 @@ import { getRouterPathWithLang, hashPassword } from '../utils'
 import { DEFAULT_LOCALE, isSupportedLocale, replaceLocaleInFullPath } from '../i18n/utils'
 import { getLocaleLabel, SUPPORTED_LOCALES } from '../i18n/locale-registry'
 import Turnstile from '../components/Turnstile.vue'
+import ThemeToggle from '../components/ai/ThemeToggle.vue'
 import { NButton, NIcon } from 'naive-ui'
 
 const message = useMessage()
@@ -279,7 +280,8 @@ onMounted(async () => {
             </template>
             <template #extra>
                 <n-space align="center" class="header-extra">
-                    <n-menu v-if="!isMobile" mode="horizontal" :options="menuOptions" responsive />
+                    <n-menu v-if="!isMobile" mode="horizontal" :options="menuOptions.filter(o => o.key !== 'theme')" responsive />
+                    <ThemeToggle v-if="!isMobile" class="ml-1 mr-1" />
                     <n-button v-else :text="true" @click="showMobileMenu = !showMobileMenu">
                         <template #icon>
                             <n-icon :component="MenuFilled" />
@@ -314,7 +316,10 @@ onMounted(async () => {
         </n-page-header>
         <n-drawer v-model:show="showMobileMenu" placement="top" style="height: 100vh;">
             <n-drawer-content :title="t('menu')" closable>
-                <n-menu :options="menuOptions" />
+                <n-menu :options="menuOptions.filter(o => o.key !== 'theme')" />
+                <div class="p-3 my-2 flex justify-center bg-zinc-50 dark:bg-zinc-900/60 rounded-xl border border-zinc-200/60 dark:border-zinc-800/60">
+                    <ThemeToggle />
+                </div>
                 <div class="mobile-menu-actions">
                     <n-dropdown :options="languageOptions" @select="changeLocale" trigger="click" class="header-locale-dropdown">
                         <button type="button" class="mobile-menu-utility-button">

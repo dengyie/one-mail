@@ -1,38 +1,15 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useScopedI18n } from '@/i18n/app';
-import { ContentCopyOutlined, LinkRound, CodeRound } from '@vicons/material';
+import { ContentCopyOutlined, LinkRound, CodeRound, CheckCircleRound } from '@vicons/material';
 import { useMessage } from 'naive-ui';
 import { useGlobalState } from '../store';
 
 const message = useMessage();
 const { isDark } = useGlobalState();
+const copied = ref(false);
 
-// Dark mode: use Gmail's softer blue (#A8C7FA) for better readability
-const alertThemeOverrides = computed(() => {
-  if (isDark.value) {
-    return {
-      colorSuccess: 'rgba(168, 199, 250, 0.15)',
-      borderSuccess: '1px solid rgba(168, 199, 250, 0.3)',
-      iconColorSuccess: '#A8C7FA',
-      titleTextColorSuccess: '#A8C7FA',
-    }
-  }
-  return {}
-});
-
-const tagThemeOverrides = computed(() => {
-  if (isDark.value) {
-    return {
-      colorSuccess: 'rgba(168, 199, 250, 0.15)',
-      borderSuccess: '1px solid rgba(168, 199, 250, 0.3)',
-      textColorSuccess: '#A8C7FA',
-    }
-  }
-  return {}
-});
-
-const { t } = useScopedI18n('components.AiExtractInfo')
+const { t } = useScopedI18n('components.AiExtractInfo');
 
 const props = defineProps({
   metadata: {
@@ -58,13 +35,13 @@ const aiExtract = computed(() => {
 const typeLabel = computed(() => {
   if (!aiExtract.value) return '';
   const typeMap = {
-    auth_code: t('authCode'),
-    auth_link: t('authLink'),
-    service_link: t('serviceLink'),
-    subscription_link: t('subscriptionLink'),
-    other_link: t('otherLink'),
+    auth_code: t('authCode') || '验证码',
+    auth_link: t('authLink') || '验证链接',
+    service_link: t('serviceLink') || '服务链接',
+    subscription_link: t('subscriptionLink') || '订阅链接',
+    other_link: t('otherLink') || '链接',
   };
-  return typeMap[aiExtract.value.type] || '';
+  return typeMap[aiExtract.value.type] || aiExtract.value.type;
 });
 
 const typeIcon = computed(() => {
@@ -76,7 +53,7 @@ const typeIcon = computed(() => {
     subscription_link: LinkRound,
     other_link: LinkRound,
   };
-  return iconMap[aiExtract.value.type] || null;
+  return iconMap[aiExtract.value.type] || CodeRound;
 });
 
 const isLink = computed(() => {
@@ -94,11 +71,14 @@ const displayText = computed(() => {
 });
 
 const copyToClipboard = async () => {
+  if (!aiExtract.value?.result) return;
   try {
     await navigator.clipboard.writeText(aiExtract.value.result);
-    message.success(t('copySuccess'));
+    copied.value = true;
+    message.success(t('copySuccess') || '已复制到剪贴板');
+    setTimeout(() => { copied.value = false; }, 2000);
   } catch (e) {
-    message.error(t('copyFailed'));
+    message.error(t('copyFailed') || '复制失败');
   }
 };
 
@@ -110,44 +90,73 @@ const openLink = () => {
 </script>
 
 <template>
-  <div v-if="aiExtract && aiExtract.result" class="ai-extract-info">
-    <n-alert v-if="!compact" type="success" closable :theme-overrides="alertThemeOverrides">
-      <template #icon>
-        <n-icon :component="typeIcon" />
-      </template>
-      <template #header>
-        {{ typeLabel }}
-      </template>
-      <n-space align="center">
-        <n-text v-if="aiExtract.type === 'auth_code'" strong style="font-size: 18px; font-family: monospace;">
-          {{ aiExtract.result }}
-        </n-text>
-        <n-ellipsis v-else style="max-width: 400px;">
-          {{ displayText }}
-        </n-ellipsis>
-        <n-button size="small" @click="copyToClipboard" tertiary>
-          <template #icon>
-            <n-icon :component="ContentCopyOutlined" />
-          </template>
-        </n-button>
-        <n-button v-if="isLink" size="small" @click="openLink" tertiary type="primary">
-          {{ t('open') }}
-        </n-button>
-      </n-space>
-    </n-alert>
-    <n-tag v-else type="success" @click="copyToClipboard" style="cursor: pointer;" size="small" :theme-overrides="tagThemeOverrides">
-      <template #icon>
-        <n-icon :component="typeIcon" />
-      </template>
-      <n-ellipsis style="max-width: 150px;">
-        {{ typeLabel }}: {{ displayText }}
-      </n-ellipsis>
-    </n-tag>
+  <div v-if="aiExtract && aiExtract.result" class="ai-extract-wrapper my-2 text-left">
+    <!-- Compact Pill (used in mail list item) -->
+    <div
+      v-if="compact"
+      @click.stop="copyToClipboard"
+      class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-all bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20"
+      :title="displayText"
+    >
+      <span>{{ aiExtract.type === 'auth_code' ? '🔑' : '🔗' }}</span>
+      <span class="font-mono font-semibold">{{ displayText }}</span>
+      <span class="text-[10px] opacity-75">{{ copied ? '✓' : '' }}</span>
+    </div>
+
+    <!-- Full AI Extracted Card (used in mail content view) -->
+    <div
+      v-else
+      class="relative rounded-2xl border border-emerald-500/30 dark:border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/20 p-4 shadow-xs"
+    >
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <div class="flex items-center gap-2">
+          <span class="flex items-center justify-center w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs">
+            ✨
+          </span>
+          <span class="text-xs font-semibold text-emerald-900 dark:text-emerald-300 uppercase tracking-wide">
+            {{ typeLabel }}
+          </span>
+        </div>
+        <span v-if="aiExtract.type === 'auth_code'" class="text-[11px] text-emerald-600 dark:text-emerald-400">
+          点击即可快速复制
+        </span>
+      </div>
+
+      <div class="flex items-center justify-between flex-wrap gap-3 mt-2">
+        <!-- Main Content -->
+        <div class="flex items-center gap-3 min-w-0">
+          <div
+            v-if="aiExtract.type === 'auth_code'"
+            class="px-4 py-2 rounded-xl bg-white dark:bg-zinc-900 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 font-mono font-bold text-2xl tracking-widest select-all shadow-inner"
+          >
+            {{ aiExtract.result }}
+          </div>
+          <div v-else class="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-lg">
+            {{ displayText }}
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            @click="copyToClipboard"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-medium shadow-xs transition-all cursor-pointer"
+          >
+            <span>{{ copied ? '✓' : '📋' }}</span>
+            <span>{{ copied ? (t('copied') || '已复制') : (t('copy') || '复制') }}</span>
+          </button>
+          <button
+            v-if="isLink"
+            type="button"
+            @click="openLink"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-xs font-medium shadow-xs transition-all cursor-pointer"
+          >
+            <span>↗</span>
+            <span>{{ t('open') || '打开链接' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.ai-extract-info {
-  margin-bottom: 10px;
-}
-</style>

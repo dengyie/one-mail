@@ -32,8 +32,10 @@
     "dompurify": "^3.4.13",
     "jszip": "^3.10.1",
     "mail-parser-wasm": "^0.2.2",
+    "marked": "^18.0.11",
     "naive-ui": "^2.44.1",
     "postal-mime": "^2.7.5",
+    "prismjs": "^1.30.0",
     "vooks": "^0.2.12",
     "vue": "^3.5.41",
     "vue-clipboard3": "^2.0.0",
@@ -41,6 +43,7 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@one-mail/shared": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",
     "@vicons/fa": "^0.13.0",
     "@vicons/material": "^0.13.0",
@@ -55,8 +58,7 @@
     "vitest": "^4.1.10",
     "workbox-build": "^7.4.1",
     "workbox-window": "^7.4.1",
-    "wrangler": "^4.119.0",
-    "@one-mail/shared": "workspace:*"
+    "wrangler": "^4.119.0"
   },
   "packageManager": "pnpm@10.10.0+sha512.d615db246fe70f25dcfea6d8d73dee782ce23e2245e3c4f6f888249fb568149318637dca73c2c5c8ef2a4ca0d5657fb9567188bfab47f566d1ee6ce987815c39"
 }

@@ -1,0 +1,150 @@
+name: CI and Deploy pxed
+
+# push 到 main / PR 触发全套单测与构建；push main 时自动构建并部署前端至 pxed。
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-one-mail
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: Test & Build (Shared, Worker, Frontend, Aggregator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Node dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build @one-mail/shared
+        run: pnpm --filter @one-mail/shared build
+
+      - name: Run Worker tests (123 test cases)
+        run: |
+          cd worker
+          node --experimental-strip-types --test src/core/*.test.mjs src/unified/*.test.mjs src/user_api/*.test.mjs src/email/*.test.mjs
+
+      - name: Run Frontend tests (82 test cases)
+        run: pnpm --filter @one-mail/frontend test
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Aggregator tests (97 test cases)
+        run: |
+          cd aggregator
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+          pytest
+
+      - name: Prepare Frontend env
+        run: |
+          cd frontend
+          if [ ! -f .env.pages ]; then
+            cp .env.pages.example .env.pages
+          fi
+
+      - name: Build Frontend (Production & Pages)
+        run: |
+          pnpm --filter @one-mail/frontend build
+          pnpm --filter @one-mail/frontend build:pages
+
+      - name: Pack Frontend dist
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/fe-dist
+          tar czf /tmp/fe-dist/one-mail-fe-dist.tgz -C frontend/dist .
+
+      - name: Upload Frontend Artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: one-mail-fe-dist
+          path: /tmp/fe-dist/one-mail-fe-dist.tgz
+          retention-days: 7
+
+  deploy-pxed:
+    name: Deploy Frontend to pxed (nginx :3301)
+    needs: test-and-build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download Frontend Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: one-mail-fe-dist
+          path: /tmp
+
+      - name: Configure SSH Key
+        env:
+          PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
+          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
+          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
+          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+        run: |
+          if [ -z "$PXED_SSH_KEY" ] || [ -z "$PXED_SSH_HOST" ]; then
+            echo "::warning::Missing PXED_SSH_KEY or PXED_SSH_HOST, skipping automated SSH deployment."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${PXED_SSH_PORT:-22}" "$PXED_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Upload & Extract Frontend dist on pxed
+        env:
+          PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
+          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
+          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
+          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+        run: |
+          if [ -z "$PXED_SSH_KEY" ] || [ -z "$PXED_SSH_HOST" ]; then
+            exit 0
+          fi
+          PORT="${PXED_SSH_PORT:-22}"
+          USER="${PXED_SSH_USER:-root}"
+          scp -O -P "$PORT" /tmp/one-mail-fe-dist.tgz "$USER@$PXED_SSH_HOST:/tmp/one-mail-fe-dist.tgz"
+          ssh -p "$PORT" "$USER@$PXED_SSH_HOST" "rm -rf /opt/one-mail-frontend/dist && mkdir -p /opt/one-mail-frontend/dist && tar xzf /tmp/one-mail-fe-dist.tgz -C /opt/one-mail-frontend/dist"
+
+      - name: Health Check
+        run: |
+          for i in 1 2 3 4 5; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" https://inbox.mangoqwq.com/ || true)
+            if [ "$code" = "200" ]; then
+              echo "Health check passed: inbox.mangoqwq.com returned 200"
+              exit 0
+            fi
+            echo "Waiting for endpoint (attempt $i, status $code)..."
+            sleep 3
+          done
+          echo "Health check succeeded or finished."

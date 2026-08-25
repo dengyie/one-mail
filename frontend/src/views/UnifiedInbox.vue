@@ -1,23 +1,31 @@
 <template>
-  <div class="unified-inbox max-w-6xl mx-auto px-4 py-6 text-left">
+  <div class="unified-inbox max-w-6xl mx-auto px-4 py-6 text-left space-y-4">
     <!-- 页头 -->
-    <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+    <div class="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-zinc-200/80 dark:border-zinc-800/80">
       <div>
-        <h1 class="text-xl font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+        <h1 class="text-xl font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
           <span>📥</span>
           <span>{{ t('title') }}</span>
         </h1>
-        <p class="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5">{{ t('subtitle') }}</p>
+        <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{{ t('subtitle') }}</p>
       </div>
-      <StatusIndicator :status="connStatus" :label="connLabel" />
+      <div class="flex items-center gap-3">
+        <StatusIndicator :status="connStatus" :label="connLabel" />
+        <n-button size="small" :loading="loading" @click="refreshList" quaternary circle>
+          <template #icon><n-icon><RefreshRound /></n-icon></template>
+        </n-button>
+      </div>
     </div>
 
     <!-- 登录用户走用户 JWT；游客可使用兼容的 API-key 通道 -->
     <div
       v-if="!hasAccess"
-      class="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 px-4 py-3 text-sm mb-4 flex items-center justify-between gap-3"
+      class="rounded-2xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 px-5 py-3.5 text-sm shadow-xs flex items-center justify-between gap-3"
     >
-      <span>{{ t('auth.loginRequired') }}</span>
+      <div class="flex items-center gap-2">
+        <span>⚠️</span>
+        <span>{{ t('auth.loginRequired') }}</span>
+      </div>
       <div class="flex items-center gap-2 shrink-0">
         <n-button size="small" type="primary" @click="router.push('/user')">
           {{ t('auth.login') }}
@@ -29,22 +37,30 @@
     </div>
     <div
       v-else-if="!isLoggedIn && hasKey"
-      class="rounded-xl border border-sky-200 dark:border-sky-800/60 bg-sky-50 dark:bg-sky-950/30 text-sky-800 dark:text-sky-300 px-4 py-3 text-sm mb-4"
+      class="rounded-2xl border border-sky-200 dark:border-sky-800/60 bg-sky-50/80 dark:bg-sky-950/30 text-sky-800 dark:text-sky-300 px-5 py-2.5 text-xs flex items-center justify-between gap-3 shadow-xs"
     >
-      {{ t('auth.apiKeyMode') }}
+      <div class="flex items-center gap-2">
+        <span>🔑</span>
+        <span>{{ t('auth.apiKeyMode') }}</span>
+      </div>
+      <n-button size="tiny" ghost @click="activeTab = 'settings'">管理 Key</n-button>
     </div>
 
     <n-tabs v-model:value="activeTab" type="segment" class="unified-tabs">
       <!-- ① 邮件列表 -->
       <n-tab-pane name="list" :tab="t('tabs.list')">
-        <div class="space-y-3">
+        <div class="space-y-4 pt-2">
+          <!-- 快捷筛选 PromptChips -->
+          <PromptChips :suggestions="quickFilterChips" @select="handleSelectChip" />
+
           <!-- 过滤 / 搜索 / 分页控制 -->
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2 bg-zinc-50/60 dark:bg-zinc-900/40 p-3 rounded-2xl border border-zinc-200/60 dark:border-zinc-800/60">
             <n-input
               v-model:value="q"
               :placeholder="t('list.searchPlaceholder')"
               clearable
-              style="max-width: 280px"
+              size="small"
+              style="max-width: 260px"
               @keyup.enter="applySearch"
             />
             <n-button size="small" type="primary" ghost @click="applySearch">
@@ -55,62 +71,64 @@
               v-model:value="sourceFilter"
               :options="sourceOptions"
               clearable
+              size="small"
               :placeholder="t('list.allSources')"
-              style="width: 150px"
+              style="width: 140px"
               @update:value="applyFilter"
             />
             <n-select
               v-model:value="accountFilter"
               :options="accountOptions"
               clearable
+              size="small"
               :placeholder="t('list.allAccounts')"
-              style="width: 210px"
+              style="width: 180px"
               @update:value="applyFilter"
             />
             <n-checkbox v-model:checked="unreadOnly" @update:checked="applyFilter">
               {{ t('list.unread') }}
             </n-checkbox>
             <div class="flex-1"></div>
-            <span class="text-xs text-zinc-400">{{ t('list.total', { count }) }}</span>
-            <n-button size="small" :loading="loading" @click="refreshList">
-              <template #icon><n-icon><RefreshRound /></n-icon></template>
-            </n-button>
+            <span class="text-xs text-zinc-400 font-mono">{{ t('list.total', { count }) }}</span>
           </div>
 
-          <div v-if="loading" class="py-16 text-center text-zinc-400">
-            {{ t('list.loading') }}
+          <div v-if="loading" class="py-20 text-center text-zinc-400 flex flex-col items-center gap-2">
+            <span class="animate-spin text-xl">⏳</span>
+            <span>{{ t('list.loading') }}</span>
           </div>
           <n-empty
             v-else-if="!emails.length"
             :description="filterActive ? t('list.emptyFiltered') : t('list.empty')"
-            class="py-16"
+            class="py-20"
           />
           <div
             v-else
-            class="rounded-xl border border-zinc-200 dark:border-zinc-800 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white dark:bg-zinc-900/60"
+            class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white dark:bg-zinc-900/60 shadow-xs"
           >
             <button
               v-for="row in emails"
               :key="row.id"
-              class="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+              class="w-full text-left px-5 py-3.5 flex items-center gap-4 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer"
               @click="openDetail(row.id)"
             >
               <span
-                class="w-2 h-2 rounded-full shrink-0"
-                :class="row.is_read ? 'bg-transparent' : 'bg-emerald-500'"
+                class="w-2.5 h-2.5 rounded-full shrink-0 transition-all"
+                :class="row.is_read ? 'bg-transparent border border-zinc-300 dark:border-zinc-700' : 'bg-emerald-500 shadow-xs shadow-emerald-500/50'"
               ></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-baseline gap-2">
-                  <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
+              <div class="min-w-0 flex-1 space-y-1">
+                <div class="flex items-baseline gap-2 flex-wrap">
+                  <span class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                     {{ row.subject || t('list.noSubject') }}
                   </span>
-                  <n-tag size="small" :bordered="false" type="info" class="shrink-0">{{ row.source }}</n-tag>
+                  <n-tag size="tiny" :bordered="false" type="info" class="shrink-0 font-mono">{{ row.source }}</n-tag>
+                  <n-tag v-if="row.account_id" size="tiny" :bordered="false" class="shrink-0 font-mono">{{ row.account_id }}</n-tag>
                 </div>
-                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
-                  {{ row.from_addr }}<span v-if="row.account_id"> → {{ row.account_id }}</span>
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-2">
+                  <span>{{ row.from_addr }}</span>
+                  <span v-if="row.account_id" class="text-zinc-400">→ {{ row.account_id }}</span>
                 </div>
               </div>
-              <div class="text-xs text-zinc-400 shrink-0">{{ fmtTime(row.received_at) }}</div>
+              <div class="text-xs text-zinc-400 shrink-0 font-mono">{{ fmtTime(row.received_at) }}</div>
             </button>
           </div>
 
@@ -120,19 +138,20 @@
             :page-count="Math.ceil(count / pageSize)"
             :page-size="pageSize"
             @update:page="setPage"
-            class="justify-center"
+            class="justify-center pt-2"
           />
         </div>
       </n-tab-pane>
 
       <!-- ② 验证码聚合视图 -->
       <n-tab-pane name="codes" :tab="t('tabs.codes')">
-        <div class="space-y-3">
-          <div class="flex flex-wrap items-end gap-2">
+        <div class="space-y-4 pt-2">
+          <div class="flex flex-wrap items-end gap-3 bg-zinc-50/60 dark:bg-zinc-900/40 p-4 rounded-2xl border border-zinc-200/60 dark:border-zinc-800/60">
             <div class="flex flex-col gap-1">
               <span class="text-xs text-zinc-500">{{ t('codes.addrLabel') }}</span>
               <n-input
                 v-model:value="codesAddr"
+                size="small"
                 :placeholder="t('codes.addrPlaceholder')"
                 clearable
                 style="width: 260px"
@@ -141,14 +160,14 @@
             </div>
             <div class="flex flex-col gap-1">
               <span class="text-xs text-zinc-500">{{ t('list.fresh') }}</span>
-              <n-select v-model:value="codesFresh" :options="freshOptions" style="width: 120px" />
+              <n-select v-model:value="codesFresh" size="small" :options="freshOptions" style="width: 120px" />
             </div>
-            <n-button type="primary" ghost :loading="codesLoading" @click="loadCodes">
+            <n-button type="primary" size="small" ghost :loading="codesLoading" @click="loadCodes">
               {{ t('codes.refresh') }}
             </n-button>
           </div>
 
-          <div v-if="codesError && !codes.length" class="text-sm text-rose-500 py-8 text-center">
+          <div v-if="codesError && !codes.length" class="text-sm text-rose-500 py-12 text-center">
             {{ codesError }}
           </div>
           <n-empty
@@ -160,22 +179,26 @@
             <div
               v-for="(c, i) in codes"
               :key="i"
-              class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-4 flex items-start justify-between gap-3"
+              class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 flex items-start justify-between gap-3 shadow-xs hover:border-emerald-500/40 transition-all"
             >
-              <div class="min-w-0">
-                <div class="font-mono text-2xl font-bold text-zinc-900 dark:text-zinc-100 tracking-widest break-all">
+              <div class="min-w-0 space-y-1">
+                <div class="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400 tracking-widest break-all select-all">
                   {{ c.code }}
                 </div>
-                <div class="text-sm text-zinc-700 dark:text-zinc-300 truncate mt-1">
+                <div class="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
                   {{ c.subject || t('list.noSubject') }}
                 </div>
                 <div class="text-xs text-zinc-400 truncate">
                   {{ c.from_addr }} · {{ fmtTime(c.received_at) }}
                 </div>
               </div>
-              <n-button size="small" quaternary @click="copyCode(i, c.code)">
+              <button
+                type="button"
+                @click="copyCode(i, c.code)"
+                class="px-3 py-1.5 rounded-xl text-xs font-medium border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 transition-colors cursor-pointer shrink-0"
+              >
                 {{ copiedIndex === i ? t('codes.copied') : t('codes.copy') }}
-              </n-button>
+              </button>
             </div>
           </div>
         </div>
@@ -183,9 +206,9 @@
 
       <!-- ③ 聚合器运行状态 -->
       <n-tab-pane name="status" :tab="t('tabs.status')">
-        <div class="space-y-3">
+        <div class="space-y-4 pt-2">
           <div class="flex items-center justify-between flex-wrap gap-2">
-            <p class="text-sm text-zinc-500 dark:text-zinc-400 max-w-2xl">{{ t('status.mode') }}</p>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl">{{ t('status.mode') }}</p>
             <n-button size="small" :loading="statusLoading" @click="loadStatus">
               <template #icon><n-icon><RefreshRound /></n-icon></template>
               {{ t('codes.refresh') }}
@@ -193,38 +216,50 @@
           </div>
 
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-4">
-              <div class="text-xs text-zinc-500">{{ t('status.emails') }}</div>
-              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{{ status.emails }}</div>
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
+              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
+                <span>✉️</span>
+                <span>{{ t('status.emails') }}</span>
+              </div>
+              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono">{{ status.emails }}</div>
             </div>
-            <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-4">
-              <div class="text-xs text-zinc-500">{{ t('status.unread') }}</div>
-              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{{ status.unread }}</div>
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
+              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
+                <span>📬</span>
+                <span>{{ t('status.unread') }}</span>
+              </div>
+              <div class="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-2 font-mono">{{ status.unread }}</div>
             </div>
-            <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-4">
-              <div class="text-xs text-zinc-500">{{ t('status.sources') }}</div>
-              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{{ status.sources.length }}</div>
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
+              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
+                <span>🌐</span>
+                <span>{{ t('status.sources') }}</span>
+              </div>
+              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono">{{ status.sources.length }}</div>
             </div>
-            <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-4">
-              <div class="text-xs text-zinc-500">{{ t('status.accounts') }}</div>
-              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{{ status.accounts.length }}</div>
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
+              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
+                <span>👥</span>
+                <span>{{ t('status.accounts') }}</span>
+              </div>
+              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono">{{ status.accounts.length }}</div>
             </div>
           </div>
 
           <div
             v-if="status.sources.length"
-            class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-4"
+            class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs space-y-2"
           >
-            <div class="text-xs text-zinc-500 mb-2">{{ t('status.sources') }}</div>
+            <div class="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{{ t('status.sources') }}</div>
             <div class="flex flex-wrap gap-2">
               <n-tag v-for="s in status.sources" :key="s" size="small" :bordered="false">{{ s }}</n-tag>
             </div>
           </div>
 
-          <div v-if="statusError && !status.emails" class="text-sm text-rose-500">
+          <div v-if="statusError && !status.emails" class="text-sm text-rose-500 py-4">
             {{ statusError }}
           </div>
-          <div v-if="lastRefresh" class="text-xs text-zinc-400">
+          <div v-if="lastRefresh" class="text-xs text-zinc-400 font-mono">
             {{ t('status.lastRefresh', { time: fmtTime(lastRefresh.getTime()) }) }}
           </div>
         </div>
@@ -232,9 +267,12 @@
 
       <!-- ④ API-key 设置 -->
       <n-tab-pane name="settings" :tab="t('tabs.settings')">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-5 space-y-3">
-            <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{{ t('settings.title') }}</h3>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-2">
+          <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-5 space-y-3 shadow-xs">
+            <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+              <span>🔑</span>
+              <span>{{ t('settings.title') }}</span>
+            </h3>
             <p class="text-xs text-zinc-500">{{ t('settings.keyTip') }}</p>
             <n-input
               v-model:value="keyInput"
@@ -242,25 +280,30 @@
               show-password-on="click"
               :placeholder="t('settings.keyPlaceholder')"
             />
-            <div class="flex gap-2">
-              <n-button type="primary" @click="saveKey">{{ t('settings.save') }}</n-button>
-              <n-button :loading="testing" @click="testKey">{{ t('settings.test') }}</n-button>
+            <div class="flex gap-2 pt-1">
+              <n-button type="primary" size="small" @click="saveKey">{{ t('settings.save') }}</n-button>
+              <n-button size="small" :loading="testing" @click="testKey">{{ t('settings.test') }}</n-button>
             </div>
           </div>
 
-          <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-5 space-y-3">
-            <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{{ t('settings.createKey') }}</h3>
+          <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-5 space-y-3 shadow-xs">
+            <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+              <span>✨</span>
+              <span>{{ t('settings.createKey') }}</span>
+            </h3>
             <p class="text-xs text-zinc-500">{{ t('settings.createKeyTip') }}</p>
-            <n-input v-model:value="newKeyName" :placeholder="t('settings.keyNamePlaceholder')" />
-            <n-select v-model:value="newKeyRole" :options="roleOptions" />
+            <n-input v-model:value="newKeyName" size="small" :placeholder="t('settings.keyNamePlaceholder')" />
+            <n-select v-model:value="newKeyRole" size="small" :options="roleOptions" />
             <n-input
               v-model:value="newKeyAdminPassword"
+              size="small"
               type="password"
               show-password-on="click"
               :placeholder="t('settings.adminPasswordPlaceholder')"
             />
             <n-button
               type="primary"
+              size="small"
               :loading="creating"
               :disabled="!newKeyName.trim() || !newKeyAdminPassword"
               @click="createKey"
@@ -269,7 +312,7 @@
             </n-button>
             <div
               v-if="newKeyPlain"
-              class="rounded-lg bg-zinc-900 dark:bg-zinc-800 text-emerald-400 font-mono text-xs p-3 break-all select-all"
+              class="rounded-xl bg-zinc-900 dark:bg-zinc-800 text-emerald-400 font-mono text-xs p-3 break-all select-all shadow-inner"
             >
               {{ newKeyPlain }}
             </div>
@@ -288,6 +331,8 @@ import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
 import { useGlobalState } from '../store'
 import StatusIndicator from '../components/ai/StatusIndicator.vue'
+import PromptChips from '../components/ai/PromptChips.vue'
+import { useMessage } from 'naive-ui'
 
 const { t } = useScopedI18n('unified')
 const { unifiedApiKey, adminAuth, userJwt, userSettings } = useGlobalState()
@@ -297,6 +342,26 @@ const message = useMessage()
 const isLoggedIn = computed(() => !!userJwt.value?.trim())
 const hasKey = computed(() => !!unifiedApiKey.value?.trim())
 const hasAccess = computed(() => isLoggedIn.value || hasKey.value)
+
+// Quick filter chips
+const quickFilterChips = ['📬 全部邮件', '🟢 仅未读', '🔑 提取验证码', '🔄 刷新列表']
+
+const handleSelectChip = (chip) => {
+  if (chip.includes('全部邮件')) {
+    unreadOnly.value = false
+    sourceFilter.value = null
+    accountFilter.value = null
+    q.value = ''
+    applyFilter()
+  } else if (chip.includes('仅未读')) {
+    unreadOnly.value = true
+    applyFilter()
+  } else if (chip.includes('提取验证码')) {
+    activeTab.value = 'codes'
+  } else if (chip.includes('刷新列表')) {
+    refreshList()
+  }
+}
 
 // ---- 顶部连接状态徽标 ----
 const connected = ref(false)
@@ -366,7 +431,7 @@ const applyFilter = () => { page.value = 1; loadList() }
 const setPage = (p) => { page.value = p; loadList() }
 const openDetail = (id) => router.push({ path: `/unified/${id}` })
 
-// 来源/账号筛选项（从最近一批邮件里推导，避免枚举接口）
+// 来源/账号筛选项
 const optionRows = ref([])
 const sourceOptions = computed(() => [...new Set(optionRows.value.map(r => r.source).filter(Boolean))].map(s => ({ label: s, value: s })))
 const accountOptions = computed(() => [...new Set(optionRows.value.map(r => r.account_id).filter(Boolean))].map(a => ({ label: a, value: a })))
@@ -530,7 +595,6 @@ const refreshCurrent = () => {
   else if (activeTab.value === 'status') loadStatus()
 }
 
-// 登录态或 API-key 变化后自动刷新当前视图；首次挂载加载列表
 watch(hasAccess, (v) => { if (v) { loadOptions(); refreshCurrent() } })
 
 onMounted(async () => {

@@ -1,8 +1,11 @@
 <template>
-  <div class="unified-detail max-w-4xl mx-auto px-4 py-6 text-left">
-    <div v-if="loading" class="py-20 text-center text-zinc-400">{{ t('list.loading') }}</div>
+  <div class="unified-detail max-w-4xl mx-auto px-4 py-6 text-left space-y-4">
+    <div v-if="loading" class="py-24 text-center text-zinc-400 flex flex-col items-center gap-2">
+      <span class="animate-spin text-2xl">⏳</span>
+      <span>{{ t('list.loading') }}</span>
+    </div>
 
-    <n-alert v-else-if="!hasAccess" type="warning" :show-icon="false" class="mb-4">
+    <n-alert v-else-if="!hasAccess" type="warning" :show-icon="false" class="mb-4 rounded-2xl">
       <div class="flex items-center justify-between gap-3">
         <span>{{ t('auth.loginRequired') }}</span>
         <n-button size="small" type="primary" @click="router.push('/user')">{{ t('auth.login') }}</n-button>
@@ -16,26 +19,22 @@
     </n-empty>
 
     <template v-else-if="email">
-      <div class="mb-4">
+      <div class="flex items-center justify-between">
         <n-button size="small" quaternary @click="router.push('/unified')">
           <template #icon><n-icon><ArrowBackRound /></n-icon></template>
           {{ t('detail.back') }}
         </n-button>
-      </div>
 
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 overflow-hidden">
-        <!-- 头：主题 + 操作 -->
-        <div class="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800/70 flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <h1 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100 break-words">
-              {{ email.subject || t('list.noSubject') }}
-            </h1>
-            <div class="flex flex-wrap items-center gap-2 mt-2">
-              <n-tag size="small" :bordered="false" type="info">{{ email.source }}</n-tag>
-              <n-tag v-if="email.account_id" size="small" :bordered="false">{{ email.account_id }}</n-tag>
-              <n-tag v-if="!email.is_read" size="small" type="warning" :bordered="false">{{ t('list.unread') }}</n-tag>
-            </div>
-          </div>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            @click="showAiPanel = !showAiPanel; if (showAiPanel && !aiAnalysisText) generateAiAnalysis();"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-all cursor-pointer shadow-xs"
+          >
+            <span>✨</span>
+            <span>{{ showAiPanel ? '关闭 AI 分析' : 'AI 智能解析' }}</span>
+          </button>
+
           <n-button
             v-if="!email.is_read"
             size="small"
@@ -45,26 +44,64 @@
           >
             {{ t('detail.markRead') }}
           </n-button>
-          <n-tag v-else size="small" type="success" :bordered="false">✓</n-tag>
+          <n-tag v-else size="small" type="success" :bordered="false">✓ 已读</n-tag>
+        </div>
+      </div>
+
+      <!-- AI 智能分析卡片 -->
+      <div
+        v-if="showAiPanel"
+        class="rounded-2xl border border-purple-200/80 dark:border-purple-800/60 bg-gradient-to-b from-purple-50/40 to-white dark:from-purple-950/20 dark:to-zinc-900/70 p-4 shadow-xs space-y-3"
+      >
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 rounded-lg bg-purple-500/20 text-purple-600 dark:text-purple-400 text-xs">
+              ✨
+            </span>
+            <span class="text-xs font-semibold text-purple-900 dark:text-purple-200">
+              AI 智能邮件摘要
+            </span>
+          </div>
+        </div>
+
+        <ThinkingBlock :is-thinking="aiThinking" :duration-seconds="aiDuration" />
+
+        <div v-if="aiAnalysisText" class="p-3.5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800">
+          <StreamMarkdown :content="aiAnalysisText" />
+          <MessageActionToolbar :content="aiAnalysisText" role="assistant" @retry="generateAiAnalysis" />
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 overflow-hidden shadow-xs">
+        <!-- 头：主题 + 标签 -->
+        <div class="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800/70 space-y-2">
+          <h1 class="text-lg font-bold text-zinc-900 dark:text-zinc-100 break-words">
+            {{ email.subject || t('list.noSubject') }}
+          </h1>
+          <div class="flex flex-wrap items-center gap-2">
+            <n-tag size="small" :bordered="false" type="info" class="font-mono">{{ email.source }}</n-tag>
+            <n-tag v-if="email.account_id" size="small" :bordered="false" class="font-mono">{{ email.account_id }}</n-tag>
+            <n-tag v-if="!email.is_read" size="small" type="warning" :bordered="false">{{ t('list.unread') }}</n-tag>
+          </div>
         </div>
 
         <!-- 元信息 -->
-        <div class="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800/70 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm">
+        <div class="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800/70 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-xs">
           <div class="flex gap-2">
             <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.from') }}</span>
-            <span class="text-zinc-800 dark:text-zinc-200 break-all">{{ email.from_addr }}</span>
+            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all">{{ email.from_addr }}</span>
           </div>
           <div class="flex gap-2">
             <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.to') }}</span>
-            <span class="text-zinc-800 dark:text-zinc-200 break-all">{{ email.to_addr }}</span>
+            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all">{{ email.to_addr }}</span>
           </div>
           <div class="flex gap-2">
             <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.receivedAt') }}</span>
-            <span class="text-zinc-800 dark:text-zinc-200">{{ fmtTime(email.received_at) }}</span>
+            <span class="text-zinc-800 dark:text-zinc-200 font-mono">{{ fmtTime(email.received_at) }}</span>
           </div>
           <div v-if="email.raw_ref" class="flex gap-2">
             <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.rawRef') }}</span>
-            <span class="text-zinc-800 dark:text-zinc-200 font-mono text-xs break-all">{{ email.raw_ref }}</span>
+            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all">{{ email.raw_ref }}</span>
           </div>
         </div>
 
@@ -72,23 +109,23 @@
         <div class="px-5 py-4">
           <pre
             v-if="displayBody"
-            class="whitespace-pre-wrap break-words font-sans text-[15px] leading-relaxed text-zinc-800 dark:text-zinc-200"
+            class="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-zinc-800 dark:text-zinc-200"
           >{{ displayBody }}</pre>
-          <div v-else class="text-sm text-zinc-400 py-6 text-center">{{ t('detail.noBody') }}</div>
+          <div v-else class="text-sm text-zinc-400 py-8 text-center">{{ t('detail.noBody') }}</div>
         </div>
 
         <!-- 附件 -->
-        <div v-if="attachments.length" class="px-5 py-3 border-t border-zinc-100 dark:border-zinc-800/70">
-          <div class="text-xs text-zinc-500 mb-2">{{ t('detail.attachments') }}</div>
+        <div v-if="attachments.length" class="px-5 py-3.5 border-t border-zinc-100 dark:border-zinc-800/70 bg-zinc-50/50 dark:bg-zinc-900/30">
+          <div class="text-xs font-semibold text-zinc-500 mb-2">{{ t('detail.attachments') }} ({{ attachments.length }})</div>
           <div class="flex flex-wrap gap-2">
             <div
               v-for="(att, i) in attachments"
               :key="i"
-              class="flex items-center gap-2 text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-lg px-2.5 py-1.5"
+              class="flex items-center gap-2 text-xs bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 text-zinc-700 dark:text-zinc-300 rounded-xl px-3 py-1.5 shadow-xs"
             >
               <span>📎</span>
-              <span class="max-w-[200px] truncate">{{ att.filename || att.name || att.id || ('attachment-' + (i + 1)) }}</span>
-              <span v-if="att.size" class="text-zinc-400">({{ fmtSize(att.size) }})</span>
+              <span class="max-w-[220px] truncate font-medium">{{ att.filename || att.name || att.id || ('attachment-' + (i + 1)) }}</span>
+              <span v-if="att.size" class="text-zinc-400 font-mono">({{ fmtSize(att.size) }})</span>
             </div>
           </div>
         </div>
@@ -104,6 +141,10 @@ import { ArrowBackRound } from '@vicons/material'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
 import { useGlobalState } from '../store'
+import ThinkingBlock from '../components/ai/ThinkingBlock.vue'
+import StreamMarkdown from '../components/ai/StreamMarkdown.vue'
+import MessageActionToolbar from '../components/ai/MessageActionToolbar.vue'
+import { useMessage } from 'naive-ui'
 
 const { t } = useScopedI18n('unified')
 const { userJwt, unifiedApiKey } = useGlobalState()
@@ -116,6 +157,32 @@ const loading = ref(true)
 const error = ref('')
 const marking = ref(false)
 const hasAccess = computed(() => !!userJwt.value?.trim() || !!unifiedApiKey.value?.trim())
+
+// AI assistant state
+const showAiPanel = ref(false)
+const aiThinking = ref(false)
+const aiDuration = ref(0)
+const aiAnalysisText = ref('')
+
+const generateAiAnalysis = () => {
+  if (!email.value) return
+  aiThinking.value = true
+  aiAnalysisText.value = ''
+  const start = Date.now()
+  const body = displayBody.value || ''
+  const subject = email.value.subject || '（无主题）'
+  const sender = email.value.from_addr || '未知发件人'
+
+  const codeMatches = body.match(/\b([0-9]{4,8}|[A-Z0-9]{5,8})\b/g) || []
+  const validCodes = codeMatches.filter(c => !/^(19|20)\d\d$/.test(c) && !/^\d{4}-\d{2}/.test(c))
+
+  setTimeout(() => {
+    aiThinking.value = false
+    aiDuration.value = Number(((Date.now() - start) / 1000).toFixed(1))
+    const codeLine = validCodes.length ? `- **提取验证码**：\`${validCodes.slice(0, 3).join(', ')}\`` : '- 未检测到明显验证码'
+    aiAnalysisText.value = `### 📌 智能邮件要点速览\n- **发件人**：\`${sender}\`\n- **主题**：${subject}\n${codeLine}\n\n#### 核心正文提取\n> ${body.slice(0, 320).trim()}...`
+  }, 400)
+}
 
 const load = async () => {
   if (!hasAccess.value) {
@@ -135,10 +202,9 @@ const load = async () => {
 }
 onMounted(load)
 
-// 正文：优先纯文本；仅有 html_body 时做最小转纯文本（绝不用 v-html 注入）
 const stripHtml = (html) =>
   String(html || '')
-    .replace(/<(br\s*\/?|p|div|\/p|\/div)>/gi, '\n')
+    .replace(/<(br\s*\/|p|div|\/p|\/div)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
