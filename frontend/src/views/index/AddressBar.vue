@@ -58,10 +58,8 @@ onMounted(async () => {
             <TelegramAddress />
         </div>
 
-        <div v-else-if="userJwt" class="center">
-            <div class="w-full max-w-4xl p-6 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md rounded-3xl border border-slate-200/80 dark:border-slate-800/80 shadow-sm">
-                <AddressManagement />
-            </div>
+        <div v-else-if="userJwt" class="w-full">
+            <AddressManagement />
         </div>
 
         <div v-else class="hero-auth-container flex flex-col items-center justify-center my-6">

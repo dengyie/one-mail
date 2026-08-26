@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, h } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
 import { startRegistration } from '@simplewebauthn/browser';
