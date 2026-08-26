@@ -102,7 +102,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div>
+  <div class="space-y-6">
     <!-- 1. 未登录状态：展示全功能 Hero 宣传与登录/注册门户 (仿照 tfm.memom.mom) -->
     <div v-if="!isLoggedIn">
       <UserLogin />
@@ -115,10 +115,20 @@ onMounted(async () => {
       </div>
       <div v-else class="space-y-6">
         <AddressBar />
-        <div v-if="settings.address" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-4 sm:p-6 shadow-sm">
-          <n-tabs type="segment" animated v-model:value="indexTab" class="mb-4">
-            <template #prefix v-if="!isMobile">
-              <n-button @click="useSimpleIndex = true" tertiary size="small" class="rounded-xl mr-2">
+        <div v-if="settings.address" class="space-y-4">
+          <!-- Direct MailBox View -->
+          <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-4 sm:p-6 shadow-sm">
+            <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80 mb-4">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center font-bold">
+                  📥
+                </div>
+                <div>
+                  <h3 class="text-base font-bold text-slate-900 dark:text-white tracking-tight">即时收件箱</h3>
+                  <p class="text-xs text-slate-500 dark:text-slate-400">实时接收并解析往来邮件与验证码</p>
+                </div>
+              </div>
+              <n-button @click="useSimpleIndex = true" tertiary size="small" class="rounded-xl">
                 <template #icon>
                   <n-icon>
                     <FullscreenExitOutlined />
@@ -126,28 +136,21 @@ onMounted(async () => {
                 </template>
                 {{ t('enterSimpleMode') }}
               </n-button>
-            </template>
-            <n-tab-pane name="mailbox" :tab="t('mailbox')">
-              <div v-if="showMailIdQuery" style="margin-bottom: 10px;">
-                <n-input-group>
-                  <n-input v-model:value="mailIdQuery" class="rounded-xl" />
-                  <n-button @click="queryMail" type="primary" tertiary class="rounded-xl">
-                    {{ t('query') }}
-                  </n-button>
-                </n-input-group>
-              </div>
-              <MailBox :key="mailBoxKey" :showEMailTo="false" :showReply="openSettings.enableSendMail" :showSaveS3="openSettings.isS3Enabled"
-                :saveToS3="saveToS3" :enableUserDeleteEmail="openSettings.enableUserDeleteEmail"
-                :fetchMailData="fetchMailData" :deleteMail="deleteMail" :showFilterInput="true" />
-            </n-tab-pane>
-            <n-tab-pane v-if="openSettings.enableSendMail" name="sendbox" :tab="t('sendbox')">
-              <SendBox :fetchMailData="fetchSenboxData" :enableUserDeleteEmail="openSettings.enableUserDeleteEmail"
-                :deleteMail="deleteSenboxMail" />
-            </n-tab-pane>
-            <n-tab-pane v-if="openSettings.enableSendMail" name="sendmail" :tab="t('sendmail')">
-              <SendMail />
-            </n-tab-pane>
-          </n-tabs>
+            </div>
+
+            <div v-if="showMailIdQuery" style="margin-bottom: 10px;">
+              <n-input-group>
+                <n-input v-model:value="mailIdQuery" class="rounded-xl" />
+                <n-button @click="queryMail" type="primary" tertiary class="rounded-xl">
+                  {{ t('query') }}
+                </n-button>
+              </n-input-group>
+            </div>
+
+            <MailBox :key="mailBoxKey" :showEMailTo="false" :showReply="openSettings.enableSendMail" :showSaveS3="openSettings.isS3Enabled"
+              :saveToS3="saveToS3" :enableUserDeleteEmail="openSettings.enableUserDeleteEmail"
+              :fetchMailData="fetchMailData" :deleteMail="deleteMail" :showFilterInput="true" />
+          </div>
         </div>
       </div>
     </div>

@@ -164,68 +164,77 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div class="center" v-if="settings.address">
-        <n-card :bordered="false" embedded>
+    <div class="w-full max-w-4xl mx-auto space-y-4" v-if="settings.address">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
+            <div>
+                <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">编写并发送邮件</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">使用当前临时地址或专属绑定发件渠道外发邮件</p>
+            </div>
+        </div>
+
+        <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm">
             <div v-if="!settings.send_balance || settings.send_balance <= 0">
-                <n-alert type="warning" :show-icon="false" :bordered="false">
+                <n-alert type="warning" :show-icon="false" :bordered="false" class="rounded-2xl">
                     {{ t('requestAccessTip') }}
-                    <n-button type="primary" tertiary @click="requestAccess" size="small">{{ t('requestAccess')
+                    <n-button type="primary" tertiary @click="requestAccess" size="small" class="ml-2">{{ t('requestAccess')
                         }}</n-button>
                 </n-alert>
                 <AdminContact />
             </div>
-            <div v-else>
-                <n-alert type="info" :show-icon="false" :bordered="false" closable>
-                    {{ t('send_balance') }}: {{ settings.send_balance }}
-                </n-alert>
-                <n-flex justify="end">
-                    <n-button type="primary" :loading="sending" :disabled="sending" @click="send">{{ t('send') }}</n-button>
-                </n-flex>
-                <div class="left">
+            <div v-else class="space-y-4">
+                <div class="flex items-center justify-between p-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    <span>{{ t('send_balance') }}: {{ settings.send_balance }} 封可用额度</span>
+                    <n-button type="primary" :loading="sending" :disabled="sending" @click="send" class="rounded-xl px-5">
+                        {{ t('send') }}
+                    </n-button>
+                </div>
+                
+                <div class="space-y-4">
                     <n-form :model="sendMailModel">
                         <n-form-item :label="t('fromName')" label-placement="top">
                             <n-input-group>
-                                <n-input v-model:value="sendMailModel.fromName" />
-                                <n-input :value="settings.address" disabled />
+                                <n-input v-model:value="sendMailModel.fromName" placeholder="发件人昵称" class="rounded-l-xl" />
+                                <n-input :value="settings.address" disabled class="rounded-r-xl bg-slate-100 dark:bg-slate-800" />
                             </n-input-group>
                         </n-form-item>
                         <n-form-item :label="t('toName')" label-placement="top">
                             <n-input-group>
-                                <n-input v-model:value="sendMailModel.toName" />
-                                <n-input v-model:value="sendMailModel.toMail" />
+                                <n-input v-model:value="sendMailModel.toName" placeholder="收件人称呼" class="rounded-l-xl w-1/3" />
+                                <n-input v-model:value="sendMailModel.toMail" placeholder="收件人电子邮箱 (name@example.com)" class="rounded-r-xl w-2/3" />
                             </n-input-group>
                         </n-form-item>
                         <n-form-item :label="t('subject')" label-placement="top">
-                            <n-input v-model:value="sendMailModel.subject" />
+                            <n-input v-model:value="sendMailModel.subject" placeholder="邮件主题..." class="rounded-xl" />
                         </n-form-item>
                         <n-form-item :label="t('options')" label-placement="top">
-                            <n-radio-group v-model:value="sendMailModel.contentType">
-                                <n-radio-button v-for="option in contentTypes" :key="option.value" :value="option.value"
-                                    :label="option.label" />
-                            </n-radio-group>
-                            <n-button v-if="sendMailModel.contentType != 'text'" @click="isPreview = !isPreview"
-                                style="margin-left: 10px;">
-                                {{ isPreview ? t('edit') : t('preview') }}
-                            </n-button>
+                            <div class="flex items-center gap-3">
+                                <n-radio-group v-model:value="sendMailModel.contentType">
+                                    <n-radio-button v-for="option in contentTypes" :key="option.value" :value="option.value"
+                                        :label="option.label" />
+                                </n-radio-group>
+                                <n-button v-if="sendMailModel.contentType != 'text'" @click="isPreview = !isPreview" class="rounded-xl">
+                                    {{ isPreview ? t('edit') : t('preview') }}
+                                </n-button>
+                            </div>
                         </n-form-item>
                         <n-form-item :label="t('content')" label-placement="top">
-                            <n-card :bordered="false" embedded v-if="isPreview">
+                            <n-card :bordered="false" embedded v-if="isPreview" class="rounded-2xl w-full">
                                 <div v-html="safePreviewContent" />
                             </n-card>
-                            <div v-else-if="sendMailModel.contentType == 'rich'" style="border: 1px solid #ccc">
-                                <Toolbar style="border-bottom: 1px solid #ccc" :defaultConfig="toolbarConfig"
+                            <div v-else-if="sendMailModel.contentType == 'rich'" class="w-full border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden">
+                                <Toolbar style="border-bottom: 1px solid #e2e8f0" :defaultConfig="toolbarConfig"
                                     :editor="editorRef" mode="default" />
-                                <Editor style="height: 500px; overflow-y: hidden;" v-model="sendMailModel.content"
+                                <Editor style="height: 400px; overflow-y: hidden;" v-model="sendMailModel.content"
                                     :defaultConfig="editorConfig" mode="default" @onCreated="handleCreated" />
                             </div>
                             <n-input v-else type="textarea" v-model:value="sendMailModel.content" :autosize="{
-                                minRows: 3
-                            }" />
+                                minRows: 6
+                            }" placeholder="输入邮件正文内容..." class="rounded-2xl" />
                         </n-form-item>
                     </n-form>
                 </div>
             </div>
-        </n-card>
+        </div>
     </div>
 </template>
 

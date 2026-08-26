@@ -23,9 +23,39 @@ const router = createRouter({
             component: Index
         },
         {
+            path: '/mailbox',
+            alias: '/:lang/mailbox',
+            component: Index
+        },
+        {
+            path: '/sendmail',
+            alias: '/:lang/sendmail',
+            component: () => import('../views/index/SendMail.vue')
+        },
+        {
+            path: '/sendbox',
+            alias: '/:lang/sendbox',
+            component: () => import('../views/index/SendBoxPage.vue')
+        },
+        {
             path: '/user',
             alias: '/:lang/user',
             component: User
+        },
+        {
+            path: '/user/addresses',
+            alias: '/:lang/user/addresses',
+            component: () => import('../views/user/AddressManagement.vue')
+        },
+        {
+            path: '/user/external-accounts',
+            alias: '/:lang/user/external-accounts',
+            component: () => import('../views/user/UserMailAccounts.vue')
+        },
+        {
+            path: '/user/settings',
+            alias: '/:lang/user/settings',
+            component: () => import('../views/user/UserSettings.vue')
         },
         {
             path: '/user/oauth2/callback',
