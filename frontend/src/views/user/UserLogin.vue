@@ -50,7 +50,8 @@ const emailLogin = async () => {
             })
         });
         userJwt.value = res.jwt;
-        location.reload();
+        await api.getUserSettings();
+        await router.push(getRouterPathWithLang("/user", locale.value));
     } catch (error) {
         message.error(error.message || "login failed");
         loginTurnstileRef.value?.refresh?.();
