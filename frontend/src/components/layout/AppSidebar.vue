@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useScopedI18n } from '@/i18n/app'
 import {
   InboxFilled, PersonFilled, AdminPanelSettingsFilled,
