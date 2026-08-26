@@ -211,17 +211,56 @@ const getOpenSettings = async (message, notification) => {
     }
 }
 
+const autoSelectFirstBoundAddress = async () => {
+    try {
+        if (!userJwt.value) return;
+        const res = await apiFetch('/user_api/bind_address?limit=1');
+        if (res && res.results && res.results.length > 0) {
+            const firstAddr = res.results[0];
+            const tokenRes = await apiFetch(`/user_api/bind_address_jwt/${firstAddr.id}`);
+            if (tokenRes && tokenRes.jwt) {
+                jwt.value = tokenRes.jwt;
+                const sRes = await apiFetch("/api/settings");
+                settings.value = {
+                    address: sRes["address"],
+                    auto_reply: sRes["auto_reply"],
+                    send_balance: sRes["send_balance"],
+                };
+            }
+        }
+    } catch (e) {
+        console.warn("Auto select bound address error:", e);
+    }
+}
+
 const getSettings = async () => {
     try {
         if (typeof jwt.value != 'string' || jwt.value.trim() === '' || jwt.value === 'undefined') {
-            return "";
+            if (userJwt.value) {
+                await autoSelectFirstBoundAddress();
+            }
+            if (typeof jwt.value != 'string' || jwt.value.trim() === '' || jwt.value === 'undefined') {
+                return "";
+            }
         }
-        const res = await apiFetch("/api/settings");;
+        const res = await apiFetch("/api/settings");
         settings.value = {
             address: res["address"],
             auto_reply: res["auto_reply"],
             send_balance: res["send_balance"],
         };
+    } catch (error) {
+        console.warn("Address JWT invalid or expired, resetting address state:", error);
+        jwt.value = '';
+        settings.value = {
+            address: '',
+            auto_reply: false,
+            send_balance: 0,
+            fetched: true
+        };
+        if (userJwt.value) {
+            await autoSelectFirstBoundAddress();
+        }
     } finally {
         settings.value.fetched = true;
     }
