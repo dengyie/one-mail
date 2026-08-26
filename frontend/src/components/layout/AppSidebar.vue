@@ -1,20 +1,18 @@
 <script setup>
-import { ref, computed, h, onMounted } from 'vue'
-import { useRoute, useRouter, RouterLink } from 'vue-router'
-import { useI18n } from 'vue-i18n'
+import { computed, ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useScopedI18n } from '@/i18n/app'
 import {
   InboxFilled, PersonFilled, AdminPanelSettingsFilled,
-  HomeFilled, SettingsFilled, LanguageFilled,
-  ShieldFilled, MarkEmailReadFilled, CodeFilled
+  HomeFilled, SettingsFilled, MarkEmailReadFilled,
+  SendFilled, AddCircleOutlineFilled, ShieldFilled,
+  VpnKeyFilled, PowerSettingsNewFilled, DynamicFeedFilled,
+  AlternateEmailFilled, AutoAwesomeFilled
 } from '@vicons/material'
 import { GithubAlt } from '@vicons/fa'
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import { getRouterPathWithLang } from '../../utils'
-import { SUPPORTED_LOCALES, getLocaleLabel } from '../../i18n/locale-registry'
-import { isSupportedLocale, replaceLocaleInFullPath, DEFAULT_LOCALE } from '../../i18n/utils'
-import ThemeToggle from '../ai/ThemeToggle.vue'
 import StatusIndicator from '../ai/StatusIndicator.vue'
 
 const props = defineProps({
@@ -32,75 +30,44 @@ const { t, locale } = useScopedI18n('views.Header')
 
 const {
   settings, userSettings, openSettings, showAdminPage,
-  userJwt, jwt, adminAuth, preferredLocale, indexTab
+  userJwt, jwt, adminAuth, preferredLocale, indexTab, userTab
 } = useGlobalState()
 
-const currentActive = computed(() => {
-  if (route.path.includes('/unified')) return 'unified'
-  if (route.path.includes('/admin')) return 'admin'
-  if (route.path.includes('/user')) return 'user'
-  return 'home'
-})
-
-const languageOptions = SUPPORTED_LOCALES.map((loc) => ({
-  label: getLocaleLabel(loc),
-  key: loc,
-}))
-
-const changeLocale = async (lang) => {
-  if (!isSupportedLocale(lang)) return
-  const currentFullPath = route.fullPath
-  const targetFullPath = replaceLocaleInFullPath(currentFullPath, lang)
-  if (lang === DEFAULT_LOCALE) preferredLocale.value = DEFAULT_LOCALE
-  await router.push(targetFullPath)
-  preferredLocale.value = lang
-}
-
-const showGithub = computed(() => {
-  if (!openSettings.value.showGithub) return false
-  if (openSettings.value.showGithubForUser) return true
-  return showAdminPage.value
-})
-
-const navItems = computed(() => [
-  {
-    key: 'home',
-    label: t('home') || '收件箱',
-    path: '/',
-    icon: HomeFilled,
-    badge: settings.value?.address ? 'Active' : null,
-    badgeType: 'success'
-  },
-  {
-    key: 'unified',
-    label: t('unified') || '统一收件箱',
-    path: '/unified',
-    icon: InboxFilled,
-    badge: 'Pro',
-    badgeType: 'info'
-  },
-  {
-    key: 'user',
-    label: t('user') || '用户中心',
-    path: '/user',
-    icon: PersonFilled,
-    badge: userSettings.value?.user_email ? userSettings.value.user_email.split('@')[0] : null,
-    badgeType: 'neutral'
-  },
-  ...(showAdminPage.value ? [{
-    key: 'admin',
-    label: t('admin') || '系统管理',
-    path: '/admin',
-    icon: AdminPanelSettingsFilled,
-    badge: 'Admin',
-    badgeType: 'warning'
-  }] : [])
-])
+const isLoggedIn = computed(() => Boolean(userJwt.value))
 
 const handleNavigate = (path) => {
   router.push(getRouterPathWithLang(path, locale.value))
   emit('navigate')
 }
+
+const handleSwitchUserTab = (tabName) => {
+  userTab.value = tabName
+  router.push(getRouterPathWithLang('/user', locale.value))
+  emit('navigate')
+}
+
+const handleSwitchIndexTab = (tabName) => {
+  indexTab.value = tabName
+  router.push(getRouterPathWithLang('/', locale.value))
+  emit('navigate')
+}
+
+const handleLogout = () => {
+  userJwt.value = ''
+  userSettings.value = { fetched: true, user_email: '', user_id: 0, is_admin: false, access_token: null, user_role: null }
+  router.push(getRouterPathWithLang('/', locale.value))
+  emit('navigate')
+}
+
+// 登录后的侧边栏功能树
+const activeKey = computed(() => {
+  if (route.path.includes('/unified')) return 'unified'
+  if (route.path.includes('/admin')) return 'admin'
+  if (route.path.includes('/user')) {
+    return `user_${userTab.value}`
+  }
+  return `index_${indexTab.value}`
+})
 </script>
 
 <template>
@@ -109,91 +76,155 @@ const handleNavigate = (path) => {
     :class="collapsed ? 'w-[72px]' : 'w-64'"
   >
     <!-- Brand / Logo Area -->
-    <div class="h-16 flex items-center px-4 gap-3 border-b border-slate-800/80">
+    <div class="h-16 flex items-center px-4 gap-3 border-b border-slate-800/80 cursor-pointer" @click="handleNavigate('/')">
       <img src="/logo.png" alt="MangoHub Logo" class="w-10 h-10 rounded-2xl object-cover shadow-lg shadow-blue-500/20 shrink-0" />
       <div v-if="!collapsed" class="flex flex-col min-w-0">
         <span class="font-bold text-base tracking-tight text-white truncate flex items-center gap-1.5">
           MangoHub Mail
           <span class="px-1.5 py-0.5 text-[10px] uppercase font-mono font-semibold bg-blue-500/20 text-blue-400 rounded-md border border-blue-500/30">AI</span>
         </span>
-        <span class="text-xs text-slate-400 truncate">统一智能收件箱</span>
+        <span class="text-xs text-slate-400 truncate">智能隐私收件工作台</span>
       </div>
     </div>
 
-    <!-- Navigation Section -->
-    <div class="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
-      <div v-if="!collapsed" class="px-3 pb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-        核心导航
-      </div>
+    <!-- Navigation Section (未登录状态仅展示精简入口，登录后展示完整功能树) -->
+    <div class="flex-1 px-3 py-4 space-y-4 overflow-y-auto">
       
-      <button
-        v-for="item in navItems"
-        :key="item.key"
-        @click="handleNavigate(item.path)"
-        class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group relative"
-        :class="currentActive === item.key
-          ? 'bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/30 shadow-xs'
-          : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-        :title="collapsed ? item.label : undefined"
-      >
-        <n-icon size="20" :component="item.icon" class="shrink-0 transition-transform group-hover:scale-105" :class="currentActive === item.key ? 'text-blue-400' : 'text-slate-400 group-hover:text-slate-200'" />
-        
-        <span v-if="!collapsed" class="flex-1 text-left truncate">{{ item.label }}</span>
-        
-        <span
-          v-if="!collapsed && item.badge"
-          class="text-[10px] font-medium px-2 py-0.5 rounded-full border truncate max-w-[90px]"
-          :class="{
-            'bg-emerald-500/10 text-emerald-400 border-emerald-500/20': item.badgeType === 'success',
-            'bg-blue-500/10 text-blue-400 border-blue-500/20': item.badgeType === 'info',
-            'bg-amber-500/10 text-amber-400 border-amber-500/20': item.badgeType === 'warning',
-            'bg-slate-800 text-slate-300 border-slate-700': item.badgeType === 'neutral',
-          }"
+      <!-- 1. 未登录模式 -->
+      <div v-if="!isLoggedIn" class="space-y-1.5">
+        <button
+          @click="handleNavigate('/')"
+          class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
+          :class="route.path === '/' || route.path.endsWith('/') ? 'bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/30' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
         >
-          {{ item.badge }}
-        </span>
+          <n-icon size="20" :component="HomeFilled" class="text-blue-400 shrink-0" />
+          <span v-if="!collapsed">首页 · 账号登录</span>
+        </button>
+      </div>
 
-        <!-- Active Left Indicator Pill -->
-        <div v-if="currentActive === item.key" class="absolute left-0 top-2 bottom-2 w-1 bg-blue-500 rounded-r-full"></div>
-      </button>
+      <!-- 2. 登录后的专属功能侧边栏 -->
+      <div v-else class="space-y-4">
+        <!-- 邮箱收发 -->
+        <div class="space-y-1">
+          <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+            邮箱工作台
+          </div>
+          
+          <button
+            @click="handleSwitchIndexTab('mailbox')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeKey === 'index_mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="InboxFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate">即时收件箱</span>
+          </button>
 
-      <!-- System Status Preview Card (Non-collapsed) -->
-      <div v-if="!collapsed" class="pt-6">
-        <div class="px-3 pb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          服务状态
+          <button
+            v-if="openSettings.enableSendMail"
+            @click="handleSwitchIndexTab('sendmail')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeKey === 'index_sendmail' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="SendFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate">发送邮件</span>
+          </button>
+
+          <button
+            @click="handleNavigate('/unified')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeKey === 'unified' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="DynamicFeedFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate flex items-center justify-between flex-1">
+              <span>统一归集箱</span>
+              <span class="px-1.5 py-0.2 text-[10px] bg-cyan-500/20 text-cyan-400 rounded-md font-mono">Pro</span>
+            </span>
+          </button>
         </div>
-        <div class="p-3.5 rounded-2xl bg-slate-800/40 border border-slate-800/80 space-y-2.5">
-          <div class="flex items-center justify-between text-xs">
-            <span class="text-slate-400 flex items-center gap-1.5">
-              <StatusIndicator status="online" size="sm" />
-              API Worker
-            </span>
-            <span class="font-mono text-emerald-400 text-[11px]">Healthy</span>
+
+        <!-- 私人邮箱与地址管理 -->
+        <div class="space-y-1">
+          <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+            私人邮箱管理
           </div>
-          <div class="flex items-center justify-between text-xs text-slate-400">
-            <span>当前邮箱</span>
-            <span class="font-mono text-slate-300 truncate max-w-[120px]" :title="settings?.address || '未生成'">
-              {{ settings?.address ? settings.address.split('@')[0] : '未就绪' }}
-            </span>
+
+          <button
+            @click="handleSwitchUserTab('address_management')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeKey === 'user_address_management' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="AlternateEmailFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate">专属地址列表</span>
+          </button>
+
+          <button
+            @click="handleSwitchUserTab('user_mail_accounts')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeKey === 'user_user_mail_accounts' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="AutoAwesomeFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate">外部邮箱归集 (IMAP)</span>
+          </button>
+
+          <button
+            @click="handleSwitchUserTab('user_settings')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeKey === 'user_user_settings' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="SettingsFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate">个人偏好与安全</span>
+          </button>
+        </div>
+
+        <!-- 管理员后台 -->
+        <div v-if="showAdminPage" class="space-y-1">
+          <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-amber-400/80 uppercase tracking-wider">
+            系统管理
           </div>
+          <button
+            @click="handleNavigate('/admin')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeKey === 'admin' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="AdminPanelSettingsFilled" class="text-amber-400 shrink-0" />
+            <span v-if="!collapsed" class="truncate">管理员控制台</span>
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- Bottom User Area (无需重复放语言/GitHub，仅保留用户信息) -->
-    <div v-if="userSettings?.user_email" class="p-3 border-t border-slate-800/80">
-      <div
-        @click="handleNavigate('/user')"
-        class="flex items-center gap-2.5 p-2 rounded-xl bg-slate-800/50 hover:bg-slate-800 cursor-pointer border border-slate-700/50 transition-all group"
-        :class="collapsed ? 'justify-center p-2' : ''"
-      >
-        <div class="w-8 h-8 rounded-full bg-blue-600/30 border border-blue-500/40 text-blue-400 flex items-center justify-center font-bold text-xs uppercase shrink-0">
-          {{ userSettings.user_email[0] }}
+    <!-- Sidebar Footer / Account & Exit -->
+    <div class="p-3 border-t border-slate-800/80">
+      <div v-if="isLoggedIn && !collapsed" class="p-2.5 bg-slate-800/60 rounded-2xl border border-slate-700/60 flex items-center justify-between">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
+            {{ (userSettings.user_email || 'U')[0].toUpperCase() }}
+          </div>
+          <div class="flex flex-col min-w-0">
+            <span class="text-xs font-semibold text-white truncate">{{ userSettings.user_email || '已登录用户' }}</span>
+            <span class="text-[10px] text-emerald-400 flex items-center gap-1 font-medium">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              在线
+            </span>
+          </div>
         </div>
-        <div v-if="!collapsed" class="flex flex-col min-w-0 flex-1">
-          <span class="text-xs font-semibold text-white truncate">{{ userSettings.user_email }}</span>
-          <span class="text-[10px] text-slate-400 truncate">{{ userSettings.role || 'Member' }}</span>
-        </div>
+        <button
+          @click="handleLogout"
+          title="退出登录"
+          class="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+        >
+          <n-icon size="16" :component="PowerSettingsNewFilled" />
+        </button>
+      </div>
+
+      <div v-else-if="isLoggedIn && collapsed" class="flex justify-center">
+        <button
+          @click="handleLogout"
+          title="退出登录"
+          class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-colors"
+        >
+          <n-icon size="20" :component="PowerSettingsNewFilled" />
+        </button>
       </div>
     </div>
   </aside>
