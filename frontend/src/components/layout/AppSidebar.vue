@@ -44,12 +44,6 @@ const handleNavigate = (path) => {
   emit('navigate')
 }
 
-const handleSwitchAdminTab = (tabName) => {
-  adminTab.value = tabName
-  router.push(getRouterPathWithLang('/admin', locale.value))
-  emit('navigate')
-}
-
 const handleLogout = () => {
   userJwt.value = ''
   userSettings.value = { fetched: true, user_email: '', user_id: 0, is_admin: false, access_token: null, user_role: null }
@@ -57,16 +51,25 @@ const handleLogout = () => {
   emit('navigate')
 }
 
-// 侧边栏高亮定位
+// 侧边栏高亮定位（严格匹配 URL 路由路径）
 const activeRoute = computed(() => {
   const p = route.path
-  if (p.includes('/admin')) return `admin_${adminTab.value}`
+  if (p.includes('/admin/users')) return 'admin_users'
+  if (p.includes('/admin/statistics')) return 'admin_statistics'
+  if (p.includes('/admin/ai-extract')) return 'admin_ai_extract'
+  if (p.includes('/admin/webhook')) return 'admin_webhook'
+  if (p.includes('/admin/database')) return 'admin_database'
+  if (p.includes('/admin/settings')) return 'admin_settings'
+  if (p.includes('/admin/accounts') || p.endsWith('/admin')) return 'admin_accounts'
+  
   if (p.includes('/unified')) return 'unified'
   if (p.includes('/sendmail')) return 'sendmail'
   if (p.includes('/sendbox')) return 'sendbox'
+  
   if (p.includes('/user/addresses')) return 'user_addresses'
   if (p.includes('/user/external-accounts')) return 'user_external'
   if (p.includes('/user/settings')) return 'user_settings'
+  if (p.includes('/user/appearance')) return 'user_appearance'
   if (p.includes('/user')) return 'user_addresses'
   return 'mailbox'
 })
@@ -187,75 +190,84 @@ const activeRoute = computed(() => {
             <n-icon size="18" :component="SettingsFilled" class="shrink-0" />
             <span v-if="!collapsed" class="truncate">个人偏好与安全</span>
           </button>
+
+          <button
+            @click="handleNavigate('/user/appearance')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeRoute === 'user_appearance' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="PaletteFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate">外观与布局个性化</span>
+          </button>
         </div>
 
-        <!-- 模块三：管理员运维后台 -->
+        <!-- 模块三：管理员运维后台 (严格按独立子 URL 路由跳转) -->
         <div v-if="showAdminPage" class="space-y-1">
           <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-amber-400/80 uppercase tracking-wider">
             系统管理中心
           </div>
 
           <button
-            @click="handleSwitchAdminTab('account')"
+            @click="handleNavigate('/admin/accounts')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_account' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+            :class="activeRoute === 'admin_accounts' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="ManageAccountsFilled" class="text-amber-400 shrink-0" />
             <span v-if="!collapsed" class="truncate">邮箱账户管理</span>
           </button>
 
           <button
-            @click="handleSwitchAdminTab('user_management')"
+            @click="handleNavigate('/admin/users')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_user_management' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+            :class="activeRoute === 'admin_users' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="GroupFilled" class="text-amber-400 shrink-0" />
             <span v-if="!collapsed" class="truncate">注册用户列表</span>
           </button>
 
           <button
-            @click="handleSwitchAdminTab('statistics')"
+            @click="handleNavigate('/admin/statistics')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'admin_statistics' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="BarChartFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">统计分析</span>
+            <span v-if="!collapsed" class="truncate">业务统计看板</span>
           </button>
 
           <button
-            @click="handleSwitchAdminTab('ai_extract')"
+            @click="handleNavigate('/admin/ai-extract')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'admin_ai_extract' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="PsychologyFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">AI 提取配置</span>
+            <span v-if="!collapsed" class="truncate">AI 提取策略配置</span>
           </button>
 
           <button
-            @click="handleSwitchAdminTab('webhook')"
+            @click="handleNavigate('/admin/webhook')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'admin_webhook' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="HubFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">Webhook 推送</span>
+            <span v-if="!collapsed" class="truncate">Webhook 推送配置</span>
           </button>
 
           <button
-            @click="handleSwitchAdminTab('database_manager')"
+            @click="handleNavigate('/admin/database')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_database_manager' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+            :class="activeRoute === 'admin_database' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="StorageFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">数据库与维护</span>
+            <span v-if="!collapsed" class="truncate">数据库结构与维护</span>
           </button>
 
           <button
-            @click="handleSwitchAdminTab('account_settings')"
+            @click="handleNavigate('/admin/settings')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_account_settings' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+            :class="activeRoute === 'admin_settings' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="DnsFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">域名与系统配置</span>
+            <span v-if="!collapsed" class="truncate">域名与全局策略</span>
           </button>
         </div>
 
@@ -273,7 +285,7 @@ const activeRoute = computed(() => {
             <span class="text-xs font-semibold text-white truncate max-w-[110px]">
               {{ userSettings.user_email }}
             </span>
-            <span class="text-[10px] text-slate-400 truncate">已认证用户</span>
+            <span class="text-[10px] text-slate-400 truncate">{{ userSettings.is_admin ? '系统管理员' : '已认证用户' }}</span>
           </div>
         </div>
 

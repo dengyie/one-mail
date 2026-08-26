@@ -1,56 +1,51 @@
 <script setup>
 import { useMessage } from 'naive-ui'
-import { computed, onMounted, ref, defineAsyncComponent } from 'vue';
+import { computed, onMounted, ref } from 'vue'
 import { useScopedI18n } from '@/i18n/app'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { useGlobalState } from '../store'
 import { api } from '../api'
 import { getRouterPathWithLang, hashPassword } from '../utils'
-import { clearLocalAddressCache } from '../utils/address-cache'
 import Turnstile from '../components/Turnstile.vue'
 
 import SenderAccess from './admin/SenderAccess.vue'
 import Statistics from "./admin/Statistics.vue"
-import SendBox from './admin/SendBox.vue';
-import Account from './admin/Account.vue';
-import CreateAccount from './admin/CreateAccount.vue';
-import AccountSettings from './admin/AccountSettings.vue';
-import UserManagement from './admin/UserManagement.vue';
-import UserSettings from './admin/UserSettings.vue';
-import UserOauth2Settings from './admin/UserOauth2Settings.vue';
-import RoleAddressConfig from './admin/RoleAddressConfig.vue';
-import Mails from './admin/Mails.vue';
-import MailsUnknow from './admin/MailsUnknow.vue';
-import About from './common/About.vue';
-import Maintenance from './admin/Maintenance.vue';
-import DatabaseManager from './admin/DatabaseManager.vue';
-import Appearance from './common/Appearance.vue';
-import Telegram from './admin/Telegram.vue';
-import Webhook from './admin/Webhook.vue';
-import MailWebhook from './admin/MailWebhook.vue';
-import WorkerConfig from './admin/WorkerConfig.vue';
-import IpBlacklistSettings from './admin/IpBlacklistSettings.vue';
-import AiExtractSettings from './admin/AiExtractSettings.vue';
+import SendBox from './admin/SendBox.vue'
+import Account from './admin/Account.vue'
+import CreateAccount from './admin/CreateAccount.vue'
+import AccountSettings from './admin/AccountSettings.vue'
+import UserManagement from './admin/UserManagement.vue'
+import UserSettings from './admin/UserSettings.vue'
+import UserOauth2Settings from './admin/UserOauth2Settings.vue'
+import RoleAddressConfig from './admin/RoleAddressConfig.vue'
+import Mails from './admin/Mails.vue'
+import MailsUnknow from './admin/MailsUnknow.vue'
+import About from './common/About.vue'
+import Maintenance from './admin/Maintenance.vue'
+import DatabaseManager from './admin/DatabaseManager.vue'
+import Appearance from './common/Appearance.vue'
+import Telegram from './admin/Telegram.vue'
+import Webhook from './admin/Webhook.vue'
+import MailWebhook from './admin/MailWebhook.vue'
+import WorkerConfig from './admin/WorkerConfig.vue'
+import IpBlacklistSettings from './admin/IpBlacklistSettings.vue'
+import AiExtractSettings from './admin/AiExtractSettings.vue'
 
 const {
   adminAuth, showAdminAuth, adminTab, loading,
-  globalTabplacement, showAdminPage, adminLoginMode, userSettings,
-  openSettings, auth, jwt, userJwt,
-  userOauth2SessionState, userOauth2SessionClientID,
-  addressPassword, unifiedApiKey
+  showAdminPage, adminLoginMode, userSettings,
+  openSettings, userJwt
 } = useGlobalState()
 const message = useMessage()
+const route = useRoute()
 const router = useRouter()
 
-const SendMail = defineAsyncComponent(() => {
-  loading.value = true;
-  return import('./admin/SendMail.vue')
-    .finally(() => loading.value = false);
-});
+const { t, locale } = useScopedI18n('views.Admin')
 
 const cfToken = ref('')
 const turnstileRef = ref(null)
+const tmpAdminAuth = ref('')
 
 const authFunc = async () => {
   try {
@@ -60,253 +55,150 @@ const authFunc = async () => {
         password: await hashPassword(tmpAdminAuth.value),
         cf_token: cfToken.value
       })
-    });
-    adminAuth.value = tmpAdminAuth.value;
+    })
+    adminAuth.value = tmpAdminAuth.value
     location.reload()
   } catch (error) {
-    message.error(error.message || "error");
-    turnstileRef.value?.refresh?.();
+    message.error(error.message || "error")
+    turnstileRef.value?.refresh?.()
   }
 }
 
-const showLogoutModal = ref(false)
-
-const handleLogout = async () => {
-  // 清空管理员认证
-  adminAuth.value = '';
-  // 清空全部鉴权凭据（C3：退出登录后不清会残留在 localStorage，共享设备可继续操作）
-  auth.value = '';
-  jwt.value = '';
-  userJwt.value = '';
-  addressPassword.value = '';
-  userOauth2SessionState.value = '';
-  userOauth2SessionClientID.value = '';
-  // 一并清除统一收件箱 API key（共享设备凭据残留）
-  unifiedApiKey.value = '';
-  // H5：清除 store 之外的 LocalAddressCache（地址 JWT 缓存，防共享设备残留）
-  clearLocalAddressCache();
-  // 重置管理员相关状态
-  showAdminAuth.value = false;
-  adminTab.value = 'account';
-  // 显示成功提示并跳转
-  message.success(t('logoutSuccess'));
-  await router.push(getRouterPathWithLang('/', locale.value));
-}
-
-const { t, locale } = useScopedI18n('views.Admin')
-
-const showAdminPasswordModal = computed(() => {
-  // 普通用户或未授权用户直接隐藏密码框（禁止普通用户输入管理员密码）
-  if (userJwt.value && !userSettings.value.is_admin) return false
-  // 已经是管理员直接放行
-  if (userSettings.value.is_admin === true) return false
-  return !showAdminPage.value || showAdminAuth.value
-})
-const tmpAdminAuth = ref('')
-// 判断是否通过 admin password 登录（而非用户管理员权限）：消费 store 单源 adminLoginMode
-const isAdminPasswordLogin = computed(() => adminLoginMode.value === 'admin')
-
-// 获取当前登录方式：三态判定集中于 store 的 adminLoginMode（单源），组件仅做文案映射
-const currentLoginMethod = computed(() => {
-  switch (adminLoginMode.value) {
-    case 'admin':
-      return t('loginViaPassword');
-    case 'user_admin':
-      return t('loginViaUserAdmin');
-    case 'disabled_check':
-      return t('loginViaDisabledCheck');
-    default:
-      return '';
-  }
+// 映射路由子段到具体展示模块
+const currentAdminView = computed(() => {
+  const p = route.path
+  if (p.includes('/admin/users')) return 'users'
+  if (p.includes('/admin/statistics')) return 'statistics'
+  if (p.includes('/admin/ai-extract')) return 'ai_extract'
+  if (p.includes('/admin/webhook')) return 'webhook'
+  if (p.includes('/admin/database')) return 'database'
+  if (p.includes('/admin/settings')) return 'settings'
+  if (p.includes('/admin/accounts')) return 'accounts'
+  
+  // 兼容根据 store adminTab 渲染
+  if (adminTab.value === 'user_management') return 'users'
+  if (adminTab.value === 'statistics') return 'statistics'
+  if (adminTab.value === 'ai_extract') return 'ai_extract'
+  if (adminTab.value === 'webhook') return 'webhook'
+  if (adminTab.value === 'database_manager') return 'database'
+  if (adminTab.value === 'account_settings') return 'settings'
+  return 'accounts'
 })
 
 onMounted(async () => {
-  // make sure openSettings is fetched for turnstile check
-  if (!openSettings.value.fetched) await api.getOpenSettings(message);
-  // make sure user_id is fetched
-  if (!userSettings.value.user_id) await api.getUserSettings(message);
+  if (!openSettings.value.fetched) await api.getOpenSettings(message)
+  if (!userSettings.value.user_id) await api.getUserSettings(message)
 })
 </script>
 
 <template>
   <div v-if="userSettings.fetched" class="space-y-6">
-    <!-- 普通用户直接展示无权访问提示 -->
-    <div v-if="userJwt && !userSettings.is_admin" class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12">
+    <!-- 1. 普通用户直接拦截 -->
+    <div v-if="userJwt && !userSettings.is_admin" class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12 shadow-sm">
       <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
         🚫
       </div>
       <h3 class="text-lg font-bold text-slate-900 dark:text-white">暂无管理员权限</h3>
-      <p class="text-xs text-slate-500 mt-2">当前登录账号并非系统管理员，无法访问管理控制台页面。</p>
+      <p class="text-xs text-slate-500 mt-2">当前登录账号并非系统管理员，无法访问管理控制台。</p>
       <n-button @click="router.push(getRouterPathWithLang('/mailbox', locale))" type="primary" secondary class="mt-6 rounded-xl">
         返回收件箱
       </n-button>
     </div>
 
-    <n-modal v-else-if="!userJwt" v-model:show="showAdminPasswordModal" :closable="false" :closeOnEsc="false" :maskClosable="false"
-      preset="dialog" :title="t('accessHeader')" class="rounded-3xl">
-      <p class="text-sm text-slate-500 mb-3">{{ t('accessTip') }}</p>
-      <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" @keyup.enter="authFunc" class="rounded-xl mb-3" />
-      <Turnstile ref="turnstileRef" v-if="openSettings.enableGlobalTurnstileCheck" v-model:value="cfToken" />
-      <template #action>
-        <n-button @click="authFunc" type="primary" :loading="loading" class="rounded-xl px-4">
-          {{ t('ok') }}
-        </n-button>
-      </template>
-    </n-modal>
-    
-    <div v-if="showAdminPage" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-4 sm:p-6 shadow-sm">
-      <n-tabs type="segment" animated v-model:value="adminTab" class="mb-4">
-        <n-tab-pane name="qucickSetup" :tab="t('qucickSetup')">
-          <div class="pt-2">
-            <n-tabs type="bar" justify-content="center" animated>
-              <n-tab-pane name="database" :tab="t('database')">
-                <DatabaseManager />
-              </n-tab-pane>
-              <n-tab-pane name="account_settings" :tab="t('account_settings')">
-                <AccountSettings />
-              </n-tab-pane>
-              <n-tab-pane name="user_settings" :tab="t('user_settings')">
-                <UserSettings />
-              </n-tab-pane>
-              <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
-                <WorkerConfig />
-              </n-tab-pane>
-            </n-tabs>
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="account" :tab="t('account')">
-          <div class="pt-2">
-            <n-tabs type="bar" justify-content="center" animated>
-              <n-tab-pane name="account" :tab="t('account')">
-                <Account />
-              </n-tab-pane>
-              <n-tab-pane name="account_create" :tab="t('account_create')">
-                <CreateAccount />
-              </n-tab-pane>
-              <n-tab-pane name="account_settings" :tab="t('account_settings')">
-                <AccountSettings />
-              </n-tab-pane>
-              <n-tab-pane name="senderAccess" :tab="t('senderAccess')">
-                <SenderAccess />
-              </n-tab-pane>
-              <n-tab-pane name="ipBlacklistSettings" :tab="t('ipBlacklistSettings')">
-                <IpBlacklistSettings />
-              </n-tab-pane>
-              <n-tab-pane name="aiExtractSettings" :tab="t('aiExtractSettings')">
-                <AiExtractSettings />
-              </n-tab-pane>
-              <n-tab-pane name="webhook" :tab="t('webhookSettings')">
-                <Webhook />
-              </n-tab-pane>
-            </n-tabs>
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="user" :tab="t('user')">
-          <div class="pt-2">
-            <n-tabs type="bar" justify-content="center" animated>
-              <n-tab-pane name="user_management" :tab="t('user_management')">
-                <UserManagement />
-              </n-tab-pane>
-              <n-tab-pane name="user_settings" :tab="t('user_settings')">
-                <UserSettings />
-              </n-tab-pane>
-              <n-tab-pane name="userOauth2Settings" :tab="t('userOauth2Settings')">
-                <UserOauth2Settings />
-              </n-tab-pane>
-              <n-tab-pane name="roleAddressConfig" :tab="t('roleAddressConfig')">
-                <RoleAddressConfig />
-              </n-tab-pane>
-            </n-tabs>
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="mails" :tab="t('mails')">
-          <div class="pt-2">
-            <n-tabs type="bar" justify-content="center" animated>
-              <n-tab-pane name="mails" :tab="t('mails')">
-                <Mails />
-              </n-tab-pane>
-              <n-tab-pane name="unknow" :tab="t('unknow')">
-                <MailsUnknow />
-              </n-tab-pane>
-              <n-tab-pane name="sendBox" :tab="t('sendBox')">
-                <SendBox />
-              </n-tab-pane>
-              <n-tab-pane name="sendMail" :tab="t('sendMail')">
-                <SendMail />
-              </n-tab-pane>
-              <n-tab-pane name="mailWebhook" :tab="t('mailWebhook')">
-                <MailWebhook />
-              </n-tab-pane>
-            </n-tabs>
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="telegram" :tab="t('telegram')">
-          <div class="pt-2">
-            <Telegram />
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="statistics" :tab="t('statistics')">
-          <div class="pt-2">
-            <Statistics />
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="maintenance" :tab="t('maintenance')">
-          <div class="pt-2">
-            <n-tabs type="bar" justify-content="center" animated>
-              <n-tab-pane name="database" :tab="t('database')">
-                <DatabaseManager />
-              </n-tab-pane>
-              <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
-                <WorkerConfig />
-              </n-tab-pane>
-              <n-tab-pane name="maintenance" :tab="t('maintenance')">
-                <Maintenance />
-              </n-tab-pane>
-            </n-tabs>
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="appearance" :tab="t('appearance')">
-          <div class="pt-2">
-            <Appearance />
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="adminAccount" :tab="t('adminAccount')">
-          <div class="flex justify-center p-6">
-            <div class="w-full max-w-lg p-6 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/60">
-              <n-space vertical size="large">
-                <div>
-                  <div class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">{{ t('loginMethod') }}</div>
-                  <div class="text-sm font-bold text-slate-800 dark:text-white">{{ currentLoginMethod }}</div>
-                </div>
-                <n-divider v-if="isAdminPasswordLogin" />
-                <n-button v-if="isAdminPasswordLogin" type="warning" @click="showLogoutModal = true" block class="rounded-xl font-medium">
-                  {{ t('logout') }}
-                </n-button>
-              </n-space>
-            </div>
-          </div>
-        </n-tab-pane>
-        <n-tab-pane name="about" :tab="t('about')">
-          <div class="pt-2">
-            <About />
-          </div>
-        </n-tab-pane>
-      </n-tabs>
+    <!-- 2. 未登录访客密码弹窗 -->
+    <div v-else-if="!userJwt && !adminAuth" class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 max-w-md mx-auto my-12 shadow-sm text-center">
+      <div class="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto mb-4 text-2xl">
+        🔑
+      </div>
+      <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-2">系统管理员访问凭证</h3>
+      <p class="text-xs text-slate-500 mb-6">{{ t('accessTip') }}</p>
+      <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" placeholder="请输入管理员后台密码" @keyup.enter="authFunc" class="rounded-xl mb-4 text-left" />
+      <Turnstile ref="turnstileRef" v-if="openSettings.enableGlobalTurnstileCheck" v-model:value="cfToken" class="mb-4" />
+      <n-button @click="authFunc" type="primary" block :loading="loading" class="rounded-xl font-medium">
+        {{ t('ok') }}
+      </n-button>
     </div>
-    <n-modal v-model:show="showLogoutModal" preset="dialog" :title="t('logoutConfirmTitle')" class="rounded-2xl">
-      <p>{{ t('logoutConfirmContent') }}</p>
-      <template #action>
-        <n-button :loading="loading" @click="handleLogout" size="small" tertiary type="warning" class="rounded-xl">
-          {{ t('confirm') }}
-        </n-button>
-      </template>
-    </n-modal>
+
+    <!-- 3. 管理员授权通过，直接呈现纯粹内容视图（零内嵌顶部大 Banner/Tabs） -->
+    <div v-else class="space-y-6">
+      
+      <!-- 邮箱账户管理模块 -->
+      <div v-if="currentAdminView === 'accounts'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">邮箱账户与地址管理</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">查看、创建、重置密码及清理全站邮箱账户与收件箱记录</p>
+          </div>
+        </div>
+        <Account />
+      </div>
+
+      <!-- 用户列表管理模块 -->
+      <div v-else-if="currentAdminView === 'users'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">注册用户与角色管理</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">管理全站注册用户账号、绑定关系与角色权限配置</p>
+          </div>
+        </div>
+        <UserManagement />
+      </div>
+
+      <!-- 统计分析模块 -->
+      <div v-else-if="currentAdminView === 'statistics'" class="space-y-6">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">全站业务指标与统计看板</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">实时监控全站邮箱数量、活跃地址、发件流水与用户增长</p>
+          </div>
+        </div>
+        <Statistics />
+      </div>
+
+      <!-- AI 提取规则配置模块 -->
+      <div v-else-if="currentAdminView === 'ai_extract'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">AI 智能提取策略配置</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">设置验证码启发式提取、摘要生成与白名单策略</p>
+          </div>
+        </div>
+        <AiExtractSettings />
+      </div>
+
+      <!-- Webhook 与事件通知模块 -->
+      <div v-else-if="currentAdminView === 'webhook'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Webhook 推送与告警配置</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">配置全站邮件事件触发的外部 Webhook 回调通道</p>
+          </div>
+        </div>
+        <Webhook />
+      </div>
+
+      <!-- 数据库与维护模块 -->
+      <div v-else-if="currentAdminView === 'database'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">D1 数据库版本与维护操作</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">检查数据表结构版本、执行无损迁移与初始化</p>
+          </div>
+        </div>
+        <DatabaseManager />
+      </div>
+
+      <!-- 域名与系统全局设置模块 -->
+      <div v-else-if="currentAdminView === 'settings'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">域名与全局策略配置</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">配置系统注册开关、发信限制、黑白名单与域名转发规则</p>
+          </div>
+        </div>
+        <AccountSettings />
+      </div>
+
+    </div>
   </div>
 </template>
-
-<style scoped>
-.n-pagination {
-  margin-top: 10px;
-  margin-bottom: 10px;
-}
-</style>

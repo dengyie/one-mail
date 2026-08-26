@@ -58,13 +58,54 @@ const router = createRouter({
             component: () => import('../views/user/UserSettings.vue')
         },
         {
+            path: '/user/appearance',
+            alias: '/:lang/user/appearance',
+            component: () => import('../views/common/Appearance.vue')
+        },
+        {
             path: '/user/oauth2/callback',
             alias: '/:lang/user/oauth2/callback',
             component: UserOauth2Callback
         },
+        // 管理员子功能直达路由
         {
             path: '/admin',
             alias: '/:lang/admin',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/accounts',
+            alias: '/:lang/admin/accounts',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/users',
+            alias: '/:lang/admin/users',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/statistics',
+            alias: '/:lang/admin/statistics',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/ai-extract',
+            alias: '/:lang/admin/ai-extract',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/webhook',
+            alias: '/:lang/admin/webhook',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/database',
+            alias: '/:lang/admin/database',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/settings',
+            alias: '/:lang/admin/settings',
             component: () => import('../views/Admin.vue')
         },
         {
@@ -129,6 +170,6 @@ router.beforeEach((to, from, next) => {
     }
 
     next()
-});
+})
 
 export default router

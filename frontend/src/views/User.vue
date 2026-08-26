@@ -1,31 +1,51 @@
 <script setup>
 import { useScopedI18n } from '@/i18n/app'
-
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { useGlobalState } from '../store'
 
-import AddressMangement from './user/AddressManagement.vue';
-import UserSettingsPage from './user/UserSettings.vue';
-import UserBar from './user/UserBar.vue';
-import BindAddress from './user/BindAddress.vue';
-import UserMailBox from './user/UserMailBox.vue';
-import UserMailAccounts from './user/UserMailAccounts.vue';
+import AddressMangement from './user/AddressManagement.vue'
+import UserSettingsPage from './user/UserSettings.vue'
+import UserMailAccounts from './user/UserMailAccounts.vue'
+import Appearance from './common/Appearance.vue'
 
-const {
-    userTab, globalTabplacement, userSettings
-} = useGlobalState()
-
+const { userSettings } = useGlobalState()
+const route = useRoute()
 const { t } = useScopedI18n('views.User')
 
+const currentUserView = computed(() => {
+    const p = route.path
+    if (p.includes('/user/external-accounts')) return 'external'
+    if (p.includes('/user/settings')) return 'settings'
+    if (p.includes('/user/appearance')) return 'appearance'
+    return 'addresses'
+})
 </script>
 
 <template>
     <div class="space-y-6">
-        <UserBar />
         <div v-if="userSettings.user_email" class="space-y-6">
-            <!-- 直接展示地址管理 -->
-            <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-4 sm:p-6 shadow-sm">
+            
+            <!-- 专属地址管理视图 -->
+            <div v-if="currentUserView === 'addresses'">
                 <AddressMangement />
             </div>
+
+            <!-- 外部邮箱归集 (IMAP) 视图 -->
+            <div v-else-if="currentUserView === 'external'">
+                <UserMailAccounts />
+            </div>
+
+            <!-- 个人安全与偏好设置视图 -->
+            <div v-else-if="currentUserView === 'settings'">
+                <UserSettingsPage />
+            </div>
+
+            <!-- 外观与个性化视图 -->
+            <div v-else-if="currentUserView === 'appearance'">
+                <Appearance />
+            </div>
+
         </div>
     </div>
 </template>
