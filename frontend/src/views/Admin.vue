@@ -96,7 +96,9 @@ const handleLogout = async () => {
 const { t, locale } = useScopedI18n('views.Admin')
 
 const showAdminPasswordModal = computed(() => {
-  // 如果当前登录的用户已经是管理员角色 (userSettings.is_admin === true)，直接放行，不弹密码框
+  // 普通用户或未授权用户直接隐藏密码框（禁止普通用户输入管理员密码）
+  if (userJwt.value && !userSettings.value.is_admin) return false
+  // 已经是管理员直接放行
   if (userSettings.value.is_admin === true) return false
   return !showAdminPage.value || showAdminAuth.value
 })
@@ -128,7 +130,19 @@ onMounted(async () => {
 
 <template>
   <div v-if="userSettings.fetched" class="space-y-6">
-    <n-modal v-model:show="showAdminPasswordModal" :closable="false" :closeOnEsc="false" :maskClosable="false"
+    <!-- 普通用户直接展示无权访问提示 -->
+    <div v-if="userJwt && !userSettings.is_admin" class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12">
+      <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
+        🚫
+      </div>
+      <h3 class="text-lg font-bold text-slate-900 dark:text-white">暂无管理员权限</h3>
+      <p class="text-xs text-slate-500 mt-2">当前登录账号并非系统管理员，无法访问管理控制台页面。</p>
+      <n-button @click="router.push(getRouterPathWithLang('/mailbox', locale))" type="primary" secondary class="mt-6 rounded-xl">
+        返回收件箱
+      </n-button>
+    </div>
+
+    <n-modal v-else-if="!userJwt" v-model:show="showAdminPasswordModal" :closable="false" :closeOnEsc="false" :maskClosable="false"
       preset="dialog" :title="t('accessHeader')" class="rounded-3xl">
       <p class="text-sm text-slate-500 mb-3">{{ t('accessTip') }}</p>
       <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" @keyup.enter="authFunc" class="rounded-xl mb-3" />

@@ -242,9 +242,6 @@ app.use('/user_api/*', async (c, next) => {
 // admin auth
 app.use('/admin/*', async (c, next) => {
 
-	// 授权判定集中在 admin_lockout.ts 的 decideAdminAuth 纯函数（零相对 import，
-	// 单测直跑），worker 只负责：解析输入 -> 调判定 -> 按 output 记账/回复。
-	// 覆盖 R2（user-role 兜底不构成授权面）+ H3（锁定先于凭据，含兜底不绕过）。
 	const hasAdminAuth = !!c.req.raw.headers.get("x-admin-auth");
 	const hasAccessToken = !!c.req.raw.headers.get("x-user-access-token");
 	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
@@ -296,7 +293,9 @@ app.use('/admin/*', async (c, next) => {
 		default:
 			body = msgs.NeedAdminPasswordMsg;
 	}
-	return c.text(body, decision.status);
+	// 普通用户直接返回 403 禁止访问，不要求提供口令
+	const finalStatus = (decision.kind === "role_not_admin") ? 403 : decision.status;
+	return c.text(body, finalStatus);
 });
 
 
