@@ -135,9 +135,9 @@ export const decideAdminAuth = (input: AdminAuthCheckInput): AdminAuthDecision =
       if (payload.user_role !== input.adminUserRole) {
         return { relay: false, status: 401, recordFailure: true, kind: "role_not_admin" };
       }
-      // user_role 确为 ADMIN_USER_ROLE，但仍需头通道（checkIsAdmin 已在此之上
-      // 失败）→ 拒绝。R2 关键：角色命中也不再放行，且计失败（锁定对兜底有效）。
-      return { relay: false, status: 401, recordFailure: true, kind: "need_admin_password" };
+      // user_role 确为 ADMIN_USER_ROLE（管理员账户已通过 user_token / access_token 登录认证），
+      // 直接免密放行，允许通过账户角色直接进入管理员后台管理。
+      return { relay: true, status: 0 };
     }
   }
 

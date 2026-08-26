@@ -95,7 +95,11 @@ const handleLogout = async () => {
 
 const { t, locale } = useScopedI18n('views.Admin')
 
-const showAdminPasswordModal = computed(() => !showAdminPage.value || showAdminAuth.value)
+const showAdminPasswordModal = computed(() => {
+  // 如果当前登录的用户已经是管理员角色 (userSettings.is_admin === true)，直接放行，不弹密码框
+  if (userSettings.value.is_admin === true) return false
+  return !showAdminPage.value || showAdminAuth.value
+})
 const tmpAdminAuth = ref('')
 // 判断是否通过 admin password 登录（而非用户管理员权限）：消费 store 单源 adminLoginMode
 const isAdminPasswordLogin = computed(() => adminLoginMode.value === 'admin')
