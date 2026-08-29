@@ -53,6 +53,11 @@ export const recordAdminFailure = async (c: Context): Promise<number> => {
 export const clearAdminFailures = async (c: Context): Promise<void> => {
     if (!c.env.KV) return;
     try {
+        // 仅在当前窗口确有失败记录时才 delete。正常成功请求（count=0 / key 不存在）
+        // 直接跳过删除——KV delete 与 read 一样都占免费配额（delete 每日仅 1000），
+        // 而 key 自带 15min TTL 会自动过期，跳过删除功能不变却能省下 ~99% 的 delete。
+        const raw = await c.env.KV.get(bucketKey(c));
+        if (!raw) return;
         await c.env.KV.delete(bucketKey(c));
     } catch {
         // best-effort

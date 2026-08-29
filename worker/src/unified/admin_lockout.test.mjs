@@ -20,6 +20,7 @@ const makeCtx = (mockKV) => ({
 class MemoryKV {
   constructor() {
     this.map = new Map();
+    this.deleteCalls = 0;
   }
   async get(key) {
     return this.map.has(key) ? this.map.get(key) : null;
@@ -29,9 +30,33 @@ class MemoryKV {
     // TTL 忽略（窗口内保持）
   }
   async delete(key) {
+    this.deleteCalls++;
     this.map.delete(key);
   }
 }
+
+// 配额回归：clearAdminFailures 仅在确有失败计数时才 delete；
+// 正常成功请求（count=0 / key 不存在）不得触发 delete（KV delete 每日限 1000，
+// 聚合器每 5min 打 /admin/* 会无限放行成功路径）。
+test("clearAdminFailures skips delete when no failure recorded (quota guard)", async () => {
+  const kv = new MemoryKV();
+  const c = makeCtx(kv);
+  // 没有失败记录时清理：不应触发任何 delete
+  await clearAdminFailures(c);
+  assert.equal(kv.deleteCalls, 0);
+  assert.equal(await getAdminFailCount(c), 0);
+
+  // 有失败记录时清理：才应触发一次 delete 并复位
+  for (let i = 0; i < 2; i++) await recordAdminFailure(c);
+  assert.equal(kv.deleteCalls, 0); // 记录失败 only 用 get/put
+  await clearAdminFailures(c);
+  assert.equal(kv.deleteCalls, 1);
+  assert.equal(await getAdminFailCount(c), 0);
+
+  // 再次清理（已无失败）→ 不再 delete
+  await clearAdminFailures(c);
+  assert.equal(kv.deleteCalls, 1);
+});
 
 test("9 failures → not locked, 10th → locked", async () => {
   const kv = new MemoryKV();
