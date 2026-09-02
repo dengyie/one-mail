@@ -11,6 +11,8 @@
 
 本项目基于 [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) fork，保留原项目的临时邮箱基座（Cloudflare Email Routing + Worker 收信 + Vue 前端），在这之上新增一套 **one-mail 统一收件箱**能力。
 
+> 当前外部邮箱能力以**单向收件聚合**为主；已读回写、删除/归档/移动、外部账号身份发信、线程和完整附件能力仍在演进中。目标架构、分阶段计划与验收标准见 [统一邮箱开发设计](vitepress-docs/docs/zh/guide/feature/unified-mailbox-development.md)。
+
 ---
 
 ## 架构

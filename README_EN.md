@@ -11,6 +11,8 @@
 
 Forked from [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email), keeping its temp-mail base (Cloudflare Email Routing + Worker receive + Vue frontend) and adding the **one-mail unified inbox** on top.
 
+> External-mail support is currently primarily **one-way receiving aggregation**. Source read-state write-back, delete/archive/move, sending as external identities, threads, and complete attachment handling are still evolving. See the [Unified Mailbox Development Design](vitepress-docs/docs/en/guide/feature/unified-mailbox-development.md) for the target architecture, phased plan, and acceptance criteria.
+
 ---
 
 ## Architecture

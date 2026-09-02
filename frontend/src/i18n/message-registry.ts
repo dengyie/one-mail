@@ -596,9 +596,89 @@ export const MESSAGE_REGISTRY = {
       "en": "Provider",
       "zh": "服务商"
     },
+    "gmail": {
+      "en": "Gmail",
+      "zh": "Gmail"
+    },
+    "outlook": {
+      "en": "Outlook / Hotmail",
+      "zh": "Outlook / Hotmail"
+    },
+    "qq": {
+      "en": "QQ Mail",
+      "zh": "QQ 邮箱"
+    },
+    "163": {
+      "en": "163 Mail",
+      "zh": "163 网易邮箱"
+    },
+    "custom": {
+      "en": "Custom mail server",
+      "zh": "自定义邮件服务器"
+    },
+    "imapPort": {
+      "en": "IMAP Port",
+      "zh": "IMAP 端口"
+    },
+    "emailType": {
+      "en": "Mailbox provider",
+      "zh": "邮箱服务商"
+    },
+    "customLabel": {
+      "en": "Custom label (optional)",
+      "zh": "自定义标签（选填）"
+    },
+    "emailUsername": {
+      "en": "Email address / username",
+      "zh": "邮箱地址 / 用户名"
+    },
+    "credential": {
+      "en": "App password / authorization code",
+      "zh": "授权码 / 应用专用密码"
+    },
+    "connect": {
+      "en": "Connect mailbox",
+      "zh": "接入外部邮箱"
+    },
+    "confirm": {
+      "en": "Connect",
+      "zh": "确认接入"
+    },
+    "cancelAction": {
+      "en": "Cancel",
+      "zh": "取消"
+    },
+    "description": {
+      "en": "Messages are fetched by the background aggregator and added to your unified inbox.",
+      "zh": "由后台聚合器自动拉取邮件并归集到统一收件箱。"
+    },
     "host": {
+      "en": "Server",
+      "zh": "服务器"
+    },
+    "imapHost": {
       "en": "IMAP Host",
       "zh": "IMAP 主机"
+    },
+    "pop3Host": {
+      "en": "POP3 Host",
+      "zh": "POP3 主机"
+    },
+    "pop3Port": {
+      "en": "POP3 Port",
+      "zh": "POP3 端口"
+    },
+    "imapSsl": {
+      "en": "IMAP SSL",
+      "zh": "IMAP SSL"
+    },
+    "pop3Ssl": {
+      "en": "POP3 SSL",
+      "zh": "POP3 SSL"
+    },
+    "pop3Stls": {
+      "en": "POP3 STLS",
+      "zh": "POP3 STLS"
     },
     "port": {
       "en": "Port",
@@ -671,6 +751,14 @@ export const MESSAGE_REGISTRY = {
     "auto": {
       "en": "Auto",
       "zh": "自动"
+    },
+    "autoDescription": {
+      "en": "Auto: try IMAP first; fall back to POP3 for INBOX only if IMAP fails.",
+      "zh": "自动：优先使用 IMAP；IMAP 失败时仅对 INBOX 使用 POP3 fallback。"
+    },
+    "pop3OnlyDescription": {
+      "en": "POP3-only: sync INBOX only; IMAP host and port are still required by the API contract.",
+      "zh": "POP3-only：仅同步 INBOX；IMAP 主机与端口仍需按接口要求填写。"
     },
     "imap": {
       "en": "IMAP",
@@ -2826,6 +2914,22 @@ export const MESSAGE_REGISTRY = {
       "en": "Attachments",
       "zh": "附件"
     },
+    "detail.refresh": {
+      "en": "Refresh",
+      "zh": "刷新"
+    },
+    "detail.htmlBlocked": {
+      "en": "Some unsafe or remote content was blocked ({count} item(s)).",
+      "zh": "已阻止部分不安全或远程内容（{count} 项）。"
+    },
+    "detail.metadataOnly": {
+      "en": "metadata only",
+      "zh": "仅元数据"
+    },
+    "detail.attachmentNoDownload": {
+      "en": "The unified API does not provide an attachment download endpoint.",
+      "zh": "统一收件箱 API 未提供附件下载接口。"
+    },
     "detail.noBody": {
       "en": "No body content",
       "zh": "无正文内容"
@@ -2909,6 +3013,10 @@ export const MESSAGE_REGISTRY = {
     "status.lastRefresh": {
       "en": "Refreshed {time}",
       "zh": "刷新于 {time}"
+    },
+    "status.lastLoaded": {
+      "en": "Last loaded {time}",
+      "zh": "最近刷新于 {time}"
     },
     "status.noKey": {
       "en": "Set an API key in the Settings tab to enable the views",

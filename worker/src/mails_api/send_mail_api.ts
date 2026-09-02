@@ -9,7 +9,7 @@ import { CONSTANTS } from '../constants'
 import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDomainMapValue, getMailDomain, includesDomain } from '../utils';
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
-import { getSendBalanceState, requestSendMailAccess } from './send_balance';
+import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
 import { ensureSendMailLimit, increaseSendMailLimitCount } from './send_mail_limit_utils';
 
 
@@ -151,11 +151,7 @@ export const sendMail = async (
     const sendBalanceState = await getSendBalanceState(c, address, {
         isAdmin: options?.isAdmin,
     });
-    if (sendBalanceState.needCheckBalance) {
-        if (!sendBalanceState.balance || sendBalanceState.balance <= 0) {
-            throw new Error(msgs.NoBalanceMsg)
-        }
-    }
+    let balanceReserved = false;
     const {
         from_name, to_mail, to_name,
         subject, content, is_html
@@ -194,38 +190,35 @@ export const sendMail = async (
     }
     const sendMailBindingEnabled = isSendMailBindingEnabled(c, mailDomain);
 
-    // send mail workflow
-    if (sendByVerifiedAddressList) {
-        // do not update balance
-    }
-    // send by resend
-    else if (resendEnabled) {
-        await sendMailByResend(c, address, reqJson);
-    }
-    else if (smtpConfig) {
-        await sendMailBySmtp(c, address, reqJson, smtpConfig);
-    }
-    else if (sendMailBindingEnabled) {
-        await sendMailByBinding(c, address, reqJson);
-    }
-    else {
-        throw new Error(`${msgs.EnableResendOrSmtpOrSendMailMsg} (${mailDomain})`);
-    }
-    await increaseSendMailLimitCount(c);
-
-    // update balance
+    // Verified recipients are free; reserve balance only for billable sends.
     if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
-        try {
-            const { success } = await c.env.DB.prepare(
-                `UPDATE address_sender SET balance = balance - 1 where address = ?`
-            ).bind(address).run();
-            if (!success) {
-                console.warn(`Failed to update balance for ${address}`);
-            }
-        } catch (e) {
-            console.warn(`Failed to update balance for ${address}`);
+        balanceReserved = await reserveSendBalance(c, address);
+        if (!balanceReserved) {
+            throw new Error(msgs.NoBalanceMsg);
         }
     }
+
+    // send mail workflow; refund only when the provider dispatch itself fails.
+    try {
+        if (sendByVerifiedAddressList) {
+            // do not update balance
+        } else if (resendEnabled) {
+            await sendMailByResend(c, address, reqJson);
+        } else if (smtpConfig) {
+            await sendMailBySmtp(c, address, reqJson, smtpConfig);
+        } else if (sendMailBindingEnabled) {
+            await sendMailByBinding(c, address, reqJson);
+        } else {
+            throw new Error(`${msgs.EnableResendOrSmtpOrSendMailMsg} (${mailDomain})`);
+        }
+    } catch (error) {
+        if (balanceReserved) {
+            try { await refundSendBalance(c, address); }
+            catch (refundError) { console.error("Failed to refund send balance", refundError); }
+        }
+        throw error;
+    }
+    await increaseSendMailLimitCount(c);
     // update address updated_at
     updateAddressUpdatedAt(c, address);
     // save to sendbox
@@ -262,14 +255,14 @@ api.post('/api/send_mail', async (c) => {
 
 api.post('/external/api/send_mail', async (c) => {
     const msgs = i18n.getMessagesbyContext(c);
-    const { token } = await c.req.json();
     try {
+        const body = await c.req.json();
+        const { token, ...reqJson } = body;
         const payload = await verifyAddressJwt(c, token);
         if (!payload) {
             throw new Error(msgs.AddressNotFoundMsg);
         }
         const { address } = payload;
-        const reqJson = await c.req.json();
         await sendMail(c, address, reqJson);
         return c.json({ status: "ok" })
     } catch (e) {

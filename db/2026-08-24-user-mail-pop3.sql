@@ -1,0 +1,16 @@
+-- POP3 migration reference (not a standalone executable migration).
+--
+-- SQLite/D1 has no portable `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+-- Running unconditional ALTER statements here would make a retry fail after a
+-- partial execution. The formal, idempotent migration entry point is the
+-- Worker admin API (`/admin/db_migration`), which inspects table_info before
+-- adding each column. Fresh databases use db/schema.sql instead.
+--
+-- Historical equivalent, retained for audit purposes:
+-- ALTER TABLE user_mail_accounts ADD COLUMN use_ssl INTEGER DEFAULT 1;
+-- ALTER TABLE user_mail_accounts ADD COLUMN pop3_host TEXT;
+-- ALTER TABLE user_mail_accounts ADD COLUMN pop3_port INTEGER;
+-- ALTER TABLE user_mail_accounts ADD COLUMN pop3_ssl INTEGER;
+-- ALTER TABLE user_mail_accounts ADD COLUMN pop3_use_stls INTEGER DEFAULT 0;
+-- UPDATE user_mail_accounts SET use_ssl = 1 WHERE use_ssl IS NULL;
+-- UPDATE user_mail_accounts SET pop3_use_stls = 0 WHERE pop3_use_stls IS NULL;

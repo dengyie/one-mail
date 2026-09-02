@@ -28,6 +28,66 @@ def test_maps_worker_response_to_account_configs():
     assert accts[1].protocol == "imap"
 
 
+def test_maps_imap_and_pop3_settings_and_folders():
+    body = {"accounts": [
+        {"id": "imap", "source": "imap_custom", "host": "imap.example",
+         "port": 993, "username": "imap-u", "password": "pw", "protocol": "imap",
+         "use_ssl": False, "folders": ["INBOX", "Archive"],
+         "pop3_host": "pop.example", "pop3_port": 1110, "pop3_ssl": False,
+         "pop3_use_stls": True},
+        {"id": "pop", "source": "imap_custom", "host": "imap.example",
+         "port": 993, "username": "pop-u", "password": "pw", "protocol": "pop3",
+         "folders": ["INBOX"], "pop3_host": "pop.example", "pop3_port": "995",
+         "pop3_ssl": True},
+    ]}
+    with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(200, body)):
+        imap, pop = fetch_user_accounts("https://w.example", "tok")
+    assert (imap.use_ssl, imap.folders) == (False, ["INBOX", "Archive"])
+    assert (imap.pop3_host, imap.pop3_port, imap.pop3_ssl, imap.pop3_use_stls) == (
+        "pop.example", 1110, False, True)
+    assert (pop.protocol, pop.pop3_host, pop.pop3_port, pop.pop3_ssl) == (
+        "pop3", "pop.example", 995, True)
+
+
+def test_remote_account_defaults_and_malformed_folders():
+    body = {"accounts": [
+        {"id": "defaults", "host": "imap.example", "port": 993,
+         "username": "u", "password": "pw"},
+        {"id": "bad-folders", "host": "imap.example", "port": 993,
+         "username": "v", "password": "pw", "folders": "INBOX"},
+        {"id": "empty-folders", "host": "imap.example", "port": 993,
+         "username": "w", "password": "pw", "folders": ["", 1, " Archive "]},
+    ]}
+    with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(200, body)):
+        defaults, malformed, filtered = fetch_user_accounts("https://w.example", "tok")
+    assert defaults.folders == ["INBOX"]
+    assert defaults.use_ssl is True
+    assert defaults.pop3_host == "" and defaults.pop3_port == 0
+    assert defaults.pop3_ssl is None and defaults.pop3_use_stls is False
+    assert malformed.folders == ["INBOX"]
+    assert filtered.folders == ["Archive"]
+
+
+def test_non_dict_or_non_list_worker_payload_is_fail_safe(caplog):
+    for body in (None, [], {"accounts": {}}, {"accounts": "bad"}):
+        with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(200, body)):
+            assert fetch_user_accounts("https://w.example", "tok") == []
+
+
+def test_invalid_port_and_bool_are_rejected_per_account():
+    body = {"accounts": [
+        {"id": "bad-port", "host": "h", "port": True, "username": "u", "password": "p"},
+        {"id": "bad-pop-port", "host": "h", "port": 993, "username": "u", "password": "p",
+         "pop3_port": 0},
+        {"id": "bad-bool", "host": "h", "port": 993, "username": "u", "password": "p",
+         "use_ssl": 1},
+        {"id": "good", "host": "h", "port": 993, "username": "u", "password": "p"},
+    ]}
+    with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(200, body)):
+        accounts = fetch_user_accounts("https://w.example", "tok")
+    assert [account.id for account in accounts] == ["good"]
+
+
 def test_non_200_returns_empty():
     with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(500, {})):
         assert fetch_user_accounts("https://w.example", "tok") == []

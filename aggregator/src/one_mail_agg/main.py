@@ -21,14 +21,20 @@ def run_once(config_path: str) -> dict:
     #   1) config.json 的 admin 账号（管理员自有邮箱）
     #   2) Worker /admin/unified/mail_accounts 拉取的普通用户自助接入邮箱
     # 用户账号挂了不应阻塞 admin 账号（fetch_user_accounts 内部已 fail-soft）。
-    # 按 (host, username) 去重：避免 admin 与用户接入同一邮箱时两套凭据争抢；
-    # 用 host+username 组合而非单 username，更贴合「同一邮箱同一主人」语义。
+    # Collision policy: only equivalent transport identities collide. POP3
+    # endpoint/TLS settings are included so a valid user account is not silently
+    # swallowed by an admin account with different fallback behavior.
+    def collision_key(a):
+        return (a.host, a.port, a.username, a.use_ssl, a.protocol,
+                a.pop3_host, a.pop3_port, a.pop3_ssl, a.pop3_use_stls,
+                tuple(a.folders))
+
     accounts = list(config.accounts)
-    seen = {(a.host, a.username) for a in accounts}
+    seen = {collision_key(a) for a in accounts}
     user_account_ids: set[str] = set()   # 仅用户接入账号回写 sync 状态（admin config 账号无对应行）
     user_accounts = fetch_user_accounts(config.worker_base_url, config.admin_token)
     for ua in user_accounts:
-        key = (ua.host, ua.username)
+        key = collision_key(ua)
         if key in seen:
             log.info("skip duplicate user account %s (host=%s already in config)", ua.username, ua.host)
             continue

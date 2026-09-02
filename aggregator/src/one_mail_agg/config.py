@@ -2,6 +2,9 @@ import json
 from dataclasses import dataclass, field
 
 
+_VALID_PROTOCOLS = {"imap", "pop3", "auto"}
+
+
 @dataclass
 class AccountConfig:
     id: str
@@ -19,6 +22,23 @@ class AccountConfig:
     pop3_port: int = 0
     pop3_ssl: bool | None = None    # None 表示继承 use_ssl
     pop3_use_stls: bool = False
+
+    def __post_init__(self):
+        # Keep protocol semantics identical for local config and Worker payloads.
+        if not isinstance(self.protocol, str):
+            raise ValueError("protocol must be one of: imap, pop3, auto")
+        self.protocol = self.protocol.strip().lower()
+        if self.protocol not in _VALID_PROTOCOLS:
+            raise ValueError(f"unsupported protocol: {self.protocol!r}")
+        for name in ("use_ssl", "pop3_use_stls"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a boolean")
+        if self.pop3_ssl is not None and not isinstance(self.pop3_ssl, bool):
+            raise ValueError("pop3_ssl must be a boolean or null")
+        # STLS starts plaintext and upgrades it; it cannot be combined with
+        # POP3S, including the inherited use_ssl=True default.
+        if self.pop3_use_stls and self.resolve_pop3_use_ssl():
+            raise ValueError("pop3_ssl/use_ssl and pop3_use_stls are contradictory")
 
     def resolve_pop3_host(self) -> str:
         """POP3 主机推导：host 以 imap. 开头换成 pop.，否则原样。"""

@@ -4,6 +4,7 @@ import i18n from "../i18n";
 import { checkRegistrationRateLimit, getMaxMailAccountCount } from "../utils";
 import { commonGetUserRole } from "../common";
 import { encryptCredCtx as encryptCred, decryptCredCtx as decryptCred } from "./cred_crypto";
+import { unsupportedMailAccountAction } from "../unified/mail_account_actions";
 
 // 每用户最多可接入的外部邮箱数（全局默认）。外部邮箱不消耗 mangoqwq 域名地址配额
 // （maxAddressCount 已在 utils.ts isAddressCountLimitReached 排除 source_meta='external'
@@ -23,6 +24,31 @@ const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
 // config 侧 provider 字符串由聚合器定义，不属 shared 契约，故内联于此。
 const OAUTH_PROVIDERS = new Set(["gmail", "outlook"]);
 
+const parseOptionalBoolean = (value: unknown, fallback: boolean | null): boolean | null | undefined => {
+    if (value == null || value === "") return fallback;
+    if (typeof value !== "boolean") return undefined;
+    return value;
+};
+
+const parseOptionalPort = (value: unknown): number | null | undefined => {
+    if (value == null || value === "") return null;
+    const port = typeof value === "number" ? value : Number(value);
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
+};
+
+/** Validate the POP3 transport tuple without silently weakening its meaning.
+ * SSL and STLS are alternatives: STLS starts on plaintext and upgrades, while
+ * SSL starts with TLS.  Plain POP3 remains representable for legacy accounts;
+ * callers can distinguish that deliberate configuration as both flags false.
+ */
+export const validatePop3Settings = (ssl: boolean | null, useStls: boolean, fallbackSsl = true): boolean =>
+    !((ssl ?? fallbackSsl) && useStls);
+
+const boundedError = (error: unknown, prefix: string): string => {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `${prefix}: ${detail}`.slice(0, 200);
+};
+
 interface MailAccountRow {
     id: string;
     user_id: number;
@@ -35,6 +61,13 @@ interface MailAccountRow {
     protocol: string;
     folders_json: string | null;
     oauth_enc: string | null;
+    // POP3 settings are nullable for compatibility with rows created before
+    // the POP3 configuration migration. Null pop3_ssl means inherit use_ssl.
+    use_ssl: number | null;
+    pop3_host: string | null;
+    pop3_port: number | null;
+    pop3_ssl: number | null;
+    pop3_use_stls: number | null;
     enabled: number;
     last_sync_at: number | null;
     last_error: string | null;
@@ -42,11 +75,16 @@ interface MailAccountRow {
 }
 
 /** 解析 folders_json，畸形值兜底为 ["INBOX"]——绝不让单条坏数据 500 掉整列。 */
-const safeFolders = (raw: string | null): string[] => {
-    if (!raw) return ["INBOX"];
+export const safeFolders = (raw: string | null): string[] => {
+    if (typeof raw !== "string" || !raw.trim()) return ["INBOX"];
     try {
-        const v = JSON.parse(raw);
-        return Array.isArray(v) ? v.filter((s) => typeof s === "string") : ["INBOX"];
+        const value: unknown = JSON.parse(raw);
+        if (!Array.isArray(value)) return ["INBOX"];
+        const folders = value
+            .filter((folder): folder is string => typeof folder === "string")
+            .map((folder) => folder.trim())
+            .filter(Boolean);
+        return folders.length ? folders : ["INBOX"];
     } catch {
         return ["INBOX"];
     }
@@ -62,6 +100,11 @@ const safeRow = (r: MailAccountRow) => ({
     username: r.username,
     protocol: r.protocol,
     folders: safeFolders(r.folders_json),
+    use_ssl: r.use_ssl == null ? true : r.use_ssl === 1,
+    pop3_host: r.pop3_host || null,
+    pop3_port: r.pop3_port ?? null,
+    pop3_ssl: r.pop3_ssl == null ? null : r.pop3_ssl === 1,
+    pop3_use_stls: r.pop3_use_stls == null ? false : r.pop3_use_stls === 1,
     enabled: r.enabled === 1,
     last_sync_at: r.last_sync_at,
     last_error: r.last_error,
@@ -81,20 +124,41 @@ const safeRow = (r: MailAccountRow) => ({
  */
 const ensureExternalBinding = async (c: Context<HonoCustomType>, userId: number, username: string) => {
     const msgs = i18n.getMessagesbyContext(c);
-    // address.name UNIQUE：已存在则忽略，避免重复接入同一邮箱时报错
-    await c.env.DB.prepare(
-        `INSERT OR IGNORE INTO address(name, source_meta) VALUES(?, 'external')`
-    ).bind(username).run();
-    // .first("id") 返回该列的标量值（number），不是 row 对象
-    const addrId = await c.env.DB.prepare(`SELECT id FROM address WHERE name = ?`)
-        .bind(username).first<number>("id");
-    if (!addrId) {
-        throw new Error(msgs.FailedCreateAddressMsg);
+    let addrId: number | null = null;
+    let addressCreated = false;
+    let bindingCreated = false;
+    try {
+        const existingAddress = await c.env.DB.prepare(`SELECT id FROM address WHERE name = ?`)
+            .bind(username).first<number>("id");
+        // address.name UNIQUE：已存在则忽略，避免重复接入同一邮箱时报错
+        const insertedAddress = await c.env.DB.prepare(
+            `INSERT OR IGNORE INTO address(name, source_meta) VALUES(?, 'external')`
+        ).bind(username).run();
+        addrId = existingAddress ?? await c.env.DB.prepare(`SELECT id FROM address WHERE name = ?`)
+            .bind(username).first<number>("id");
+        addressCreated = !existingAddress && ((insertedAddress.meta as { changes?: number })?.changes ?? 0) > 0;
+        if (!addrId) throw new Error(msgs.FailedCreateAddressMsg);
+        const existingBinding = await c.env.DB.prepare(
+            `SELECT 1 FROM users_address WHERE user_id = ? AND address_id = ?`
+        ).bind(userId, addrId).first();
+        const bindingResult = await c.env.DB.prepare(
+            `INSERT OR IGNORE INTO users_address(user_id, address_id) VALUES(?, ?)`
+        ).bind(userId, addrId).run();
+        bindingCreated = !existingBinding && ((bindingResult.meta as { changes?: number })?.changes ?? 0) > 0;
+        return { addrId, bindingCreated, addressCreated };
+    } catch (error) {
+        // Binding is a multi-statement operation; undo partial ownership changes
+        // here, while the caller removes the account row itself.
+        if (bindingCreated && addrId != null) {
+            await c.env.DB.prepare(`DELETE FROM users_address WHERE user_id = ? AND address_id = ?`)
+                .bind(userId, addrId).run();
+        }
+        if (addressCreated && addrId != null) {
+            await c.env.DB.prepare(`DELETE FROM address WHERE id = ? AND name = ? AND source_meta = 'external'`)
+                .bind(addrId, username).run();
+        }
+        throw error;
     }
-    await c.env.DB.prepare(
-        `INSERT OR IGNORE INTO users_address(user_id, address_id) VALUES(?, ?)`
-    ).bind(userId, addrId).run();
-    return addrId;
 };
 
 const UserMailAccountsModule = {
@@ -112,15 +176,38 @@ const UserMailAccountsModule = {
         const body = await c.req.json().catch(() => ({})) as {
             label?: string; source?: string; host?: string; port?: number;
             username?: string; cred?: string; protocol?: string; folders?: string[];
-            oauth?: string;
+            oauth?: string; use_ssl?: unknown;
+            pop3_host?: unknown; pop3_port?: unknown;
+            pop3_ssl?: unknown; pop3_use_stls?: unknown;
         };
 
-        const username = (body.username || "").trim().toLowerCase();
-        const host = (body.host || "").trim();
-        const source = (body.source || "").trim();
-        const cred = body.cred || "";
-        const port = Number(body.port);
-        const protocol = (body.protocol || "auto").trim();
+        const username = (typeof body.username === "string" ? body.username : "").trim().toLowerCase();
+        const source = (typeof body.source === "string" ? body.source : "").trim();
+        const cred = typeof body.cred === "string" ? body.cred : "";
+        const protocol = (typeof body.protocol === "string" ? body.protocol : "auto").trim();
+        const useSsl = parseOptionalBoolean(body.use_ssl, true);
+        const requestedPop3Host = body.pop3_host == null ? null
+            : typeof body.pop3_host === "string" ? body.pop3_host.trim() : undefined;
+        const requestedPop3Port = parseOptionalPort(body.pop3_port);
+        // POP3 requests may omit the IMAP-shaped host/port entirely. For old
+        // requests, the top-level values remain the POP3 compatibility fields.
+        const host = (typeof body.host === "string" ? body.host.trim() : "")
+            || (protocol === "pop3" ? requestedPop3Host || "" : "");
+        const port = parseOptionalPort(body.port)
+            ?? (protocol === "pop3" ? requestedPop3Port : undefined);
+        // Older clients used host/port for POP3 and did not send the POP3
+        // fields. Normalize that shape before validating/storing it.
+        const pop3Host = requestedPop3Host ?? (protocol === "pop3" ? host : null);
+        const pop3Port = requestedPop3Port ?? (protocol === "pop3" ? port : null);
+        // POP3's well-known ports are useful compatibility defaults: an omitted
+        // SSL flag on 110 means plaintext, while 995 means POP3S. Other ports
+        // remain nullable and are resolved by the aggregator's historical rules.
+        const parsedPop3Ssl = parseOptionalBoolean(body.pop3_ssl,
+            pop3Port === 110 ? false : pop3Port === 995 ? true : null);
+        const pop3UseStls = parseOptionalBoolean(body.pop3_use_stls, false);
+        // STLS is plaintext-first. Persist an explicit false rather than null
+        // (which the aggregator interprets as inheriting IMAP use_ssl).
+        const pop3Ssl = pop3UseStls === true ? false : parsedPop3Ssl;
         // label 防非 string 类型崩溃（Minor）：先 String() 再 trim/slice
         const label = String(body.label ?? "").trim().slice(0, 60);
         // folders 校验为数组（I3）：非数组/空 → 兜底 ["INBOX"]，避免 safeRow 读取时
@@ -129,11 +216,17 @@ const UserMailAccountsModule = {
             ? body.folders.filter((f) => typeof f === "string" && f.trim()).map((f) => f.trim())
             : [];
 
-        if (!username || !host || !source || !cred || !Number.isInteger(port) || port <= 0 || port > 65535) {
+        if (!username || !host || !source || !cred || !Number.isInteger(port) || port <= 0 || port > 65535
+            || useSsl === undefined || pop3Host === undefined || pop3Port === undefined
+            || parsedPop3Ssl === undefined || pop3UseStls === undefined) {
             return c.text(msgs.RequiredFieldMsg, 400);
         }
         if (!ALLOWED_SOURCES.has(source)) return c.text(msgs.InvalidInputMsg, 400);
         if (!ALLOWED_PROTOCOLS.has(protocol)) return c.text(msgs.InvalidInputMsg, 400);
+        if (protocol === "pop3" && (!pop3Host || pop3Port == null
+            || !validatePop3Settings(parsedPop3Ssl, pop3UseStls, useSsl === true))) {
+            return c.text(msgs.InvalidInputMsg, 400);
+        }
 
         // review W1-3：oauth 是可选的 provider 白名单校验。body.oauth 是 JSON 字符串
         // （聚合器 oauth_client_factory 直接 `account.oauth.get("provider")`）。
@@ -188,10 +281,12 @@ const UserMailAccountsModule = {
             await c.env.DB.prepare(
                 `INSERT INTO user_mail_accounts
                  (id, user_id, label, source, host, port, username, cred_enc, protocol,
-                  folders_json, oauth_enc, enabled, created_at)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?)`
+                  folders_json, oauth_enc, use_ssl, pop3_host, pop3_port, pop3_ssl,
+                  pop3_use_stls, enabled, created_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)`
             ).bind(id, user_id, label || null, source, host, port, username, credEnc,
-                protocol, foldersJson, oauthEnc, now).run();
+                protocol, foldersJson, oauthEnc, useSsl ? 1 : 0, pop3Host, pop3Port,
+                pop3Ssl == null ? null : pop3Ssl ? 1 : 0, pop3UseStls ? 1 : 0, now).run();
         } catch (e) {
             const error = e as Error;
             if (error.message && error.message.includes("UNIQUE")) {
@@ -215,8 +310,19 @@ const UserMailAccountsModule = {
             }
         }
 
-        // 自动绑定：把 to_addr=username 纳入该用户的归属作用域
-        await ensureExternalBinding(c, user_id, username);
+        // 自动绑定：把 to_addr=username 纳入该用户的归属作用域。绑定失败时必须
+        // 删除刚写入的 enabled account，否则聚合器会看到一个永远无法归属的孤儿账号。
+        try {
+            await ensureExternalBinding(c, user_id, username);
+        } catch (error) {
+            try {
+                await c.env.DB.prepare(`DELETE FROM user_mail_accounts WHERE id = ? AND user_id = ?`)
+                    .bind(id, user_id).run();
+            } catch (cleanupError) {
+                console.error(`failed to compensate mail account ${id}`, cleanupError);
+            }
+            throw error;
+        }
 
         return c.json({ id, success: true });
     },
@@ -262,6 +368,39 @@ const UserMailAccountsModule = {
     },
 
     /**
+     * Validate that an account belongs to the current user before attempting a
+     * connection test. The Worker has no IMAP/POP3 client (and must not pretend
+     * that a test succeeded), so this is an explicit unsupported contract for
+     * now. Keeping the ownership lookup here also makes a future async
+     * implementation safe by construction.
+     */
+    testConnection: async (c: Context<HonoCustomType>) => {
+        const { user_id } = c.get("userPayload");
+        const { id } = c.req.param();
+        const row = await c.env.DB.prepare(
+            `SELECT id FROM user_mail_accounts WHERE id = ? AND user_id = ?`
+        ).bind(id, user_id).first<{ id: string }>();
+        if (!row) return c.json({ error: "mail account not found" }, 404);
+        return c.json(unsupportedMailAccountAction("connection_test", row.id), 501);
+    },
+
+    /**
+     * Request an immediate sync. There is currently no queue/VPS dispatch
+     * binding in the Worker, therefore never return queued/success falsely.
+     * The account is still ownership-checked so this endpoint cannot be used
+     * to probe or enqueue another user's account.
+     */
+    syncNow: async (c: Context<HonoCustomType>) => {
+        const { user_id } = c.get("userPayload");
+        const { id } = c.req.param();
+        const row = await c.env.DB.prepare(
+            `SELECT id FROM user_mail_accounts WHERE id = ? AND user_id = ?`
+        ).bind(id, user_id).first<{ id: string }>();
+        if (!row) return c.json({ error: "mail account not found" }, 404);
+        return c.json(unsupportedMailAccountAction("sync", row.id), 501);
+    },
+
+    /**
      * 聚合器专用凭据拉取端点（/admin/unified/mail_accounts，x-admin-auth 保护）。
      * 返回所有 enabled=1 的外部邮箱账号，**含解密后的明文凭据**——仅供聚合器
      * 在内存中短时使用，绝不通过任何 user_api 端点返回。
@@ -269,13 +408,44 @@ const UserMailAccountsModule = {
     exportForAggregator: async (c: Context<HonoCustomType>) => {
         const { results } = await c.env.DB.prepare(
             `SELECT id, user_id, source, host, port, username, cred_enc, protocol,
-                    folders_json, oauth_enc FROM user_mail_accounts WHERE enabled = 1`
+                    folders_json, oauth_enc, use_ssl, pop3_host, pop3_port, pop3_ssl,
+                    pop3_use_stls FROM user_mail_accounts WHERE enabled = 1`
         ).all<MailAccountRow>();
         const out = [];
         for (const r of results || []) {
+            let password: string;
+            let oauth: string | null = null;
             try {
-                const password = await decryptCred(c, r.cred_enc);
-                const oauth = r.oauth_enc ? await decryptCred(c, r.oauth_enc) : null;
+                password = await decryptCred(c, r.cred_enc);
+            } catch (e) {
+                const message = boundedError(e, "cred decrypt failed");
+                console.error(`decrypt cred failed for account ${r.id}`, e);
+                try {
+                    await c.env.DB.prepare(
+                        `UPDATE user_mail_accounts SET last_error = ?, last_sync_at = ? WHERE id = ?`
+                    ).bind(message, Date.now(), r.id).run();
+                } catch (recordError) {
+                    console.error(`failed to record export error for account ${r.id}`, recordError);
+                }
+                continue;
+            }
+            if (r.oauth_enc) {
+                try {
+                    oauth = await decryptCred(c, r.oauth_enc);
+                } catch (e) {
+                    const message = boundedError(e, "oauth decrypt failed");
+                    console.error(`decrypt oauth failed for account ${r.id}`, e);
+                    try {
+                        await c.env.DB.prepare(
+                            `UPDATE user_mail_accounts SET last_error = ?, last_sync_at = ? WHERE id = ?`
+                        ).bind(message, Date.now(), r.id).run();
+                    } catch (recordError) {
+                        console.error(`failed to record export error for account ${r.id}`, recordError);
+                    }
+                    continue;
+                }
+            }
+            try {
                 out.push({
                     id: r.id,
                     source: r.source,
@@ -284,16 +454,26 @@ const UserMailAccountsModule = {
                     username: r.username,
                     password,
                     protocol: r.protocol,
-                    folders: r.folders_json ? JSON.parse(r.folders_json) : ["INBOX"],
-                    oauth: oauth ? JSON.parse(oauth) : null,
+                    // Export must use the same defensive parser as the user-facing
+                    // listing. A corrupt row must not make the whole batch 500.
+                    folders: safeFolders(r.folders_json),
+                    use_ssl: r.use_ssl == null ? true : r.use_ssl === 1,
+                    pop3_host: r.pop3_host || null,
+                    pop3_port: r.pop3_port ?? null,
+                    pop3_ssl: r.pop3_ssl == null ? null : r.pop3_ssl === 1,
+                    pop3_use_stls: r.pop3_use_stls == null ? false : r.pop3_use_stls === 1,
+                    oauth: oauth == null ? null : JSON.parse(oauth),
                 });
             } catch (e) {
-                console.error(`decrypt cred failed for account ${r.id}`, e);
-                // 单条解密失败不阻塞其他账号；聚合器会跳过；这里顺带把错误回写，
-                // 用户在「我的邮箱」页能看到「凭据损坏，请重新填写」。
-                await c.env.DB.prepare(
-                    `UPDATE user_mail_accounts SET last_error = ?, last_sync_at = ? WHERE id = ?`
-                ).bind(`cred decrypt failed: ${(e as Error).message}`, Date.now(), r.id).run();
+                const message = boundedError(e, "oauth parse failed");
+                console.error(`parse oauth failed for account ${r.id}`, e);
+                try {
+                    await c.env.DB.prepare(
+                        `UPDATE user_mail_accounts SET last_error = ?, last_sync_at = ? WHERE id = ?`
+                    ).bind(message, Date.now(), r.id).run();
+                } catch (recordError) {
+                    console.error(`failed to record export error for account ${r.id}`, recordError);
+                }
             }
         }
         return c.json({ accounts: out });

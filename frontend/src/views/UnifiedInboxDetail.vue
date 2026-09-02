@@ -26,6 +26,10 @@
         </n-button>
 
         <div class="flex items-center gap-2">
+          <n-button size="small" quaternary :loading="loading" :aria-label="t('detail.refresh')" @click="load">
+            <template #icon><n-icon><RefreshRound /></n-icon></template>
+            {{ t('detail.refresh') }}
+          </n-button>
           <button
             type="button"
             @click="showAiPanel = !showAiPanel; if (showAiPanel && !aiAnalysisText) generateAiAnalysis();"
@@ -105,13 +109,17 @@
           </div>
         </div>
 
-        <!-- 正文 -->
+        <!-- 正文：HTML 统一经过与主收件箱相同的安全管线；无 HTML 时才降级为纯文本。 -->
         <div class="px-5 py-4">
+          <div v-if="htmlBody" class="mail-html-body prose prose-sm max-w-none dark:prose-invert" v-html="htmlBody"></div>
           <pre
-            v-if="displayBody"
+            v-else-if="displayBody"
             class="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-zinc-800 dark:text-zinc-200"
           >{{ displayBody }}</pre>
           <div v-else class="text-sm text-zinc-400 py-8 text-center">{{ t('detail.noBody') }}</div>
+          <div v-if="htmlBlocked" class="mt-3 text-xs text-amber-600 dark:text-amber-400">
+            {{ t('detail.htmlBlocked', { count: htmlBlocked }) }}
+          </div>
         </div>
 
         <!-- 附件 -->
@@ -124,8 +132,10 @@
               class="flex items-center gap-2 text-xs bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 text-zinc-700 dark:text-zinc-300 rounded-xl px-3 py-1.5 shadow-xs"
             >
               <span>📎</span>
-              <span class="max-w-[220px] truncate font-medium">{{ att.filename || att.name || att.id || ('attachment-' + (i + 1)) }}</span>
+              <span class="max-w-[220px] truncate font-medium">{{ att.name || att.id || ('attachment-' + (i + 1)) }}</span>
               <span v-if="att.size" class="text-zinc-400 font-mono">({{ fmtSize(att.size) }})</span>
+              <span v-if="att.mimeType" class="text-zinc-400">{{ att.mimeType }}</span>
+              <span class="text-zinc-400" :title="t('detail.attachmentNoDownload')">· {{ t('detail.metadataOnly') }}</span>
             </div>
           </div>
         </div>
@@ -137,7 +147,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowBackRound } from '@vicons/material'
+import { ArrowBackRound, RefreshRound } from '@vicons/material'
+import { sanitizeHtmlMail } from '../utils/sanitize-html-mail'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
 import { useGlobalState } from '../store'
@@ -213,18 +224,48 @@ const stripHtml = (html) =>
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
+const sanitisedHtml = computed(() => {
+  if (!email.value?.html_body) return { html: '', blocked: 0 }
+  return sanitizeHtmlMail(email.value.html_body)
+})
+const htmlBody = computed(() => sanitisedHtml.value.html)
+const htmlBlocked = computed(() => sanitisedHtml.value.blocked)
 const displayBody = computed(() => {
   if (email.value?.text_body) return email.value.text_body
   if (email.value?.html_body) return stripHtml(email.value.html_body)
   return ''
 })
 
+// Aggregator attachments use name/size/mimeType. Accept legacy aliases at the
+// boundary, then render only normalized records so malformed JSON elements cannot
+// cause template errors or leak unexpected values into the UI.
+const normalizeAttachment = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const name = typeof value.name === 'string'
+    ? value.name
+    : typeof value.filename === 'string' ? value.filename : ''
+  const size = Number(value.size)
+  const mimeType = typeof value.mimeType === 'string'
+    ? value.mimeType
+    : typeof value.mime_type === 'string'
+      ? value.mime_type
+      : typeof value.content_type === 'string' ? value.content_type : ''
+  const id = typeof value.id === 'string' ? value.id : ''
+  if (!name && !id && !mimeType && (!Number.isFinite(size) || size < 0)) return null
+  return {
+    name,
+    size: Number.isFinite(size) && size >= 0 ? size : 0,
+    mimeType,
+    id,
+  }
+}
+
 const attachments = computed(() => {
   const raw = email.value?.attachments_json
   if (!raw) return []
   try {
     const arr = typeof raw === 'string' ? JSON.parse(raw) : raw
-    return Array.isArray(arr) ? arr : []
+    return Array.isArray(arr) ? arr.map(normalizeAttachment).filter(Boolean) : []
   } catch {
     return []
   }

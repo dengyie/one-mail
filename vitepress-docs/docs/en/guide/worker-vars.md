@@ -2,6 +2,8 @@
 
 > [!NOTE] Note
 > For CLI deployment syntax, please refer to `worker/wrangler.toml.template`
+>
+> **Database migration release order (external-mail POP3):** Deploy the Worker containing the schema migration first, run `POST /admin/db_migration`, and verify success plus `need_migration: false` from `GET /admin/db_version`. Only then release/enable code that reads or writes POP3 columns. Do not send traffic to the new code before migration completes. The migration endpoint is retry-safe; concurrent requests tolerate a column already added by another request.
 
 ## Required Variables
 

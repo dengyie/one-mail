@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from one_mail_agg.config import Config, load_config
+from one_mail_agg.config import AccountConfig, Config, load_config
 
 
 def test_load_config_parses_accounts(tmp_path):
@@ -65,6 +65,46 @@ def test_load_config_protocol_defaults_auto(tmp_path):
     assert a.resolve_pop3_host() == "pop.qq.com"
     assert a.resolve_pop3_port() == 995
     assert a.resolve_pop3_use_ssl() is True
+
+
+def test_pop3_ssl_defaults_to_use_ssl_but_allows_explicit_override():
+    inherited = AccountConfig(**{"id": "inherited", "source": "imap_qq",
+                                          "host": "imap.qq.com", "port": 993,
+                                          "username": "u", "password": "p",
+                                          "use_ssl": False})
+    assert inherited.pop3_ssl is None
+    assert inherited.resolve_pop3_use_ssl() is False
+    assert inherited.resolve_pop3_port() == 110
+
+    explicit = AccountConfig(**{"id": "explicit", "source": "imap_qq",
+                                         "host": "imap.qq.com", "port": 993,
+                                         "username": "u", "password": "p",
+                                         "use_ssl": False, "pop3_ssl": True})
+    assert explicit.resolve_pop3_use_ssl() is True
+    assert explicit.resolve_pop3_port() == 995
+
+
+@pytest.mark.parametrize("protocol, expected", [
+    (" IMAP ", "imap"), ("Pop3", "pop3"), ("AUTO", "auto"),
+])
+def test_protocol_is_normalized(protocol, expected):
+    account = AccountConfig(id="a", source="imap_custom", host="h", port=993,
+                            username="u", password="p", protocol=protocol)
+    assert account.protocol == expected
+
+
+@pytest.mark.parametrize("protocol", ["smtp", "", None, 1])
+def test_protocol_is_strictly_rejected(protocol):
+    with pytest.raises(ValueError, match="protocol"):
+        AccountConfig(id="a", source="imap_custom", host="h", port=993,
+                      username="u", password="p", protocol=protocol)
+
+
+def test_stls_and_ssl_are_mutually_exclusive():
+    with pytest.raises(ValueError, match="contradictory"):
+        AccountConfig(id="a", source="imap_custom", host="h", port=993,
+                      username="u", password="p", use_ssl=False,
+                      pop3_ssl=True, pop3_use_stls=True)
 
 
 def test_load_config_explicit_pop3_fields_and_host_derivation(tmp_path):

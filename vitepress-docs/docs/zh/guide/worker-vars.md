@@ -2,6 +2,8 @@
 
 > [!NOTE] 注意
 > 通过 CLI 部署时的写法请参考 `worker/wrangler.toml.template`
+>
+> **数据库迁移发布顺序（外部邮箱 POP3）：** 先部署包含 schema migration 的 Worker，执行 `POST /admin/db_migration` 并确认返回成功、`GET /admin/db_version` 的 `need_migration` 为 `false`，再发布/启用会读写 POP3 字段的代码。不要在迁移完成前让新代码接收流量；迁移接口可重复执行，多个并发请求中若另一请求已添加列会安全成功。
 
 ## 必填变量
 

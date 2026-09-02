@@ -70,6 +70,32 @@ export const getSendBalanceState = async (
     };
 }
 
+/**
+ * Atomically reserve one sender balance before dispatching an email.
+ * This closes the read-then-decrement race between concurrent sends.
+ */
+export const reserveSendBalance = async (
+    c: Context<HonoCustomType>,
+    address: string,
+): Promise<boolean> => {
+    const result = await c.env.DB.prepare(
+        `UPDATE address_sender
+         SET balance = balance - 1
+         WHERE address = ? AND enabled = 1 AND balance > 0`
+    ).bind(address).run();
+    return Number(result.meta?.changes ?? 0) > 0;
+}
+
+/** Refund a reservation when the downstream mail provider rejects the send. */
+export const refundSendBalance = async (
+    c: Context<HonoCustomType>,
+    address: string,
+): Promise<void> => {
+    await c.env.DB.prepare(
+        `UPDATE address_sender SET balance = balance + 1 WHERE address = ?`
+    ).bind(address).run();
+}
+
 export const requestSendMailAccess = async (
     c: Context<HonoCustomType>,
     address: string

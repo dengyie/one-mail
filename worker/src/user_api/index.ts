@@ -39,6 +39,8 @@ api.get('/user_api/mail_accounts', mail_accounts.list);
 api.post('/user_api/mail_accounts', mail_accounts.create);
 api.delete('/user_api/mail_accounts/:id', mail_accounts.remove);
 api.post('/user_api/mail_accounts/:id/toggle', mail_accounts.toggle);
+api.post('/user_api/mail_accounts/:id/test-connection', mail_accounts.testConnection);
+api.post('/user_api/mail_accounts/:id/sync', mail_accounts.syncNow);
 
 // passkey api
 api.get('/user_api/passkey', passkey.getPassKeys);

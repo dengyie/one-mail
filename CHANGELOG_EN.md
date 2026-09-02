@@ -8,8 +8,11 @@
 
 ## v1.11.0(main)
 
+- feat: |Worker| Phase 0 external-mail connection test and immediate-sync contracts: added user-ownership-checked `test-connection` / `sync` routes; because the Worker has no VPS/queue dispatch binding yet, they explicitly return `501 unsupported` and never fake connection success or queued state.
+
 ### Features
 
+- fix: |Aggregator| Phase 0 external-mail configuration closure: preserve IMAP/POP3 host, port, SSL/STLS, and folders from remote accounts into AccountConfig/sync, with malformed folders safely falling back to `INBOX`
 - feat: |Frontend/CI| Deep frontend modernization and awesome-ui-kit integration: fully assembled 14 atomic components including `ThemeToggle`, `StatusIndicator`, `ThinkingBlock`, `StreamMarkdown`, `ChatPromptInput`, `PromptChips`, and `MessageActionToolbar`; added interactive AI email assistant drawer with summary and reply drafting; modernized `AiExtractInfo` with large monospace OTP and 1-click copy; integrated Auto/Light/Dark segmented theme switcher across `Header` and `Appearance`; added GitHub Actions `.github/workflows/deploy.yml` for automated CI test gate and automated pxed frontend deployment on push to main
 - feat: |Worker| Add Bearer API-key authentication for the unified mailbox API, including readonly source/account scoping and admin access
 - feat: |Worker| Add complete unified inbox query endpoints: `GET /api/unified/emails?source=&account=&unread=&q=` (`q=` full-text search), `GET /api/unified/count?source=&unread=`, `GET /api/unified/verifcodes?addr=&fresh=`, and `POST /api/unified/emails/:id/read` (admin API-key only), plus a verification-code extraction pure function and verifcode mail lookup; add `POST /admin/unified/keys` (x-admin-auth protected) to create API keys with an optional role and source/account whitelists, returning the plaintext key only once at creation (one-mail unified inbox)

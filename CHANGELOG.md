@@ -8,8 +8,11 @@
 
 ## v1.11.0(main)
 
+- feat: |Worker| Phase 0 外部邮箱连接测试与立即同步接口：新增按用户归属校验的 `test-connection` / `sync` 路由；当前 Worker 无 VPS/队列派发能力时明确返回 `501 unsupported`，绝不伪造连接成功或 queued。
+
 ### Features
 
+- fix: |Aggregator| Phase 0 外部邮箱配置闭环：remote accounts 映射并保留 IMAP/POP3 host、port、SSL/STLS 与 folders，畸形 folders 安全回退为 `INBOX`，确保 AccountConfig/sync 使用远端 POP3 参数
 - feat: |Frontend/CI| 前端现代化与 awesome-ui-kit 组件体系深度重构：全量装配 `ThemeToggle`, `StatusIndicator`, `ThinkingBlock`, `StreamMarkdown`, `ChatPromptInput`, `PromptChips`, `MessageActionToolbar` 等 14 个原子单文件基元；邮件阅读器新增 AI 智能助理抽屉与提取回复草稿能力；`AiExtractInfo` 重构验证码大字与一键复制；`Header` 与 `Appearance` 集成 Auto/Light/Dark 三态主题切换；新增 GitHub Actions `.github/workflows/deploy.yml` 自动化 CI 门禁与 push main 自动构建部署至 pxed（nginx :3301）
 - feat: |Worker| Add Bearer API-key authentication for the unified mailbox API, including readonly source/account scoping and admin access
 - feat: |Worker| 新增统一收件箱完整查询端点：`GET /api/unified/emails?source=&account=&unread=&q=`（`q=` 全文搜索）、`GET /api/unified/count?source=&unread=`、`GET /api/unified/verifcodes?addr=&fresh=`、`POST /api/unified/emails/:id/read`（admin API-key 专属），并提供验证码提取纯函数与验证码邮件查询；新增 `POST /admin/unified/keys`（x-admin-auth 保护）用于创建带 rolereadonly/admin、来源/账号白名单的 API key，明文 key 仅创建时返回一次（one-mail 统一收件箱）

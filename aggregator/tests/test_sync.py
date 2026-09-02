@@ -335,6 +335,94 @@ def test_sync_pop3_skips_bad_uidl_retries_next_round(tmp_path, monkeypatch):
     assert state.get_pop3_seen("163-main", "INBOX") == {"UL-1", "UL-BAD"}
 
 
+def test_sync_auto_non_inbox_does_not_silently_pin_pop3_after_imap_failure(tmp_path, monkeypatch):
+    """IMAP 失败时，非 INBOX 账号不能被 POP3 空成功钉住并静默丢邮件。"""
+    _stub_upload(monkeypatch)
+    pop_f = _PopFactory([])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+    acc.folders = ["Archive"]
+
+    result = sync_mod.sync_account(_imap_factory(raised=IMAPClientError("Unsafe Login")),
+                                   _cfg([acc]), acc, state)
+    assert result["synced"] == 0 and result["dropped"] == 1
+    assert result["dropped_folders"] == ["Archive"]
+    assert pop_f.made == 0
+    assert not state.is_fallback_pinned("163-main")
+
+
+def test_sync_pop3_reports_non_inbox_folder_as_dropped(tmp_path, monkeypatch, caplog):
+    """POP3 只能读取 INBOX；其它 folder 必须在结果中显式计数并告警。"""
+    _stub_upload(monkeypatch)
+    pop_f = _PopFactory([])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+    acc.folders = ["INBOX", "Archive"]
+    result = sync_mod.sync_account(None, _cfg([acc]), acc, state)
+    assert result["synced"] == 0 and result["dropped"] == 1
+    assert result["dropped_folders"] == ["Archive"]
+    assert "non-INBOX" in result["warning"]
+
+
+def test_sync_explicit_pop3_rejects_non_inbox_folder(tmp_path, monkeypatch):
+    """显式 POP3 也必须拒绝无法表达的非 INBOX 文件夹。"""
+    _stub_upload(monkeypatch)
+    pop_f = _PopFactory([])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+    acc.folders = ["Archive"]
+
+    with pytest.raises(ValueError, match="folders must include INBOX"):
+        sync_mod.sync_account(None, _cfg([acc]), acc, state)
+    assert pop_f.made == 0
+
+
+@pytest.mark.parametrize("phase", ["factory", "read"])
+def test_sync_auto_falls_back_on_network_oserror(tmp_path, monkeypatch, phase):
+    """auto 仅把 IMAP 网络边界 OSError 当作可降级故障；多文件夹时避免永久钉住。"""
+    _stub_upload(monkeypatch)
+    pop_f = _PopFactory([])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+    acc.folders = ["INBOX"]
+
+    if phase == "factory":
+        def failing_factory(_account):
+            raise OSError("connection reset")
+    else:
+        class FailingRead(_ImapEmpty):
+            def select_folder(self, folder, readonly=True):
+                raise OSError("timed out")
+        def failing_factory(_account):
+            return FailingRead()
+
+    result = sync_mod.sync_account(failing_factory, _cfg([acc]), acc, state)
+    assert result == {"synced": 0, "dropped": 0, "protocol": "pop3"}
+    assert pop_f.made == 1
+    assert state.is_fallback_pinned("163-main")
+
+
+def test_sync_auto_multi_folder_does_not_pin_on_transient_oserror(tmp_path, monkeypatch):
+    """多文件夹账号在遇到临时 OSError 时，不作持久化钉住以保留下轮重试 IMAP。"""
+    _stub_upload(monkeypatch)
+    pop_f = _PopFactory([])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+    acc.folders = ["INBOX", "Archive"]
+
+    def failing_factory(_account):
+        raise OSError("connection reset")
+
+    result = sync_mod.sync_account(failing_factory, _cfg([acc]), acc, state)
+    assert result["protocol"] == "pop3"
+    assert not state.is_fallback_pinned("163-main")
+
+
 def test_sync_auto_falls_back_to_pop3_on_select_failure(tmp_path, monkeypatch):
     """IMAP 的 EXAMINE/SELECT 返回 Unsafe Login（163）→ auto 降级 POP3。"""
     calls = _stub_upload(monkeypatch)

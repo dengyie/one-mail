@@ -12,6 +12,22 @@ import { getRouterPathWithLang } from '../utils'
 // ApiPath 已由 shared 导出（Task 1 定义），此处引用即可，勿重新声明。
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+
+// Mail account callers historically passed a pre-serialized JSON string. Keep
+// accepting that shape while ensuring axios receives an object for JSON APIs.
+export const normalizeMailAccountBody = (body) => {
+    if (typeof body !== 'string') return body;
+    let parsed;
+    try {
+        parsed = JSON.parse(body);
+    } catch {
+        throw new Error('mail account body must be valid JSON');
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('mail account body must be a JSON object');
+    }
+    return parsed;
+};
 const {
     loading, auth, jwt, settings, openSettings,
     userOpenSettings, userSettings, announcement,
@@ -391,8 +407,22 @@ export const api = {
     },
     // 用户自助接入外部邮箱归集：走 siteClient，自动附带 x-user-token
     userMailAccounts: {
-        list: () => siteClient.get('/user_api/mail_accounts'),
-        create: (body) => siteClient.post('/user_api/mail_accounts', { body }),
+        list: async () => {
+            const res = await siteClient.get('/user_api/mail_accounts');
+            // Rows from before protocol support are IMAP accounts. Keep the
+            // response shape stable for the protocol-aware settings screen.
+            return {
+                ...res,
+                results: (res?.results || []).map((row) => ({
+                    ...row,
+                    protocol: row.protocol || 'imap',
+                    use_ssl: row.use_ssl ?? true,
+                    pop3_ssl: row.pop3_ssl ?? true,
+                    pop3_use_stls: row.pop3_use_stls ?? false,
+                })),
+            };
+        },
+        create: (body) => siteClient.post('/user_api/mail_accounts', { body: normalizeMailAccountBody(body) }),
         remove: (id) => siteClient.delete(`/user_api/mail_accounts/${encodeURIComponent(id)}`),
         toggle: (id) => siteClient.post(`/user_api/mail_accounts/${encodeURIComponent(id)}/toggle`),
     },

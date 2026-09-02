@@ -85,6 +85,7 @@ api.post("/api/unified/emails/:id/read", markRead);   // readonly 被 canAccess 
 api.post("/admin/unified/ingest", ingestHandler);
 api.get("/admin/unified/mail_accounts", mail_accounts.exportForAggregator);  // x-admin-auth 保护
 api.post("/admin/unified/mail_accounts/:id/status", mail_accounts.reportStatus);  // 聚合器 sync 回写
+// User-facing dispatch contracts live under /user_api; these admin routes are intentionally not exposed here.
 api.post("/admin/unified/keys", createKey);           // x-admin-auth 保护
 
 export default api;

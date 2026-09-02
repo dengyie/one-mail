@@ -160,6 +160,8 @@ function sidebarGuide(): DefaultTheme.SidebarItem[] {
                 { text: '配置 SMTP/IMAP 邮件客户端', link: 'feature/config-smtp-proxy' },
                 { text: 'Oauth2 第三方登录', link: 'feature/user-oauth2' },
                 { text: '自助接入外部邮箱归集', link: 'feature/user-external-mail' },
+                { text: '统一邮箱开发设计', link: 'feature/unified-mailbox-development' },
+                { text: 'ADR：Phase 1 统一邮件索引迁移（提议）', link: 'feature/adr-phase-1-unified-message-index-migration' }
             ]
         },
         {

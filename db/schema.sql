@@ -119,3 +119,79 @@ CREATE TABLE IF NOT EXISTS user_passkeys (
 CREATE INDEX IF NOT EXISTS idx_user_passkeys_user_id ON user_passkeys(user_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_passkeys_user_id_passkey_id ON user_passkeys(user_id, passkey_id);
+
+CREATE TABLE IF NOT EXISTS user_mail_accounts (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    label TEXT,
+    source TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    cred_enc TEXT NOT NULL,
+    protocol TEXT DEFAULT 'auto',
+    folders_json TEXT,
+    oauth_enc TEXT,
+    use_ssl INTEGER DEFAULT 1,
+    pop3_host TEXT,
+    pop3_port INTEGER,
+    pop3_ssl INTEGER,
+    pop3_use_stls INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    last_sync_at INTEGER,
+    last_error TEXT,
+    created_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_mail_accounts_user ON user_mail_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_mail_accounts_username ON user_mail_accounts(username);
+CREATE INDEX IF NOT EXISTS idx_user_mail_accounts_enabled ON user_mail_accounts(enabled);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_mail_accounts_username_uq
+    ON user_mail_accounts(username) WHERE enabled = 1;
+
+CREATE TABLE IF NOT EXISTS emails (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    account_id TEXT,
+    from_addr TEXT NOT NULL,
+    to_addr TEXT NOT NULL,
+    subject TEXT,
+    text_body TEXT,
+    html_body TEXT,
+    received_at INTEGER NOT NULL,
+    internal_date INTEGER,
+    headers_json TEXT,
+    is_read INTEGER DEFAULT 0,
+    flags_json TEXT,
+    attachments_json TEXT,
+    raw_ref TEXT,
+    imap_uid TEXT,
+    updated_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
+CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS mail_accounts (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    name TEXT,
+    config_json TEXT,
+    enabled INTEGER DEFAULT 1,
+    last_sync_at INTEGER,
+    created_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL DEFAULT 'readonly',
+    allowed_sources TEXT,
+    allowed_accounts TEXT,
+    enabled INTEGER DEFAULT 1,
+    created_at INTEGER,
+    last_used_at INTEGER
+);

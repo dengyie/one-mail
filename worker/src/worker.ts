@@ -20,6 +20,8 @@ import { getPasswords, getBooleanValue, getDomains, checkIsAdmin } from './utils
 import { checkAccessControl } from './ip_blacklist';
 import { recordAdminFailure, clearAdminFailures, decideAdminAuth, getAdminFailCount } from './unified/admin_lockout';
 
+import { resolveCorsOrigin } from './cors_policy';
+
 const API_PATHS = [
 	"/api/",
 	"/open_api/",
@@ -30,8 +32,16 @@ const API_PATHS = [
 ];
 
 const app = new Hono<HonoCustomType>()
-//cors
-app.use('/*', cors());
+// Restrict browser credentials to the deployed UI. External integrations use
+// explicit API credentials and do not need a wildcard browser origin.
+app.use('/*', cors({
+	origin: (origin, c) => resolveCorsOrigin(origin, c.env.FRONTEND_URL),
+	allowHeaders: [
+		'Content-Type', 'Authorization', 'x-user-token', 'x-user-access-token',
+		'x-custom-auth', 'x-admin-auth', 'x-lang', 'x-fingerprint',
+	],
+	allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+}));
 // error handler
 app.onError((err, c) => {
 	console.error(err)

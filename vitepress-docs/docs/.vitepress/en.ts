@@ -160,6 +160,8 @@ function sidebarGuide(): DefaultTheme.SidebarItem[] {
                 { text: 'Configure SMTP/IMAP Mail Client', link: 'feature/config-smtp-proxy' },
                 { text: 'OAuth2 Third-party Login', link: 'feature/user-oauth2' },
                 { text: 'Self-service External Mailbox Aggregation', link: 'feature/user-external-mail' },
+                { text: 'Unified Mailbox Development Design', link: 'feature/unified-mailbox-development' },
+                { text: 'ADR: Phase 1 Unified Message Index Migration (Proposed)', link: 'feature/adr-phase-1-unified-message-index-migration' }
             ]
         },
         {

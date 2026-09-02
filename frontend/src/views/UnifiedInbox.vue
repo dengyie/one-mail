@@ -10,7 +10,10 @@
         <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{{ t('subtitle') }}</p>
       </div>
       <div class="flex items-center gap-3">
-        <StatusIndicator :status="connStatus" :label="connLabel" />
+        <div class="flex flex-col items-end gap-0.5">
+          <StatusIndicator :status="connStatus" :label="connLabel" />
+          <span v-if="lastLoaded" class="text-[10px] text-zinc-400">{{ t('status.lastLoaded', { time: fmtTime(lastLoaded.getTime()) }) }}</span>
+        </div>
         <n-button size="small" :loading="loading" @click="refreshList" quaternary circle>
           <template #icon><n-icon><RefreshRound /></n-icon></template>
         </n-button>
@@ -415,6 +418,7 @@ const loadList = async () => {
     emails.value = listRes.results || []
     count.value = countRes.count || 0
     connected.value = true
+    lastLoaded.value = new Date()
   } catch (e) {
     listError.value = e.message || 'error'
     connected.value = false
@@ -494,6 +498,8 @@ const status = ref({ emails: 0, unread: 0, sources: [], accounts: [] })
 const statusLoading = ref(false)
 const statusError = ref('')
 const lastRefresh = ref(null)
+// This records the last successful read from the unified API, not upstream sync time.
+const lastLoaded = ref(null)
 
 const loadStatus = async () => {
   if (!hasAccess.value) return
@@ -513,6 +519,7 @@ const loadStatus = async () => {
       accounts: [...new Set(rows.map(r => r.account_id).filter(Boolean))],
     }
     lastRefresh.value = new Date()
+    lastLoaded.value = lastRefresh.value
     connected.value = true
   } catch (e) {
     statusError.value = e.message || 'error'

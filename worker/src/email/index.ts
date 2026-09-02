@@ -71,6 +71,7 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
 
     const message_id = message.headers.get("Message-ID");
     // save email
+    let savedToInbox = false;
     try {
         let success = false;
         if (getBooleanValue(env.ENABLE_MAIL_GZIP)) {
@@ -116,12 +117,17 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
             ).run());
         }
         if (!success) {
-            message.setReject(`Failed save message to ${toAddress}`);
             console.error(`Failed save message from ${message.from} to ${toAddress}`);
+        } else {
+            savedToInbox = true;
         }
     }
     catch (error) {
         console.error("save email error", error);
+    }
+    if (!savedToInbox) {
+        message.setReject(`Failed save message to ${toAddress}`);
+        return;
     }
 
     // one-mail: mirror into unified emails table (never block base ingest)
