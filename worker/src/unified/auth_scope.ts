@@ -12,6 +12,13 @@ export const resolveScope = async (
     if (userAuth) {
         if (userAuth.isAdmin) return rest;
         if (!userAuth.toAddrScope || userAuth.toAddrScope === "__none__") return null;
+        if (rest.to_addr) {
+            const allowed = new Set(userAuth.toAddrScope.split(",").map((s) => s.trim().toLowerCase()));
+            const requested = rest.to_addr.split(",").map((s) => s.trim()).filter(Boolean);
+            const valid = requested.filter((addr) => allowed.has(addr.toLowerCase()));
+            if (valid.length === 0) return null;
+            return { ...rest, to_addr: valid.join(",") };
+        }
         return { ...rest, to_addr: userAuth.toAddrScope };
     }
     return scopeQuery(c.get("apiKey"), rest);

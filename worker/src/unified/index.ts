@@ -3,7 +3,7 @@ import { Jwt } from "hono/utils/jwt";
 import { handleListQuery, commonGetUserRole } from "../common";
 import { buildEmailFilters } from "./unified_query";
 import { ingestHandler } from "./ingest";
-import { countEmails, verifCodes, markRead, toggleStar } from "./extra_endpoints";
+import { countEmails, verifCodes, markRead, toggleStar, getMetaOptions } from "./extra_endpoints";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess, userAddressScope } from "./api_keys";
 import { resolveScope, checkRowAccess } from "./auth_scope";
@@ -78,6 +78,7 @@ const getEmail = async (c: Context<HonoCustomType>) => {
 };
 
 api.get("/api/unified/emails", listEmails);
+api.get("/api/unified/meta", getMetaOptions);
 api.get("/api/unified/emails/:id", getEmail);
 api.get("/api/unified/count", countEmails);
 api.get("/api/unified/verifcodes", verifCodes);

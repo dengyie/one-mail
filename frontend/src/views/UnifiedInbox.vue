@@ -85,7 +85,7 @@
               clearable
               size="small"
               :placeholder="t('list.allAccounts')"
-              style="width: 180px"
+              style="min-width: 180px; max-width: 260px"
               @update:value="applyFilter"
             />
             <n-checkbox v-model:checked="unreadOnly" @update:checked="applyFilter">
@@ -406,19 +406,35 @@ const accountFilter = ref(null)
 const unreadOnly = ref(false)
 const starOnly = ref(false)
 
-const filterParams = computed(() => ({
-  source: sourceFilter.value || undefined,
-  account_id: accountFilter.value || undefined,
-  unread: unreadOnly.value ? 1 : undefined,
-  starred: starOnly.value ? 1 : undefined,
-  q: q.value.trim() || undefined,
-}))
+const filterParams = computed(() => {
+  const p = {
+    source: sourceFilter.value || undefined,
+    unread: unreadOnly.value ? 1 : undefined,
+    starred: starOnly.value ? 1 : undefined,
+    q: q.value.trim() || undefined,
+  }
+  if (accountFilter.value) {
+    if (accountFilter.value.includes('@')) {
+      p.to_addr = accountFilter.value
+    } else {
+      p.account_id = accountFilter.value
+    }
+  }
+  return p
+})
 const listParams = computed(() => ({
   ...filterParams.value,
   limit: PAGE_SIZE,
   offset: (page.value - 1) * PAGE_SIZE,
 }))
-const filterActive = computed(() => !!(filterParams.value.source || filterParams.value.account_id || filterParams.value.unread || filterParams.value.starred || filterParams.value.q))
+const filterActive = computed(() => !!(
+  filterParams.value.source ||
+  filterParams.value.account_id ||
+  filterParams.value.to_addr ||
+  filterParams.value.unread ||
+  filterParams.value.starred ||
+  filterParams.value.q
+))
 
 const loadList = async () => {
   if (!hasAccess.value) return
@@ -450,16 +466,88 @@ const setPage = (p) => { page.value = p; loadList() }
 const openDetail = (id) => router.push({ path: `/unified/${id}` })
 
 // 来源/账号筛选项
+const SOURCE_MAP = {
+  imap_qq: 'QQ 邮箱',
+  imap_gmail: 'Gmail',
+  imap_163: '网易 163',
+  imap_outlook: 'Outlook',
+  cloudflare: 'Cloudflare',
+  cf_routing: 'CF 邮件路由',
+}
+
+const userAccounts = ref([])
+const boundAddresses = ref([])
 const optionRows = ref([])
-const sourceOptions = computed(() => [...new Set(optionRows.value.map(r => r.source).filter(Boolean))].map(s => ({ label: s, value: s })))
-const accountOptions = computed(() => [...new Set(optionRows.value.map(r => r.account_id).filter(Boolean))].map(a => ({ label: a, value: a })))
+
+const sourceOptions = computed(() => {
+  const set = new Set()
+  userAccounts.value.forEach(a => { if (a.source) set.add(a.source) })
+  optionRows.value.forEach(r => { if (r.source) set.add(r.source) })
+  return [...set].map(s => ({
+    label: SOURCE_MAP[s] ? `${SOURCE_MAP[s]} (${s})` : s,
+    value: s,
+  }))
+})
+
+const accountOptions = computed(() => {
+  const list = []
+  const seenValues = new Set()
+
+  // 1. 用户配置的外部邮箱（最优先，显示 label + username）
+  userAccounts.value.forEach(a => {
+    const val = a.username || a.id
+    if (val && !seenValues.has(val)) {
+      seenValues.add(val)
+      const label = a.label ? `${a.label} (${a.username})` : a.username
+      list.push({ label, value: val })
+    }
+  })
+
+  // 2. 绑定的本站域名邮箱
+  boundAddresses.value.forEach(b => {
+    const name = typeof b === 'string' ? b : b?.name
+    if (name && !seenValues.has(name)) {
+      seenValues.add(name)
+      list.push({ label: `域名: ${name}`, value: name })
+    }
+  })
+
+  // 3. 从邮件样本中发现的 account_id / to_addr（兜底兼容）
+  optionRows.value.forEach(r => {
+    const val = r.to_addr || r.account_id
+    if (val && !seenValues.has(val)) {
+      seenValues.add(val)
+      list.push({ label: val, value: val })
+    }
+  })
+
+  return list
+})
+
 const loadOptions = async () => {
   if (!hasAccess.value) return
   try {
-    const res = await api.unified.listEmails({ limit: 300 })
-    optionRows.value = res.results || []
+    const promises = []
+    if (isLoggedIn.value) {
+      promises.push(
+        api.userMailAccounts.list().then(res => {
+          userAccounts.value = res.results || []
+        }).catch(() => {})
+      )
+      promises.push(
+        api.fetch('/user_api/bind_address').then(res => {
+          boundAddresses.value = res.results || []
+        }).catch(() => {})
+      )
+    }
+    promises.push(
+      api.unified.listEmails({ limit: 50, offset: 0 }).then(res => {
+        optionRows.value = res.results || []
+      }).catch(() => {})
+    )
+    await Promise.all(promises)
     connected.value = true
-  } catch { /* 列表页会展示具体错误 */ }
+  } catch { /* 容错静默降级 */ }
 }
 
 // ---- 验证码视图 ----
@@ -520,17 +608,18 @@ const loadStatus = async () => {
   statusLoading.value = true
   statusError.value = ''
   try {
-    const [total, unread, list] = await Promise.all([
+    const [total, unread] = await Promise.all([
       api.unified.count({}),
       api.unified.count({ unread: 1 }),
-      api.unified.listEmails({ limit: 500 }),
     ])
-    const rows = list.results || []
+    if (!accountOptions.value.length && !sourceOptions.value.length) {
+      await loadOptions()
+    }
     status.value = {
       emails: total.count || 0,
       unread: unread.count || 0,
-      sources: [...new Set(rows.map(r => r.source).filter(Boolean))],
-      accounts: [...new Set(rows.map(r => r.account_id).filter(Boolean))],
+      sources: sourceOptions.value.map(s => s.value),
+      accounts: accountOptions.value.map(a => a.label || a.value),
     }
     lastRefresh.value = new Date()
     lastLoaded.value = lastRefresh.value

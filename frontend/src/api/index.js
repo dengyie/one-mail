@@ -397,6 +397,7 @@ export const api = {
             const s = buildUnifiedQuery(params);
             return unifiedAuthFetch(`/api/unified/count${s ? `?${s}` : ''}`);
         },
+        meta: () => unifiedAuthFetch('/api/unified/meta'),
         verifcodes: (addr, freshMs) =>
             unifiedAuthFetch(`/api/unified/verifcodes?addr=${encodeURIComponent(addr)}&fresh=${freshMs}`),
         markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),

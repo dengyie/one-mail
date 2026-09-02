@@ -82,3 +82,18 @@ export const toggleStar = async (c: Context<HonoCustomType>) => {
     return c.json({ ok: true, is_starred: newStarred });
 };
 
+export const getMetaOptions = async (c: Context<HonoCustomType>) => {
+    const q = await resolveScope(c, {});
+    if (q === null) return c.json({ sources: [], accounts: [], to_addrs: [] });
+    const { where, params } = buildEmailFilters(q);
+    const { results } = await c.env.DB.prepare(
+        `SELECT DISTINCT source, account_id, to_addr FROM emails WHERE ${where} LIMIT 200`
+    ).bind(...params).all<{ source: string | null; account_id: string | null; to_addr: string | null }>();
+    const rows = results || [];
+    const sources = [...new Set(rows.map((r) => r.source).filter(Boolean))];
+    const accounts = [...new Set(rows.map((r) => r.account_id).filter(Boolean))];
+    const to_addrs = [...new Set(rows.map((r) => r.to_addr).filter(Boolean))];
+    return c.json({ sources, accounts, to_addrs });
+};
+
+
