@@ -4,7 +4,7 @@ import { CONSTANTS } from './constants'
 import { getJsonSetting } from './utils';
 import { CleanupSettings } from './models';
 import { executeCustomSqlCleanup } from './admin_api/cleanup_api';
-import { cleanupReadEmails } from './unified/retention';
+import { cleanupReadEmails, purgeOldEmailBodies } from './unified/retention';
 
 export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) {
     console.log("Scheduled event: ", event);
@@ -12,6 +12,13 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
         { env: env, } as Context<HonoCustomType>,
         CONSTANTS.AUTO_CLEANUP_KEY
     );
+    // one-mail: 自动清理 30 天以前非星标邮件的正文，保护 D1 存储配额
+    try {
+        const p = await purgeOldEmailBodies(env, 30);
+        console.log("one-mail body retention purge:", JSON.stringify(p));
+    } catch (e) {
+        console.error("one-mail body retention purge error", e);
+    }
     // one-mail: 清理 90 天前已读的统一邮件（每次 scheduled 触发都执行，不依赖 legacy auto_cleanup 设置）
     try {
         const r = await cleanupReadEmails(env, 90);

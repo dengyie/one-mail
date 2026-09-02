@@ -400,6 +400,11 @@ export const api = {
         verifcodes: (addr, freshMs) =>
             unifiedAuthFetch(`/api/unified/verifcodes?addr=${encodeURIComponent(addr)}&fresh=${freshMs}`),
         markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+        toggleStar: (id, isStarred) =>
+            unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/star`, {
+                method: 'POST',
+                body: typeof isStarred === 'number' ? { is_starred: isStarred } : {},
+            }),
     },
     admin: {
         // 走 siteClient（即原 apiFetch 通道）：自动附带 x-admin-auth + x-user-token 等站点鉴权头。

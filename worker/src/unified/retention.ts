@@ -3,6 +3,31 @@ export function cutoffMs(days: number, nowMs: number): number {
 }
 
 const RETENTION_DAYS = 90;
+const BODY_RETENTION_DAYS = 30;
+
+export async function purgeOldEmailBodies(
+    env: Bindings,
+    days: number = BODY_RETENTION_DAYS,
+    batchLimit: number = 1000
+): Promise<{ purged: number }> {
+    const cutoff = cutoffMs(days, Date.now());
+    let totalPurged = 0;
+    let changes = 0;
+    do {
+        const { meta } = await env.DB.prepare(
+            `UPDATE emails
+             SET html_body = NULL,
+                 text_body = '[Body purged for retention]'
+             WHERE COALESCE(internal_date, received_at) < ?
+               AND (is_starred IS NULL OR is_starred = 0)
+               AND (html_body IS NOT NULL OR text_body != '[Body purged for retention]')
+             LIMIT ?`
+        ).bind(cutoff, batchLimit).run();
+        changes = (meta as { changes?: number })?.changes ?? 0;
+        totalPurged += changes;
+    } while (changes >= batchLimit);
+    return { purged: totalPurged };
+}
 
 export async function cleanupReadEmails(env: Bindings, days: number = RETENTION_DAYS): Promise<{ deleted: number }> {
     const cutoff = cutoffMs(days, Date.now());

@@ -14,6 +14,13 @@ test("buildEmailFilters combines source/unread/q", () => {
   assert.deepEqual(f.params, ["imap_qq", "%验证码%", "%验证码%", "%验证码%"]);
 });
 
+test("buildEmailFilters supports starred filter", () => {
+  const f1 = buildEmailFilters({ starred: "1" });
+  assert.equal(f1.where, "1=1 AND is_starred = 1");
+  const f2 = buildEmailFilters({ starred: "0" });
+  assert.equal(f2.where, "1=1 AND (is_starred IS NULL OR is_starred = 0)");
+});
+
 test("buildEmailFilters account_id + date range", () => {
   const f = buildEmailFilters({ account_id: "a@qq.com", since: "100", until: "200" });
   assert.equal(f.where, "1=1 AND account_id = ? AND received_at >= ? AND received_at <= ?");

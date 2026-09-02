@@ -3,7 +3,7 @@ import { Jwt } from "hono/utils/jwt";
 import { handleListQuery, commonGetUserRole } from "../common";
 import { buildEmailFilters } from "./unified_query";
 import { ingestHandler } from "./ingest";
-import { countEmails, verifCodes, markRead } from "./extra_endpoints";
+import { countEmails, verifCodes, markRead, toggleStar } from "./extra_endpoints";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess, userAddressScope } from "./api_keys";
 import { resolveScope, checkRowAccess } from "./auth_scope";
@@ -62,7 +62,7 @@ const listEmails = async (c: Context<HonoCustomType>) => {
     if (q === null) return c.json({ results: [], count: 0 });
     const { where, params } = buildEmailFilters(q);
     return handleListQuery(c,
-        `SELECT id,source,account_id,from_addr,to_addr,subject,received_at,is_read,attachments_json FROM emails WHERE ${where}`,
+        `SELECT id,source,account_id,from_addr,to_addr,subject,received_at,is_read,is_starred,attachments_json FROM emails WHERE ${where}`,
         `SELECT count(*) as count FROM emails WHERE ${where}`,
         params, limit, offset, "received_at desc");
 };
@@ -82,6 +82,7 @@ api.get("/api/unified/emails/:id", getEmail);
 api.get("/api/unified/count", countEmails);
 api.get("/api/unified/verifcodes", verifCodes);
 api.post("/api/unified/emails/:id/read", markRead);   // readonly 被 canAccess 挡（POST）
+api.post("/api/unified/emails/:id/star", toggleStar); // readonly 被 canAccess 挡（POST）
 api.post("/admin/unified/ingest", ingestHandler);
 api.get("/admin/unified/mail_accounts", mail_accounts.exportForAggregator);  // x-admin-auth 保护
 api.post("/admin/unified/mail_accounts/:id/status", mail_accounts.reportStatus);  // 聚合器 sync 回写

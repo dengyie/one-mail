@@ -91,6 +91,9 @@
             <n-checkbox v-model:checked="unreadOnly" @update:checked="applyFilter">
               {{ t('list.unread') }}
             </n-checkbox>
+            <n-checkbox v-model:checked="starOnly" @update:checked="applyFilter">
+              ⭐ 仅星标
+            </n-checkbox>
             <div class="flex-1"></div>
             <span class="text-xs text-zinc-400 font-mono">{{ t('list.total', { count }) }}</span>
           </div>
@@ -118,6 +121,11 @@
                 class="w-2.5 h-2.5 rounded-full shrink-0 transition-all"
                 :class="row.is_read ? 'bg-transparent border border-zinc-300 dark:border-zinc-700' : 'bg-emerald-500 shadow-xs shadow-emerald-500/50'"
               ></span>
+              <span
+                v-if="row.is_starred"
+                class="text-amber-400 text-sm shrink-0"
+                title="已星标（受保护，不会被自动清理正文）"
+              >⭐</span>
               <div class="min-w-0 flex-1 space-y-1">
                 <div class="flex items-baseline gap-2 flex-wrap">
                   <span class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
@@ -347,14 +355,18 @@ const hasKey = computed(() => !!unifiedApiKey.value?.trim())
 const hasAccess = computed(() => isLoggedIn.value || hasKey.value)
 
 // Quick filter chips
-const quickFilterChips = ['📬 全部邮件', '🟢 仅未读', '🔑 提取验证码', '🔄 刷新列表']
+const quickFilterChips = ['📬 全部邮件', '⭐ 星标邮件', '🟢 仅未读', '🔑 提取验证码', '🔄 刷新列表']
 
 const handleSelectChip = (chip) => {
   if (chip.includes('全部邮件')) {
     unreadOnly.value = false
+    starOnly.value = false
     sourceFilter.value = null
     accountFilter.value = null
     q.value = ''
+    applyFilter()
+  } else if (chip.includes('星标邮件')) {
+    starOnly.value = true
     applyFilter()
   } else if (chip.includes('仅未读')) {
     unreadOnly.value = true
@@ -392,11 +404,13 @@ const q = ref('')
 const sourceFilter = ref(null)
 const accountFilter = ref(null)
 const unreadOnly = ref(false)
+const starOnly = ref(false)
 
 const filterParams = computed(() => ({
   source: sourceFilter.value || undefined,
   account_id: accountFilter.value || undefined,
   unread: unreadOnly.value ? 1 : undefined,
+  starred: starOnly.value ? 1 : undefined,
   q: q.value.trim() || undefined,
 }))
 const listParams = computed(() => ({
@@ -404,7 +418,7 @@ const listParams = computed(() => ({
   limit: PAGE_SIZE,
   offset: (page.value - 1) * PAGE_SIZE,
 }))
-const filterActive = computed(() => !!(filterParams.value.source || filterParams.value.account_id || filterParams.value.unread || filterParams.value.q))
+const filterActive = computed(() => !!(filterParams.value.source || filterParams.value.account_id || filterParams.value.unread || filterParams.value.starred || filterParams.value.q))
 
 const loadList = async () => {
   if (!hasAccess.value) return

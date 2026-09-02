@@ -40,6 +40,17 @@
           </button>
 
           <n-button
+            size="small"
+            quaternary
+            :loading="starring"
+            :type="email.is_starred ? 'warning' : 'default'"
+            @click="toggleStar"
+            :title="email.is_starred ? '取消星标（将参与 30 天自动清理）' : '星标邮件（永久保留正文，不被自动清理）'"
+          >
+            <span>{{ email.is_starred ? '⭐ 已星标' : '☆ 设为星标' }}</span>
+          </n-button>
+
+          <n-button
             v-if="!email.is_read"
             size="small"
             type="primary"
@@ -83,6 +94,7 @@
             {{ email.subject || t('list.noSubject') }}
           </h1>
           <div class="flex flex-wrap items-center gap-2">
+            <n-tag v-if="email.is_starred" size="small" type="warning" :bordered="false">⭐ 已星标保护</n-tag>
             <n-tag size="small" :bordered="false" type="info" class="font-mono">{{ email.source }}</n-tag>
             <n-tag v-if="email.account_id" size="small" :bordered="false" class="font-mono">{{ email.account_id }}</n-tag>
             <n-tag v-if="!email.is_read" size="small" type="warning" :bordered="false">{{ t('list.unread') }}</n-tag>
@@ -167,6 +179,7 @@ const email = ref(null)
 const loading = ref(true)
 const error = ref('')
 const marking = ref(false)
+const starring = ref(false)
 const hasAccess = computed(() => !!userJwt.value?.trim() || !!unifiedApiKey.value?.trim())
 
 // AI assistant state
@@ -282,6 +295,24 @@ const markRead = async () => {
     message.error(e.message || 'error')
   } finally {
     marking.value = false
+  }
+}
+
+const toggleStar = async () => {
+  if (!email.value) return
+  starring.value = true
+  try {
+    const res = await api.unified.toggleStar(email.value.id)
+    email.value.is_starred = res.is_starred
+    if (res.is_starred) {
+      message.success('已标为星标邮件（正文永久保留）')
+    } else {
+      message.info('已取消星标')
+    }
+  } catch (e) {
+    message.error(e.message || '操作失败')
+  } finally {
+    starring.value = false
   }
 }
 

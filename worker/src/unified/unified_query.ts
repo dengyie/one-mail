@@ -15,6 +15,8 @@ export function buildEmailFilters(q: Record<string, string | undefined>): EmailF
     if (q.to_addr)     inClause("to_addr", q.to_addr);
     if (q.unread === "1") { clauses.push("is_read = 0"); }
     else if (q.unread === "0") { clauses.push("is_read = 1"); }
+    if (q.starred === "1") { clauses.push("is_starred = 1"); }
+    else if (q.starred === "0") { clauses.push("(is_starred IS NULL OR is_starred = 0)"); }
     if (q.since)       { clauses.push("received_at >= ?");  params.push(Number(q.since)); }
     if (q.until)       { clauses.push("received_at <= ?");  params.push(Number(q.until)); }
     if (q.q) {
