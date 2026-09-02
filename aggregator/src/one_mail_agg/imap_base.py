@@ -7,8 +7,8 @@ from .state import SyncState
 
 log = logging.getLogger("one-mail-agg")
 
-# 单轮最多拉取的邮件数：明显小于远程邮箱总量，避免首次全量同步 fetch 卡死。
-BATCH_SIZE = 200
+# 单轮最多拉取的邮件数：设置为 50 封（兼顾网络传输时间与 D1 写入上限，避免大批次请求顶满 60s 导致 Worker 524 / 503 异常）。
+BATCH_SIZE = 50
 # 单轮累计原始字节预算：超大附件邮箱（QQ 常见几十 MB 大邮件）一轮抓太多
 # 会把 RFC822 全塞进内存触发 OOM（pxed 实测：66MB+65MB 单封在窗口内直接 500MB+）。
 BATCH_BYTES = 64 * 1024 * 1024

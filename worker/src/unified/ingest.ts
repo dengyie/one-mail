@@ -30,10 +30,17 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
 
 export async function insertEmails(c: Context<HonoCustomType>, emails: Record<string, unknown>[]): Promise<{ inserted: number; skipped: number }> {
     let inserted = 0, skipped = 0;
-    for (const e of emails) {
+    if (emails.length === 0) return { inserted, skipped };
+
+    const batchStatements = emails.map((e) => {
         const params = toEmailInsertParams(e, crypto.randomUUID(), Date.now());
-        const { meta } = await insertEmail(c, params);
-        const changes = (meta as { changes?: number })?.changes ?? 0;
+        return c.env.DB.prepare(INSERT_EMAIL_SQL).bind(...(params as never[]));
+    });
+
+    // Cloudflare D1 batch executes all statements in a single round-trip transaction
+    const results = await c.env.DB.batch(batchStatements);
+    for (const r of results) {
+        const changes = (r.meta as { changes?: number })?.changes ?? 0;
         if (changes > 0) inserted++; else skipped++;
     }
     return { inserted, skipped };
