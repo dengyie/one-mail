@@ -85,6 +85,17 @@ def fetch_new_pop3_messages(conn, account: AccountConfig, folder: str,
     if not pending:
         return []
 
+    # 首次同步保护（initial_sync_limit）：若从未同步过且待拉邮件超过 limit，
+    # 仅挑最新的 initial_sync_limit 封，并将更早的 UIDL 标记为 seen，防止打爆 D1 / OOM。
+    initial_limit = getattr(account, "initial_sync_limit", 0)
+    if len(seen) == 0 and initial_limit > 0 and len(pending) > initial_limit:
+        older = pending[:-initial_limit]
+        for _n, uidl in older:
+            state.add_pop3_seen(account.id, folder, uidl)
+        pending = pending[-initial_limit:]
+        log.info("pop3 account=%s initial sync limit applied: syncing latest %d msgs, marking %d older seen",
+                 account.id, len(pending), len(older))
+
     # LIST 探测单封大小，过滤超大
     sizes = _list_sizes(conn)          # str(msg_num) -> int bytes
 

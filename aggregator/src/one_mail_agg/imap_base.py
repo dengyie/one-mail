@@ -71,6 +71,16 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
     uids = [u for u in uids if u > last_uid]
     if not uids:
         return []
+
+    # 首次同步保护（initial_sync_limit）：若上次 last_uid 为 0 且待拉邮件超过 limit，
+    # 仅挑最新的 initial_sync_limit 封，并将已跳过的旧邮件推过水印，防止打爆 D1 / OOM。
+    if last_uid == 0 and getattr(account, "initial_sync_limit", 0) > 0 and len(uids) > account.initial_sync_limit:
+        skipped_uids = uids[:-account.initial_sync_limit]
+        uids = uids[-account.initial_sync_limit:]
+        log.info("account=%s initial sync limit applied: syncing latest %d msgs, skipping %d older msgs",
+                 account.id, len(uids), len(skipped_uids))
+        if skipped_uids:
+            state.set_last_uid_max(account.id, folder, max(skipped_uids))
     # 大批量收件箱：一次只取一个"窗口"。数量上限 BATCH_SIZE，
     # 另有累计字节上限 BATCH_BYTES——超大附件邮箱（几十 MB 单封）若按数量
     # 取满会把整批 RFC822 全塞内存触发 OOM。先探测 SIZE 再挑最小的 uid

@@ -79,6 +79,23 @@ def test_fetch_new_picks_unseen(tmp_path):
     assert got[1].internal_date_ms is None        # 无 Date 头 → None
 
 
+def test_pop3_initial_sync_limit_bounds_to_latest(tmp_path):
+    """POP3 首次同步若超过 initial_sync_limit，仅挑最新的 N 封，旧的标记为 seen。"""
+    st = SyncState(str(tmp_path / "st.json"))
+    raw_list = [(f"UL-{i}", _raw(f"sub-{i}"), 100) for i in range(1, 101)]  # 100 封
+    conn = FakePOP3(raw_list)
+    acc = AccountConfig(id="163-main", source="imap_163", host="imap.163.com", port=993,
+                        username="u@163.com", password="p", folders=["INBOX"],
+                        protocol="pop3", pop3_host="pop.163.com", pop3_port=995,
+                        pop3_ssl=True, initial_sync_limit=20)
+    got = fetch_new_pop3_messages(conn, acc, "INBOX", st)
+    assert len(got) == 20
+    assert got[0].uidl == "UL-81"
+    assert got[-1].uidl == "UL-100"
+    # 前 80 封已被标记为 seen
+    assert len(st.get_pop3_seen("163-main", "INBOX")) == 80
+
+
 def test_pop3_seen_does_not_resync_after_upload(tmp_path):
     """上传成功后 sync 标记 seen，下一轮不再出现。"""
     st = SyncState(str(tmp_path / "st.json"))

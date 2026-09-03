@@ -62,9 +62,9 @@ const listEmails = async (c: Context<HonoCustomType>) => {
     if (q === null) return c.json({ results: [], count: 0 });
     const { where, params } = buildEmailFilters(q);
     return handleListQuery(c,
-        `SELECT id,source,account_id,from_addr,to_addr,subject,received_at,is_read,is_starred,attachments_json FROM emails WHERE ${where}`,
+        `SELECT id,source,account_id,from_addr,to_addr,subject,COALESCE(internal_date, received_at) as received_at,internal_date,is_read,is_starred,attachments_json FROM emails WHERE ${where}`,
         `SELECT count(*) as count FROM emails WHERE ${where}`,
-        params, limit, offset, "received_at desc");
+        params, limit, offset, "COALESCE(internal_date, received_at) desc");
 };
 
 const getEmail = async (c: Context<HonoCustomType>) => {

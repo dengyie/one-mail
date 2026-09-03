@@ -144,10 +144,10 @@
           </div>
 
           <n-pagination
-            v-if="count > pageSize"
+            v-if="count > PAGE_SIZE"
             :page="page"
-            :page-count="Math.ceil(count / pageSize)"
-            :page-size="pageSize"
+            :page-count="Math.ceil(count / PAGE_SIZE)"
+            :page-size="PAGE_SIZE"
             @update:page="setPage"
             class="justify-center pt-2"
           />

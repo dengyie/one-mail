@@ -3,9 +3,10 @@ from one_mail_agg.state import SyncState
 from one_mail_agg.config import AccountConfig
 
 
-def acc():
+def acc(initial_sync_limit: int = 0):
     return AccountConfig(id="qq", source="imap_qq", host="imap.qq.com", port=993,
-                         username="u", password="p", folders=["INBOX"])
+                         username="u", password="p", folders=["INBOX"],
+                         initial_sync_limit=initial_sync_limit)
 
 
 def test_make_imap_uid_format():
@@ -61,6 +62,23 @@ def test_fetch_resets_on_uidvalidity_change(tmp_path):
     msgs = fetch_new_messages(client, acc(), "INBOX", state)
     assert [m.uid for m in msgs] == [10, 11]        # 全量重拉
     assert state.get_uidvalidity("qq", "INBOX") == 2
+
+
+def test_fetch_initial_sync_limit_bounds_to_latest(tmp_path):
+    """首次同步且邮件量超过 initial_sync_limit 时，只拉最新的 N 封，旧邮件推过水印。"""
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    big = list(range(1, 201))  # 200 封邮件
+    client = FakeClient(big)
+    account = AccountConfig(id="qq", source="imap_qq", host="imap.qq.com", port=993,
+                            username="u", password="p", folders=["INBOX"],
+                            initial_sync_limit=50)
+    msgs = fetch_new_messages(client, account, "INBOX", state)
+    assert len(msgs) == 50
+    assert msgs[0].uid == 151
+    assert msgs[-1].uid == 200
+    # 旧邮件已推过水印
+    assert state.get_last_uid("qq", "INBOX") == 150
 
 
 def test_fetch_batches_large_mailbox(tmp_path):

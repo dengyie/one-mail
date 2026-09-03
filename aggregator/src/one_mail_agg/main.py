@@ -16,9 +16,8 @@ log = logging.getLogger("one-mail-agg")
 
 def get_merged_accounts(config, state):
     def collision_key(a):
-        return (a.host, a.port, a.username, a.use_ssl, a.protocol,
-                a.pop3_host, a.pop3_port, a.pop3_ssl, a.pop3_use_stls,
-                tuple(a.folders))
+        # 严格按 (host, username) 归一化去重，防止相同邮箱在 config.json 和 user_mail_accounts 中被重复同步两遍打爆 D1
+        return (str(a.host).strip().lower(), str(a.username).strip().lower())
 
     accounts = list(config.accounts)
     seen = {collision_key(a) for a in accounts}

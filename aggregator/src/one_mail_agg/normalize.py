@@ -102,7 +102,7 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
         "subject": _dec(msg.get("Subject", "")),
         "text_body": text,
         "html_body": html,
-        "received_at": now_ms or int(time.time() * 1000),
+        "received_at": internal_date_ms or now_ms or int(time.time() * 1000),
         "internal_date": internal_date_ms,
         "headers_json": json.dumps(
             {k: _header_json_stringify(v) for k, v in msg.items()}, ensure_ascii=False

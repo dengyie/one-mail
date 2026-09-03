@@ -22,6 +22,7 @@ class AccountConfig:
     pop3_port: int = 0
     pop3_ssl: bool | None = None    # None 表示继承 use_ssl
     pop3_use_stls: bool = False
+    initial_sync_limit: int = 50  # 首次同步时最多拉取最新 N 封（0 为不限/全量）
 
     def __post_init__(self):
         # Keep protocol semantics identical for local config and Worker payloads.
