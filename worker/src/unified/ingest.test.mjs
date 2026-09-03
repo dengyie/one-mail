@@ -29,3 +29,30 @@ test("C1: toEmailInsertParams rejects missing account_id (fail-closed)", () => {
   }, "id", 1);
   assert.equal(ok[2], "qq");
 });
+
+test("insertEmails prepares batch statements using INSERT_EMAIL_SQL", async () => {
+  const { insertEmails } = await import("./ingest.ts");
+  const calls = [];
+  const fakeEnv = {
+    DB: {
+      prepare(sql) {
+        calls.push(sql);
+        return {
+          bind(...params) {
+            return { sql, params };
+          },
+        };
+      },
+      async batch(stmts) {
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    },
+  };
+  const fakeContext = { env: fakeEnv };
+  const res = await insertEmails(fakeContext, [
+    { source: "imap_qq", account_id: "qq", from_addr: "a@b.com", to_addr: "me@qq.com" },
+  ]);
+  assert.equal(res.inserted, 1);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /INSERT OR IGNORE INTO emails/);
+});

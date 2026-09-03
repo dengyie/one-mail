@@ -1,5 +1,5 @@
 import { Context } from "hono";
-import { insertEmail } from "../core/ingest.ts";
+import { insertEmail, INSERT_EMAIL_SQL } from "../core/ingest.ts";
 
 export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowMs: number): unknown[] {
     // from_addr/to_addr/account_id 必须非空：account_id=NULL 的行会被

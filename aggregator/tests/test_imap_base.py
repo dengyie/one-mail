@@ -88,21 +88,21 @@ def test_fetch_batches_large_mailbox(tmp_path):
     state.set_last_uid("qq", "INBOX", 0)
     big = list(range(1, BATCH_SIZE * 3 + 1))          # 600 封
     client = FakeClient(big)
-    # 第一轮：最低 200 封（1..200），last_uid 推进到 200
+    # 第一轮：最低 BATCH_SIZE 封（1..50），last_uid 推进到 50
     msgs = fetch_new_messages(client, acc(), "INBOX", state)
     assert len(msgs) == BATCH_SIZE
     assert msgs[0].uid == 1
-    assert msgs[-1].uid == BATCH_SIZE                 # 200
+    assert msgs[-1].uid == BATCH_SIZE
     # 落库端推进 watermark（模拟 sync.py 行为）
-    state.set_last_uid("qq", "INBOX", max(m.uid for m in msgs))
-    # 第二轮：201..400
+    state.set_last_uid_max("qq", "INBOX", max(m.uid for m in msgs))
+    # 第二轮：51..100
     msgs2 = fetch_new_messages(client, acc(), "INBOX", state)
     assert [m.uid for m in msgs2] == list(range(BATCH_SIZE + 1, BATCH_SIZE * 2 + 1))
-    state.set_last_uid("qq", "INBOX", max(m.uid for m in msgs2))
-    # 第三轮：401..600（末窗）
+    state.set_last_uid_max("qq", "INBOX", max(m.uid for m in msgs2))
+    # 第三轮：101..150
     msgs3 = fetch_new_messages(client, acc(), "INBOX", state)
     assert [m.uid for m in msgs3] == list(range(BATCH_SIZE * 2 + 1, BATCH_SIZE * 3 + 1))
-    state.set_last_uid("qq", "INBOX", max(m.uid for m in msgs3))
+    state.set_last_uid_max("qq", "INBOX", max(m.uid for m in msgs3))
     # 全部收敛后再跑一轮：无新邮件
     assert fetch_new_messages(client, acc(), "INBOX", state) == []
 

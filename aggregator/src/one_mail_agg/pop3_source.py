@@ -90,8 +90,8 @@ def fetch_new_pop3_messages(conn, account: AccountConfig, folder: str,
     initial_limit = getattr(account, "initial_sync_limit", 0)
     if len(seen) == 0 and initial_limit > 0 and len(pending) > initial_limit:
         older = pending[:-initial_limit]
-        for _n, uidl in older:
-            state.add_pop3_seen(account.id, folder, uidl)
+        older_uidls = [uidl for _n, uidl in older]
+        state.add_pop3_seen_many(account.id, folder, older_uidls)
         pending = pending[-initial_limit:]
         log.info("pop3 account=%s initial sync limit applied: syncing latest %d msgs, marking %d older seen",
                  account.id, len(pending), len(older))
