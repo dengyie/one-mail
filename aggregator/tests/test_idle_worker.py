@@ -1,7 +1,14 @@
 from unittest.mock import MagicMock
 from one_mail_agg.config import Config, AccountConfig
 from one_mail_agg.state import SyncState
-from one_mail_agg.idle_worker import ImapIdleWorker, ensure_idle_workers, _active_idle_workers
+from one_mail_agg.idle_worker import (
+    ImapIdleWorker,
+    ensure_idle_workers,
+    _resolve_client_factory,
+    _active_idle_workers,
+)
+from one_mail_agg.oauth import oauth_client_factory
+from one_mail_agg.sync import default_client_factory
 
 
 def test_idle_worker_lifecycle(tmp_path):
@@ -47,3 +54,39 @@ def test_idle_worker_lifecycle(tmp_path):
 
     # 验证确实触发了 sync
     assert len(sync_calls) >= 1
+
+
+def test_resolve_client_factory_oauth_uses_oauth_factory():
+    """OAuth 账号（含新 MSA/Hotmail 个人号）的 IDLE 必须走 OAuth 工厂（XOAUTH2）。"""
+    acc = AccountConfig(
+        id="hotmail-main",
+        source="imap_outlook",
+        host="outlook.office365.com",
+        port=993,
+        username="x@hotmail.com",
+        password="p",
+        oauth={"provider": "msa", "client_id": "c", "refresh_token": "rt"},
+    )
+    factory = _resolve_client_factory(acc)
+    assert factory is oauth_client_factory(acc) or callable(factory)
+    # 关键：工厂不是默认基础登录工厂（否则 OAuth 账号 IDLE 会 basic auth 失败）
+    assert factory is not default_client_factory
+
+
+def test_resolve_client_factory_basic_uses_default():
+    """无 OAuth 账号保持默认基础登录工厂（qq/163 行为不变）。"""
+    acc = AccountConfig(
+        id="qq", source="imap_qq", host="imap.qq.com", port=993,
+        username="u@qq.com", password="pwd",
+    )
+    assert _resolve_client_factory(acc) is default_client_factory
+
+
+def test_resolve_client_factory_unknown_provider_falls_back():
+    """未知 OAuth provider 不抛异常，回退默认基础登录（账号级隔离，不拖垮 IDLE 线程）。"""
+    acc = AccountConfig(
+        id="bad", source="imap_custom", host="imap.example.com", port=993,
+        username="u@example.com", password="pwd",
+        oauth={"provider": "totally-unknown", "client_id": "c", "refresh_token": "rt"},
+    )
+    assert _resolve_client_factory(acc) is default_client_factory

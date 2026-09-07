@@ -8,6 +8,9 @@
     {"id": "163-main", "source": "imap_163", "host": "imap.163.com", "port": 993,
      "username": "you@163.com", "password": "<163授权码>", "folders": ["INBOX"], "use_ssl": true,
      "protocol": "auto",
-     "pop3_host": "pop.163.com", "pop3_port": 995, "pop3_ssl": true}
+     "pop3_host": "pop.163.com", "pop3_port": 995, "pop3_ssl": true},
+    {"id": "hotmail-main", "source": "imap_outlook", "host": "outlook.office365.com", "port": 993,
+     "username": "you@hotmail.com", "password": "ignored-by-oauth", "folders": ["INBOX"], "use_ssl": true,
+     "oauth": {"provider": "msa", "client_id": "<PUBLIC_CLIENT_ID>", "refresh_token": "<长活 refresh_token>"}}
   ]
 }

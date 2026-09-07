@@ -42,6 +42,15 @@ Create request body:
 
 `source` enum: `imap_gmail` / `imap_outlook` / `imap_qq` / `imap_163` / `imap_custom`. Connect operations are rate-limited at 5/min/IP.
 
+> [!NOTE] Personal Hotmail / Outlook.com (MSA) vs organizational accounts
+> Microsoft has disabled IMAP Basic authentication in all tenants, so personal
+> `@hotmail.com` / `@outlook.com` / `@live.com` accounts can **only** use OAuth2/XOAUTH2
+> (scope `imap.outlook.office.com/IMAP.AccessAsUser.All offline_access`). On the aggregator
+> side `oauth.provider` accepts `msa` / `hotmail` / `outlook_personal` (all normalized to
+> `msa`, going through the `/consumers` public client with no `client_secret` required).
+> Organizational (work/school) accounts still use `outlook` + `client_secret`. From the guide and
+> full design see [[adr-hotmail-oauth-support]] and `aggregator/scripts/msa_authorize.py`.
+
 ## Connection-count quota
 
 The number of external mailboxes a user may connect defaults to **5** and is configurable per role (the "Max External Mailboxes" column on the admin "Role Address Config" page):

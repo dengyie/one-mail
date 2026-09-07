@@ -18,11 +18,13 @@ const ALLOWED_SOURCES = new Set([
 const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
 
 // OAuth provider 白名单（review W1-3）。唯一依据 = aggregator
-// `aggregator/src/one_mail_agg/oauth.py` 的 `_TOKEN_FN` 支持集：目前 gmail / outlook
-// 两个 provider（其它 provider 在 `oauth_client_factory` 里 `_TOKEN_FN[provider]`
-// 会直接 KeyError，冻结整轮聚合器同步）。未知 provider 一律 400 拒绝落库。
-// config 侧 provider 字符串由聚合器定义，不属 shared 契约，故内联于此。
-const OAUTH_PROVIDERS = new Set(["gmail", "outlook"]);
+// `aggregator/src/one_mail_agg/oauth.py` 的 `_TOKEN_FN` 支持集：gmail / outlook
+// （组织） / msa（个人 Hotmail/Outlook.com，含别名 hotmail / outlook_personal）。
+// 其它 provider 在 `oauth_client_factory` 里 `_TOKEN_FN[provider]` 会直接 KeyError，
+// 冻结整轮聚合器同步（unknown provider 在 main.py 已做账号级隔离，但落库前仍 400）。
+// config 侧 provider 字符串由聚合器定义，聚合器侧 normalize_provider 会把
+// hotmail / outlook_personal 归一化为 msa；白名单应同时放行三者以免误拒。
+const OAUTH_PROVIDERS = new Set(["gmail", "outlook", "msa", "hotmail", "outlook_personal"]);
 
 const parseOptionalBoolean = (value: unknown, fallback: boolean | null): boolean | null | undefined => {
     if (value == null || value === "") return fallback;

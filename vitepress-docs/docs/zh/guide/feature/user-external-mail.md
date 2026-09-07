@@ -42,6 +42,13 @@ POST /user_api/mail_accounts/:id/toggle # 启停
 
 `source` 枚举：`imap_gmail` / `imap_outlook` / `imap_qq` / `imap_163` / `imap_custom`。接入操作 5 次/分钟/IP 限流。
 
+> [!NOTE] Hotmail / Outlook.com 个人号（MSA）与组织号的区别
+> 微软已对所有租户禁用 IMAP 基础认证，个人 `@hotmail.com` / `@outlook.com` / `@live.com`
+> 账号**只能**走 OAuth2/XOAUTH2（scope `imap.outlook.office.com/IMAP.AccessAsUser.All offline_access`）。
+> 聚合器侧 `oauth.provider` 可填 `msa` / `hotmail` / `outlook_personal`（均归一化为 `msa`，走 `/consumers`
+> 公开客户端，无需 client_secret）。组织号（work/school）仍用 `outlook` + `client_secret`。
+> 引导脚本与完整设计见 [[adr-hotmail-oauth-support]] 与 `aggregator/scripts/msa_authorize.py`。
+
 ## 接入数量配额
 
 每用户可接入的外部邮箱数量上限默认 **5**，按角色可配（admin 后台「角色地址配置」页的「外部邮箱上限」列）：

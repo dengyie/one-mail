@@ -9,6 +9,7 @@ from imapclient.exceptions import IMAPClientError, IMAPClientAbortError
 from .config import Config, AccountConfig
 from .state import SyncState
 from .sync import sync_imap, default_client_factory
+from .oauth import oauth_client_factory
 
 log = logging.getLogger("one-mail-agg")
 
@@ -129,10 +130,24 @@ class ImapIdleWorker(threading.Thread):
         log.info("IMAP IDLE worker stopped for account %s", self.account.id)
 
 
+def _resolve_client_factory(acc: AccountConfig):
+    """OAuth 账号走 oauth_client_factory（XOAUTH2/用户 token），否则默认基础登录。
+
+    未知/畸形 provider 不在此处抛异常（与 sync 路径一致：账号级隔离，不拖垮整轮）。
+    """
+    if acc.oauth is not None:
+        try:
+            return oauth_client_factory(acc)
+        except (KeyError, AttributeError, TypeError):
+            log.error("entry %s: unsupported oauth provider for IDLE, falling back to basic login", acc.id)
+    return default_client_factory
+
+
 def ensure_idle_workers(config: Config, state: SyncState, accounts: list[AccountConfig]) -> None:
     """保证所有支持且配置为 IMAP 协议的账号都有常驻 IDLE 线程在监听。
 
-    非 auto 或纯 POP3 账号不启动 IDLE。
+    非 auto 或纯 POP3 账号不启动 IDLE。OAuth 账号（含 Hotmail/Outlook 个人号）
+    使用对应 OAuth 工厂以支持 XOAUTH2 认证。
     """
     with _lock:
         current_ids = {a.id for a in accounts}
@@ -151,6 +166,6 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                 continue
 
             if acc.id not in _active_idle_workers or not _active_idle_workers[acc.id].is_alive():
-                worker = ImapIdleWorker(config, acc, state)
+                worker = ImapIdleWorker(config, acc, state, client_factory=_resolve_client_factory(acc))
                 worker.start()
                 _active_idle_workers[acc.id] = worker

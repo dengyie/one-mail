@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |聚合器| 新增 Hotmail / Outlook.com **个人号（MSA）** OAuth2/XOAUTH2 接入：微软已对所有租户禁用 IMAP 基础认证（含 App Password 部分账号不可用），`aggregator/oauth.py` 新增 `msa_access_token`（走 `/consumers` 租户 + 公开客户端，无需 client_secret，scope `IMAP.AccessAsUser.All offline_access`），复用既有 `oauth2_login` XOAUTH2 通道收信；`normalize_provider` 把 `hotmail`/`outlook_personal` 归一化为 `msa`，`provider` 三写法都可用；worker `user_api/mail_accounts.ts` 的 `OAUTH_PROVIDERS` 加入 `msa`/`hotmail`/`outlook_personal`；新增 `aggregator/scripts/msa_authorize.py`（Device Code Flow）一次性产出 `refresh_token` 引导脚本；`config.example.json` 与部署 `README` 补充个人号接入；组织号仍走 `outlook`+secret 不破坏。测试新增 MSA 分支 10 项，聚合器 126 通过 / worker 127 通过 / vitepress 构建通过。
+
 - feat: |Worker| Phase 0 外部邮箱连接测试与立即同步接口：新增按用户归属校验的 `test-connection` / `sync` 路由；当前 Worker 无 VPS/队列派发能力时明确返回 `501 unsupported`，绝不伪造连接成功或 queued。
 
 ### Features

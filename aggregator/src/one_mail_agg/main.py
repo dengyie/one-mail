@@ -6,7 +6,7 @@ import random
 from .config import load_config
 from .state import SyncState
 from .sync import sync_account, default_client_factory
-from .oauth import oauth_client_factory
+from .oauth import oauth_client_factory, normalize_provider
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .idle_worker import ensure_idle_workers
 
@@ -56,9 +56,12 @@ def run_once(config_path: str) -> dict:
         try:
             factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
         except (KeyError, AttributeError, TypeError):
-            provider = (account.oauth.get("provider")
-                        if isinstance(account.oauth, dict)
-                        else "<malformed:not-dict>") or "<missing>"
+            provider = normalize_provider(
+                account.oauth.get("provider")
+                if isinstance(account.oauth, dict)
+                else None) or (
+                account.oauth.get("provider")
+                if isinstance(account.oauth, dict) else "<malformed:not-dict>") or "<missing>"
             results[account.id] = {"error": f"provider unsupported: {provider}"}
             log.error("sync %s failed: provider unsupported: %s", account.id, provider)
             state.record_failure(account.id)
