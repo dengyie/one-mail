@@ -237,11 +237,7 @@ async function ensurePop3Columns(db: D1Database): Promise<string[]> {
 
 async function ensureUnifiedColumns(db: D1Database): Promise<string[]> {
     const changes: string[] = [];
-    await db.exec(`CREATE TABLE IF NOT EXISTS scheduled_locks (
-        name TEXT PRIMARY KEY,
-        owner TEXT NOT NULL,
-        locked_until INTEGER NOT NULL
-    )`);
+    await db.exec(`CREATE TABLE IF NOT EXISTS scheduled_locks (name TEXT PRIMARY KEY, owner TEXT NOT NULL, locked_until INTEGER NOT NULL)`);
     if (await ensureColumn(db, 'emails', 'is_starred', 'INTEGER DEFAULT 0')) {
         changes.push('emails.is_starred');
     }
