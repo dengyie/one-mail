@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS emails (
     internal_date INTEGER,
     headers_json TEXT,
     is_read INTEGER DEFAULT 0,
+    is_starred INTEGER DEFAULT 0,
     flags_json TEXT,
     attachments_json TEXT,
     raw_ref TEXT,
@@ -172,6 +173,12 @@ CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_order_received ON emails(COALESCE(internal_date, received_at) DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_read_received ON emails(is_read, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_star_received ON emails(is_starred, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_order_received ON emails(to_addr, COALESCE(internal_date, received_at) DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_read_received ON emails(to_addr, is_read, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_star_received ON emails(to_addr, is_starred, received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS mail_accounts (

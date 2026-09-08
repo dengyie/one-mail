@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS emails (
     id TEXT PRIMARY KEY, source TEXT NOT NULL, account_id TEXT, from_addr TEXT NOT NULL,
     to_addr TEXT NOT NULL, subject TEXT, text_body TEXT, html_body TEXT,
     received_at INTEGER NOT NULL, internal_date INTEGER, headers_json TEXT,
-    is_read INTEGER DEFAULT 0, flags_json TEXT, attachments_json TEXT, raw_ref TEXT,
+    is_read INTEGER DEFAULT 0, is_starred INTEGER DEFAULT 0, flags_json TEXT, attachments_json TEXT, raw_ref TEXT,
     imap_uid TEXT, updated_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
@@ -229,6 +229,25 @@ async function ensurePop3Columns(db: D1Database): Promise<string[]> {
     return changes;
 }
 
+async function ensureUnifiedColumns(db: D1Database): Promise<string[]> {
+    const changes: string[] = [];
+    if (await ensureColumn(db, 'emails', 'is_starred', 'INTEGER DEFAULT 0')) {
+        changes.push('emails.is_starred');
+    }
+    const indexes = [
+        ['idx_emails_order_received', 'emails(COALESCE(internal_date, received_at) DESC)'],
+        ['idx_emails_read_received', 'emails(is_read, received_at DESC)'],
+        ['idx_emails_star_received', 'emails(is_starred, received_at DESC)'],
+        ['idx_emails_to_order_received', 'emails(to_addr, COALESCE(internal_date, received_at) DESC)'],
+        ['idx_emails_to_read_received', 'emails(to_addr, is_read, received_at DESC)'],
+        ['idx_emails_to_star_received', 'emails(to_addr, is_starred, received_at DESC)'],
+    ] as const;
+    for (const [name, expression] of indexes) {
+        await db.exec('CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + expression);
+    }
+    return changes;
+}
+
 function initQuery() {
     return DB_INIT_QUERIES.replace(/[\r\n]/g, "")
         .split(";")
@@ -244,6 +263,7 @@ export default {
         // POP3 contract even when db_version is missing or already v0.0.8.
         await ensureLegacyColumns(c.env.DB);
         await ensurePop3Columns(c.env.DB);
+        await ensureUnifiedColumns(c.env.DB);
 
         const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
         if (version) {
@@ -314,7 +334,8 @@ export default {
         await c.env.DB.exec(initQuery());
         await ensureLegacyColumns(c.env.DB);
         const migrationChanges = await ensurePop3Columns(c.env.DB);
-        if (version != CONSTANTS.DB_VERSION || migrationChanges.length > 0) {
+        const unifiedChanges = await ensureUnifiedColumns(c.env.DB);
+        if (version != CONSTANTS.DB_VERSION || migrationChanges.length > 0 || unifiedChanges.length > 0) {
             await utils.saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
             return c.json({
                 success: true,
