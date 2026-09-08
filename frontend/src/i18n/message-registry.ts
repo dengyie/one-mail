@@ -556,6 +556,14 @@ export const MESSAGE_REGISTRY = {
       "en": "Change language",
       "zh": "切换语言"
     },
+    "logout": {
+      "en": "Logout",
+      "zh": "退出登录"
+    },
+    "logoutConfirm": {
+      "en": "Are you sure you want to logout?",
+      "zh": "确定要退出登录吗？"
+    },
     "ok": {
       "en": "OK",
       "zh": "确定"

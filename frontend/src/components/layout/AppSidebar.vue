@@ -17,6 +17,7 @@ import { GithubAlt } from '@vicons/fa'
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import { getRouterPathWithLang } from '../../utils'
+import { clearLocalAddressCache } from '../../utils/address-cache'
 import StatusIndicator from '../ai/StatusIndicator.vue'
 
 const props = defineProps({
@@ -34,7 +35,9 @@ const { t, locale } = useScopedI18n('views.Header')
 
 const {
   settings, userSettings, openSettings, showAdminPage,
-  userJwt, jwt, adminAuth, preferredLocale, userTab, adminTab
+  userJwt, jwt, auth, adminAuth, addressPassword,
+  userOauth2SessionState, userOauth2SessionClientID, unifiedApiKey,
+  preferredLocale, userTab, adminTab
 } = useGlobalState()
 
 const hasUserSession = computed(() => Boolean(userJwt.value))
@@ -46,12 +49,39 @@ const handleNavigate = (path) => {
   emit('navigate')
 }
 
-const handleLogout = () => {
+const showLogout = ref(false)
+
+const requestLogout = () => {
+  showLogout.value = true
+}
+
+const handleLogout = async () => {
+  // Clear every credential channel, including cached address JWTs, before
+  // navigating so a shared browser cannot keep using the previous session.
   userJwt.value = ''
   jwt.value = ''
+  auth.value = ''
   adminAuth.value = ''
-  userSettings.value = { fetched: true, user_email: '', user_id: 0, is_admin: false, access_token: null, user_role: null }
-  router.push(getRouterPathWithLang('/', locale.value))
+  addressPassword.value = ''
+  userOauth2SessionState.value = ''
+  userOauth2SessionClientID.value = ''
+  unifiedApiKey.value = ''
+  settings.value = {
+    fetched: true,
+    send_balance: 0,
+    address: '',
+    auto_reply: {
+      subject: '',
+      message: '',
+      enabled: false,
+      source_prefix: '',
+      name: '',
+    },
+  }
+  userSettings.value = { fetched: true, user_email: '', user_id: 0, is_admin: false, access_token: null, new_user_token: null, user_role: null }
+  clearLocalAddressCache()
+  showLogout.value = false
+  await router.push(getRouterPathWithLang('/', locale.value))
   emit('navigate')
 }
 
@@ -306,9 +336,10 @@ const activeRoute = computed(() => {
         </div>
 
         <button
-          @click="handleLogout"
+          @click="requestLogout"
           class="p-1.5 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-          title="退出登录"
+          :aria-label="t('logout') || 'Logout'"
+          :title="t('logout') || 'Logout'"
         >
           <n-icon size="18" :component="PowerSettingsNewFilled" />
         </button>
@@ -318,5 +349,14 @@ const activeRoute = computed(() => {
         <span v-if="!collapsed" class="text-[11px] text-slate-400">请登录使用全功能收件箱</span>
       </div>
     </div>
+
+    <n-modal v-model:show="showLogout" preset="dialog" :title="t('logout') || 'Logout'">
+      <p>{{ t('logoutConfirm') || 'Are you sure you want to logout?' }}</p>
+      <template #action>
+        <n-button @click="handleLogout" size="small" tertiary type="warning">
+          {{ t('logout') || 'Logout' }}
+        </n-button>
+      </template>
+    </n-modal>
   </aside>
 </template>

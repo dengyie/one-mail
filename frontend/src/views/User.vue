@@ -8,6 +8,7 @@ import AddressMangement from './user/AddressManagement.vue'
 import UserSettingsPage from './user/UserSettings.vue'
 import UserMailAccounts from './user/UserMailAccounts.vue'
 import Appearance from './common/Appearance.vue'
+import UserLogin from './user/UserLogin.vue'
 
 const { userSettings } = useGlobalState()
 const route = useRoute()
@@ -47,5 +48,8 @@ const currentUserView = computed(() => {
             </div>
 
         </div>
+
+        <!-- Keep the user entry point useful after logout or when opened directly. -->
+        <UserLogin v-else-if="userSettings.fetched" />
     </div>
 </template>
