@@ -10,7 +10,9 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml ./
 COPY frontend/package.json frontend/package.json
 COPY packages/shared/package.json packages/shared/package.json
-RUN pnpm install --filter @one-mail/frontend... --no-frozen-lockfile --ignore-patches
+# The root patch is only for Worker/telegraf; omit it from the frontend-only image.
+RUN sed -i '/^patchedDependencies:/,$d' pnpm-workspace.yaml && \
+    pnpm install --filter @one-mail/frontend... --no-frozen-lockfile
 
 COPY packages/shared/ packages/shared/
 RUN pnpm --filter @one-mail/shared build
