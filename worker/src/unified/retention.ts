@@ -25,13 +25,14 @@ export async function purgeOldEmailBodies(
     let batches = 0;
     do {
         if (batches >= safeMaxBatches) break;
-        const { meta } = await env.DB.prepare(`UPDATE emails
+        const { meta } = await env.DB.prepare(
+            `UPDATE emails
              SET html_body = NULL,
                  text_body = '[Body purged for retention]'
              WHERE COALESCE(internal_date, received_at) < ?
                AND (is_starred IS NULL OR is_starred = 0)
                AND (html_body IS NOT NULL OR text_body != '[Body purged for retention]')
-             LIMIT ?`)
+             LIMIT ?`
         ).bind(cutoff, safeBatchLimit).run();
         changes = (meta as { changes?: number })?.changes ?? 0;
         totalPurged += changes;
@@ -58,10 +59,11 @@ export async function cleanupReadEmails(
     let batches = 0;
     do {
         if (batches >= safeMaxBatches) break;
-        const { results } = await env.DB.prepare(`SELECT id, attachments_json
+        const { results } = await env.DB.prepare(
+            `SELECT id, attachments_json
              FROM emails
              WHERE is_read = 1 AND received_at < ?
-             LIMIT ?`)
+             LIMIT ?`
         ).bind(cutoff, safeBatchLimit).all();
         const rows = (results ?? []) as { id: string; attachments_json: string }[];
         if (!rows.length) break;
@@ -79,8 +81,9 @@ export async function cleanupReadEmails(
         }
         const ids = rows.map((r) => r.id);
         const placeholders = ids.map(() => "?").join(",");
-        const { meta } = await env.DB.prepare(`DELETE FROM emails
-             WHERE is_read = 1 AND received_at < ? AND id IN (${placeholders})`)
+        const { meta } = await env.DB.prepare(
+            `DELETE FROM emails
+             WHERE is_read = 1 AND received_at < ? AND id IN (${placeholders})`
         ).bind(cutoff, ...ids).run();
         deleted = (meta as { changes?: number })?.changes ?? 0;
         total += deleted;
