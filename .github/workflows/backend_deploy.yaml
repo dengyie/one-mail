@@ -7,6 +7,14 @@ on:
   push:
     tags:
       - "*"
+    branches:
+      - main
+    paths:
+      - "worker/**"
+      - "packages/shared/**"
+      - "db/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
   workflow_dispatch:
 
 jobs:
