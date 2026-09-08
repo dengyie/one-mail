@@ -437,7 +437,11 @@ export const checkRegistrationRateLimit = async (
     c: Context<HonoCustomType>, action: string, limit = 5, windowSec = 60
 ): Promise<boolean> => {
     if (!c.env.KV) return true;
-    const ip = c.req.raw.headers.get("cf-connecting-ip") || "unknown";
+    const ip = c.req.raw.headers.get("cf-connecting-ip");
+    // Cloudflare supplies this header at the edge. When it is absent (local
+    // development, health checks, or a direct test harness), there is no safe
+    // client key to rate-limit; do not put every caller in one shared bucket.
+    if (!ip) return true;
     const key = `reglimit|${action}|${ip}|${Math.floor(Date.now() / (windowSec * 1000))}`;
     try {
         const raw = await c.env.KV.get(key);

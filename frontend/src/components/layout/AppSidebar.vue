@@ -116,7 +116,7 @@ const activeRoute = computed(() => {
       <div v-else class="space-y-5">
         
         <!-- 模块一：邮箱工作台 -->
-        <div v-if="hasAddressSession" class="space-y-1">
+        <div v-if="hasAddressSession || hasUserSession" class="space-y-1">
           <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
             邮箱工作台
           </div>
@@ -204,7 +204,7 @@ const activeRoute = computed(() => {
             :class="activeRoute === 'user_settings' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="SettingsFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">个人偏好与安全</span>
+            <span v-if="!collapsed" class="truncate">{{ t('user_settings') || 'User Settings' }}</span>
           </button>
 
           <button
