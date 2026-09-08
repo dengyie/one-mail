@@ -587,6 +587,12 @@ const batchDeleteAddressWithData = async (
         `DELETE FROM raw_mails WHERE address IN ( ` +
         `SELECT name FROM address WHERE ${addressQueryCondition})`
     ).run();
+    // Unified inbox rows use to_addr for ownership checks. Remove them with the
+    // address so a later owner cannot inherit the previous owner's history.
+    await c.env.DB.prepare(
+        `DELETE FROM emails WHERE to_addr IN ( ` +
+        `SELECT name FROM address WHERE ${addressQueryCondition})`
+    ).run();
     await c.env.DB.prepare(
         `DELETE FROM sendbox WHERE address IN ( ` +
         `SELECT name FROM address WHERE ${addressQueryCondition})`
@@ -643,6 +649,9 @@ export const deleteAddressWithData = async (
     const { success: mailSuccess } = await c.env.DB.prepare(
         `DELETE FROM raw_mails WHERE address = ? `
     ).bind(address).run();
+    const { success: unifiedMailSuccess } = await c.env.DB.prepare(
+        `DELETE FROM emails WHERE to_addr = ? `
+    ).bind(address).run();
     const { success: sendAccess } = await c.env.DB.prepare(
         `DELETE FROM address_sender WHERE address = ? `
     ).bind(address).run();
@@ -658,7 +667,7 @@ export const deleteAddressWithData = async (
     const { success } = await c.env.DB.prepare(
         `DELETE FROM address WHERE name = ? `
     ).bind(address).run();
-    if (!success || !mailSuccess || !sendboxSuccess || !addressSuccess || !sendAccess || !autoReplySuccess) {
+    if (!success || !mailSuccess || !unifiedMailSuccess || !sendboxSuccess || !addressSuccess || !sendAccess || !autoReplySuccess) {
         throw new Error(msgs.OperationFailedMsg)
     }
     return true;
