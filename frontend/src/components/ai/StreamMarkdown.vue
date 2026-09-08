@@ -15,6 +15,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism-tomorrow.css';
 
@@ -76,6 +77,19 @@ const htmlContent = computed(() => {
     `;
   };
 
-  return marked.parse(props.content || '', { renderer, breaks: true, gfm: true });
+  const rendered = marked.parse(props.content || '', {
+    renderer,
+    breaks: true,
+    gfm: true,
+    html: false,
+  }) as string;
+  // AI summaries include untrusted mail fields. Keep the rendered HTML as a
+  // second boundary because custom renderers and future Markdown features can
+  // otherwise reintroduce executable markup.
+  return DOMPurify.sanitize(rendered, {
+    ADD_ATTR: ['data-code'],
+    FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form'],
+    FORBID_ATTR: ['style'],
+  });
 });
 </script>
