@@ -97,10 +97,18 @@
             <div class="flex-1"></div>
             <span class="text-xs text-zinc-400 font-mono">{{ t('list.total', { count }) }}</span>
           </div>
+          <div v-if="optionsError" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
+            <span>{{ optionsError }}</span>
+            <n-button text size="tiny" @click="retryOptions">重试</n-button>
+          </div>
 
           <div v-if="loading" class="py-20 text-center text-zinc-400 flex flex-col items-center gap-2">
             <span class="animate-spin text-xl">⏳</span>
             <span>{{ t('list.loading') }}</span>
+          </div>
+          <div v-else-if="listError" class="py-16 text-center text-sm text-rose-500">
+            <div>{{ listError }}</div>
+            <n-button size="small" class="mt-3" @click="loadList">重试</n-button>
           </div>
           <n-empty
             v-else-if="!emails.length"
@@ -267,7 +275,7 @@
             </div>
           </div>
 
-          <div v-if="statusError && !status.emails" class="text-sm text-rose-500 py-4">
+          <div v-if="statusError" class="text-sm text-rose-500 py-4">
             {{ statusError }}
           </div>
           <div v-if="lastRefresh" class="text-xs text-zinc-400 font-mono">
@@ -436,26 +444,32 @@ const filterActive = computed(() => !!(
   filterParams.value.q
 ))
 
+let listRequestSeq = 0
 const loadList = async () => {
+  const requestId = ++listRequestSeq
   if (!hasAccess.value) return
+  const requestedPage = page.value
+  const requestedParams = listParams.value
   loading.value = true
   listError.value = ''
   try {
-    const listRes = await api.unified.listEmails(listParams.value)
+    const listRes = await api.unified.listEmails(requestedParams)
+    if (requestId !== listRequestSeq) return
     emails.value = listRes.results || []
     // The first page already includes the scoped count; avoid a second full-table scan.
-    if (page.value === 1 && typeof listRes.count === 'number') {
+    if (requestedPage === 1 && typeof listRes.count === 'number') {
       count.value = listRes.count
     }
     connected.value = true
     lastLoaded.value = new Date()
   } catch (e) {
+    if (requestId !== listRequestSeq) return
     listError.value = e.message || 'error'
     connected.value = false
     emails.value = []
     count.value = 0
   } finally {
-    loading.value = false
+    if (requestId === listRequestSeq) loading.value = false
   }
 }
 
@@ -524,39 +538,84 @@ const accountOptions = computed(() => {
   return list
 })
 
+const optionsError = ref('')
 let optionsScope = ''
 let optionsPromise = null
+let optionsPromiseIdentity = ''
+let optionsGeneration = 0
+
+const authIdentity = computed(() => {
+  const jwt = userJwt.value?.trim()
+  if (jwt) return `user:${jwt}`
+  const key = unifiedApiKey.value?.trim()
+  return key ? `key:${key}` : ''
+})
+
+const resetOptions = () => {
+  optionsGeneration += 1
+  optionsScope = ''
+  optionsError.value = ''
+  userAccounts.value = []
+  boundAddresses.value = []
+  optionRows.value = []
+}
+
 const loadOptions = async () => {
-  if (!hasAccess.value) return
-  const scope = isLoggedIn.value ? 'user' : 'key'
-  if (optionsScope === scope) return
-  if (optionsPromise) return optionsPromise
-  optionsPromise = (async () => {
-  try {
-    const promises = []
+  const identity = authIdentity.value
+  if (!identity) {
+    resetOptions()
+    return
+  }
+  if (optionsScope === identity && !optionsError.value) return
+  if (optionsPromise && optionsPromiseIdentity === identity) return optionsPromise
+  const generation = ++optionsGeneration
+  optionsError.value = ''
+  const promise = (async () => {
+    const current = () => generation === optionsGeneration && identity === authIdentity.value
+    const tasks = []
     if (isLoggedIn.value) {
-      promises.push(
-        api.userMailAccounts.list().then(res => {
-          userAccounts.value = res.results || []
-        }).catch(() => {})
-      )
-      promises.push(
-        api.fetch('/user_api/bind_address').then(res => {
-          boundAddresses.value = res.results || []
-        }).catch(() => {})
-      )
+      tasks.push(api.userMailAccounts.list().then(res => {
+        if (current()) userAccounts.value = res.results || []
+      }))
+      tasks.push(api.fetch('/user_api/bind_address').then(res => {
+        if (current()) boundAddresses.value = res.results || []
+      }))
     }
-    promises.push(
-      api.unified.listEmails({ limit: 50, offset: 0 }).then(res => {
-        optionRows.value = res.results || []
-      }).catch(() => {})
-    )
-    await Promise.all(promises)
-    connected.value = true
-    optionsScope = scope
-  } catch { /* 容错静默降级 */ }
-  })().finally(() => { optionsPromise = null })
-  return optionsPromise
+    tasks.push(api.unified.meta().then(res => {
+      if (!current()) return
+      const rows = []
+      ;(res.sources || []).forEach(source => rows.push({ source }))
+      ;(res.accounts || []).forEach(account_id => rows.push({ account_id }))
+      ;(res.to_addrs || []).forEach(to_addr => rows.push({ to_addr }))
+      optionRows.value = rows
+    }))
+    const results = await Promise.allSettled(tasks)
+    if (!current()) return
+    if (results.some(result => result.status === 'rejected')) {
+      throw new Error('筛选项加载失败，请重试')
+    }
+    optionsScope = identity
+  })()
+  optionsPromise = promise
+  optionsPromiseIdentity = identity
+  promise.catch(error => {
+    if (generation === optionsGeneration && identity === authIdentity.value) {
+      optionsScope = ''
+      optionsError.value = error.message || '筛选项加载失败，请重试'
+    }
+  }).finally(() => {
+    if (optionsPromise === promise) {
+      optionsPromise = null
+      optionsPromiseIdentity = ''
+    }
+  })
+  return promise
+}
+
+const retryOptions = () => {
+  optionsError.value = ''
+  optionsScope = ''
+  return loadOptions()
 }
 
 // ---- 验证码视图 ----
@@ -711,7 +770,19 @@ const refreshCurrent = () => {
   else if (activeTab.value === 'status') loadStatus()
 }
 
-watch(hasAccess, (v) => { if (v) { loadOptions(); refreshCurrent() } })
+watch(authIdentity, (identity, previousIdentity) => {
+  if (identity === previousIdentity) return
+  resetOptions()
+  connected.value = false
+  if (!identity) {
+    listRequestSeq += 1
+    emails.value = []
+    count.value = 0
+    return
+  }
+  void loadOptions()
+  refreshCurrent()
+})
 
 onMounted(async () => {
   if (userJwt.value && !userSettings.value.user_id) {
