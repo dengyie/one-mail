@@ -78,6 +78,7 @@ export async function cleanupReadEmails(
                     }
                 } catch (e) {
                     console.error("r2 delete error", e);
+                    throw new Error("r2 attachment cleanup failed");
                 }
             }
         }

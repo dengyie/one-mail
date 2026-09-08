@@ -522,7 +522,9 @@ export const cleanup = async (
                 c,
                 `id IN (
                     SELECT id FROM address
-                    WHERE id NOT IN (SELECT address_id FROM users_address)
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM users_address ua WHERE ua.address_id = address.id
+                    )
                       AND created_at < datetime('now', '-${cleanDays} day')
                     ORDER BY created_at, id
                     LIMIT ${cleanupBatchSize})`

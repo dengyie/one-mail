@@ -49,3 +49,19 @@ test("body purge stops after the configured batch budget", async () => {
   assert.deepEqual(result, { purged: 2, limited: true });
   assert.equal(db.calls.length, 2);
 });
+
+test("retention keeps rows when R2 attachment cleanup fails", async () => {
+  const db = fakeDb({
+    rows: [{ id: "mail-1", attachments_json: JSON.stringify([{ r2_key: "attachment-1" }]) }],
+    changes: 1,
+  });
+  const bucket = {
+    delete: async () => { throw new Error("temporary R2 outage"); },
+  };
+  await assert.rejects(
+    cleanupReadEmails({ DB: db, ATTACHMENTS: bucket }, 90, 1, 1),
+    /r2 attachment cleanup failed/,
+  );
+  assert.equal(db.calls.length, 1);
+  assert.match(db.calls[0].sql, /SELECT id, attachments_json/);
+});
