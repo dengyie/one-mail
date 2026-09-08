@@ -157,7 +157,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowBackRound, RefreshRound } from '@vicons/material'
 import { sanitizeHtmlMail } from '../utils/sanitize-html-mail'
@@ -187,6 +187,16 @@ const showAiPanel = ref(false)
 const aiThinking = ref(false)
 const aiDuration = ref(0)
 const aiAnalysisText = ref('')
+let aiTimer = null
+
+watch(() => email.value?.id, () => {
+  if (aiTimer) {
+    clearTimeout(aiTimer)
+    aiTimer = null
+  }
+  aiThinking.value = false
+  aiAnalysisText.value = ''
+})
 
 const generateAiAnalysis = () => {
   if (!email.value) return
@@ -200,7 +210,11 @@ const generateAiAnalysis = () => {
   const codeMatches = body.match(/\b([0-9]{4,8}|[A-Z0-9]{5,8})\b/g) || []
   const validCodes = codeMatches.filter(c => !/^(19|20)\d\d$/.test(c) && !/^\d{4}-\d{2}/.test(c))
 
-  setTimeout(() => {
+  if (aiTimer) clearTimeout(aiTimer)
+  const analysisMailId = email.value.id
+  aiTimer = setTimeout(() => {
+    if (email.value?.id !== analysisMailId) return
+    aiTimer = null
     aiThinking.value = false
     aiDuration.value = Number(((Date.now() - start) / 1000).toFixed(1))
     const codeLine = validCodes.length ? `- **提取验证码**：\`${validCodes.slice(0, 3).join(', ')}\`` : '- 未检测到明显验证码'
@@ -224,7 +238,14 @@ const load = async () => {
     loading.value = false
   }
 }
+watch(() => route.params.id, () => {
+  void load()
+})
 onMounted(load)
+
+onBeforeUnmount(() => {
+  if (aiTimer) clearTimeout(aiTimer)
+})
 
 const stripHtml = (html) =>
   String(html || '')

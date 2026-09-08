@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 import { useScopedI18n } from '@/i18n/app'
 import {
   CloudDownloadRound, ReplyFilled, ForwardFilled, FullscreenRound, ImageRound,
@@ -73,6 +73,7 @@ const aiThinking = ref(false);
 const aiThinkingDuration = ref(0);
 const aiAnalysisText = ref('');
 const activePrompt = ref('');
+let aiTimer = null;
 
 const aiPromptSuggestions = [
   '📌 提炼邮件核心要点',
@@ -85,6 +86,11 @@ const aiPromptSuggestions = [
 // Per-mail consent for remote images
 const showRemoteImages = ref(false);
 watch(() => props.mail.id, () => {
+  if (aiTimer) {
+    clearTimeout(aiTimer);
+    aiTimer = null;
+  }
+  aiThinking.value = false;
   showRemoteImages.value = false;
   showAiPanel.value = false;
   aiAnalysisText.value = '';
@@ -145,7 +151,11 @@ const generateAiAnalysis = (promptType) => {
   const validCodes = codeMatches.filter(c => !/^(19|20)\d\d$/.test(c) && !/^\d{4}-\d{2}/.test(c));
   const linkMatches = rawText.match(/https?:\/\/[^\s<>"']+/g) || [];
   
-  setTimeout(() => {
+  if (aiTimer) clearTimeout(aiTimer);
+  const analysisMailId = props.mail.id;
+  aiTimer = setTimeout(() => {
+    if (props.mail.id !== analysisMailId) return;
+    aiTimer = null;
     aiThinking.value = false;
     aiThinkingDuration.value = Number(((Date.now() - startTime) / 1000).toFixed(1));
     
@@ -181,6 +191,10 @@ const handleCopyAiContent = async () => {
     message.error('复制失败');
   }
 };
+
+onBeforeUnmount(() => {
+  if (aiTimer) clearTimeout(aiTimer);
+}); 
 </script>
 
 <template>
