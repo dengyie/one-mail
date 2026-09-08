@@ -81,6 +81,7 @@ const navTo = (path) => {
       <!-- Mobile hamburger -->
       <button
         @click="emit('open-mobile-menu')"
+        :aria-label="t('menu') || 'Menu'"
         class="md:hidden flex items-center justify-center w-9 h-9 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors"
       >
         <n-icon size="20" :component="MenuFilled" />

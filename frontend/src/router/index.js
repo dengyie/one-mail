@@ -38,6 +38,11 @@ const router = createRouter({
             component: () => import('../views/index/SendBoxPage.vue')
         },
         {
+            path: '/webhook',
+            alias: '/:lang/webhook',
+            component: () => import('../views/index/Webhook.vue')
+        },
+        {
             path: '/user',
             alias: '/:lang/user',
             component: User

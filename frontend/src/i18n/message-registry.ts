@@ -571,6 +571,10 @@ export const MESSAGE_REGISTRY = {
     "user": {
       "en": "User",
       "zh": "用户"
+    },
+    "webhookSettings": {
+      "en": "Webhook Settings",
+      "zh": "Webhook 设置"
     }
   },
   "views.user.BindAddress": {
