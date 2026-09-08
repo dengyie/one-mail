@@ -520,7 +520,12 @@ export const cleanup = async (
         case "unboundAddress":
             await batchDeleteAddressWithData(
                 c,
-                `id NOT IN (SELECT address_id FROM users_address) AND created_at < datetime('now', '-${cleanDays} day')`
+                `id IN (
+                    SELECT id FROM address
+                    WHERE id NOT IN (SELECT address_id FROM users_address)
+                      AND created_at < datetime('now', '-${cleanDays} day')
+                    ORDER BY created_at, id
+                    LIMIT ${cleanupBatchSize})`
             )
             break;
         case "mails":
@@ -535,9 +540,14 @@ export const cleanup = async (
             break;
         case "mails_unknow":
             await c.env.DB.prepare(`
-                DELETE FROM raw_mails WHERE address NOT IN
-                (select name from address) AND created_at < datetime('now', '-${cleanDays} day')`
-            ).run();
+                DELETE FROM raw_mails WHERE id IN (
+                    SELECT id FROM raw_mails
+                    WHERE address NOT IN (SELECT name FROM address)
+                      AND created_at < datetime('now', ?)
+                    ORDER BY created_at, id
+                    LIMIT ?
+                )`
+            ).bind(`-${cleanDays} day`, cleanupBatchSize).run();
             break;
         case "sendbox":
             await c.env.DB.prepare(`
@@ -553,7 +563,12 @@ export const cleanup = async (
             // Delete addresses that have no emails and were created more than N days ago
             await batchDeleteAddressWithData(
                 c,
-                `name NOT IN (SELECT DISTINCT address FROM raw_mails WHERE address IS NOT NULL) AND created_at < datetime('now', '-${cleanDays} day')`
+                `id IN (
+                    SELECT id FROM address
+                    WHERE name NOT IN (SELECT DISTINCT address FROM raw_mails WHERE address IS NOT NULL)
+                      AND created_at < datetime('now', '-${cleanDays} day')
+                    ORDER BY created_at, id
+                    LIMIT ${cleanupBatchSize})`
             )
             break;
         default:

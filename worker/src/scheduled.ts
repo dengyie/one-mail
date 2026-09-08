@@ -8,6 +8,7 @@ import { cleanupReadEmails, purgeOldEmailBodies } from './unified/retention';
 
 const RETENTION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const RETENTION_KEY = "one-mail:retention:last-success";
+const RETENTION_ATTEMPT_KEY = "one-mail:retention:last-attempt";
 const RETENTION_LOCK_NAME = "one-mail:retention";
 const RETENTION_LOCK_TTL_MS = 30 * 60 * 1000;
 const RETENTION_BATCH_LIMIT = 500;
@@ -59,11 +60,20 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
             return;
         }
         const now = Date.now();
-        const last = Number(await env.KV.get(RETENTION_KEY) || 0);
-        if (Number.isFinite(last) && last > 0 && now - last < RETENTION_COOLDOWN_MS) {
+        const lastSuccess = Number(await env.KV.get(RETENTION_KEY) || 0);
+        const lastAttempt = Number(await env.KV.get(RETENTION_ATTEMPT_KEY) || 0);
+        const lastRun = Math.max(
+            Number.isFinite(lastSuccess) && lastSuccess > 0 ? lastSuccess : 0,
+            Number.isFinite(lastAttempt) && lastAttempt > 0 ? lastAttempt : 0,
+        );
+        if (lastRun > 0 && now - lastRun < RETENTION_COOLDOWN_MS) {
             console.log("one-mail retention skipped (cooldown)");
             return;
         }
+        // Record the attempt before any expensive work. If a cleanup path
+        // fails, the marker remains and prevents a ten-minute cron from
+        // repeatedly consuming D1 quota until the next retry window.
+        await env.KV.put(RETENTION_ATTEMPT_KEY, String(now), { expirationTtl: 24 * 60 * 60 });
 
         const p = await purgeOldEmailBodies(env, 30, RETENTION_BATCH_LIMIT, RETENTION_MAX_BATCHES);
         console.log("one-mail body retention purge:", JSON.stringify(p));
