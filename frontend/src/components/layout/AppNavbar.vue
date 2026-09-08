@@ -114,7 +114,7 @@ const navTo = (path) => {
       <!-- Language Selector -->
       <n-dropdown :options="languageOptions" @select="changeLocale" trigger="click">
         <button
-          aria-label="切换语言 / Change language"
+          :aria-label="t('switchLanguage') || 'Change language'"
           class="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           title="切换语言"
         >
