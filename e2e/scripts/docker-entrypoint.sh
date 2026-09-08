@@ -84,29 +84,52 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
+post_checked() {
+  local label="$1"
+  local base_url="$2"
+  local endpoint="$3"
+  local response_file
+  local status
+
+  response_file="$(mktemp)"
+  if ! status="$(curl -sS -o "$response_file" -w '%{http_code}' -X POST "${base_url}${endpoint}")"; then
+    echo "ERROR: ${label}${endpoint} request failed (curl status ${status:-unknown})"
+    cat "$response_file"
+    rm -f "$response_file"
+    return 1
+  fi
+  if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+    echo "ERROR: ${label}${endpoint} returned HTTP ${status}"
+    cat "$response_file"
+    rm -f "$response_file"
+    return 1
+  fi
+  rm -f "$response_file"
+}
+
 echo "==> Initializing database"
-curl -sf -X POST "$WORKER_URL/admin/db_initialize" > /dev/null
-curl -sf -X POST "$WORKER_URL/admin/db_migration" > /dev/null
+post_checked "Database" "$WORKER_URL" "/admin/db_initialize"
+post_checked "Database" "$WORKER_URL" "/admin/db_migration"
 echo "    Database initialized"
 
 if [ -n "${WORKER_URL_SUBDOMAIN:-}" ]; then
   echo "==> Initializing subdomain worker database"
-  curl -sf -X POST "$WORKER_URL_SUBDOMAIN/admin/db_initialize" > /dev/null
-  curl -sf -X POST "$WORKER_URL_SUBDOMAIN/admin/db_migration" > /dev/null
+  post_checked "Subdomain database" "$WORKER_URL_SUBDOMAIN" "/admin/db_initialize"
+  post_checked "Subdomain database" "$WORKER_URL_SUBDOMAIN" "/admin/db_migration"
   echo "    Subdomain worker database initialized"
 fi
 
 if [ -n "${WORKER_URL_ENV_OFF:-}" ]; then
   echo "==> Initializing env-off worker database"
-  curl -sf -X POST "$WORKER_URL_ENV_OFF/admin/db_initialize" > /dev/null
-  curl -sf -X POST "$WORKER_URL_ENV_OFF/admin/db_migration" > /dev/null
+  post_checked "Env-off database" "$WORKER_URL_ENV_OFF" "/admin/db_initialize"
+  post_checked "Env-off database" "$WORKER_URL_ENV_OFF" "/admin/db_migration"
   echo "    Env-off database initialized"
 fi
 
 if [ -n "${WORKER_GZIP_URL:-}" ]; then
   echo "==> Initializing gzip worker database"
-  curl -sf -X POST "$WORKER_GZIP_URL/admin/db_initialize" > /dev/null
-  curl -sf -X POST "$WORKER_GZIP_URL/admin/db_migration" > /dev/null
+  post_checked "Gzip database" "$WORKER_GZIP_URL" "/admin/db_initialize"
+  post_checked "Gzip database" "$WORKER_GZIP_URL" "/admin/db_migration"
   echo "    Gzip worker database initialized"
 fi
 
