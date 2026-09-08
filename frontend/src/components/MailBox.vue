@@ -188,16 +188,22 @@ watch([page, pageSize], async ([page, pageSize], [oldPage, oldPageSize]) => {
   }
 })
 
+let refreshRequestSeq = 0;
 const refresh = async () => {
+  const requestId = ++refreshRequestSeq;
+  loading.value = true;
   try {
     const { results, count: totalCount } = await props.fetchMailData(
       pageSize.value, (page.value - 1) * pageSize.value
     );
-    loading.value = true;
     const nextData = await Promise.all(results.map(async (item) => {
       item.checked = false;
       return await processItem(item);
     }));
+    if (requestId !== refreshRequestSeq) {
+      nextData.forEach(revokeProcessedItemUrls);
+      return;
+    }
     const previousData = rawData.value;
     curMail.value = null;
     rawData.value = nextData;
@@ -209,10 +215,13 @@ const refresh = async () => {
       curMail.value = data.value[0];
     }
   } catch (error) {
+    if (requestId !== refreshRequestSeq) return;
     message.error(error.message || "error");
     console.error(error);
   } finally {
-    loading.value = false;
+    if (requestId === refreshRequestSeq) {
+      loading.value = false;
+    }
   }
 };
 
@@ -351,6 +360,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  refreshRequestSeq += 1;
   clearInterval(timer.value);
   for (const item of rawData.value) {
     revokeProcessedItemUrls(item);

@@ -53,22 +53,24 @@ const copyAddress = async () => {
 
 // 获取邮件数据
 const fetchMails = async () => {
+    const requestId = ++mailRequestSeq;
     if (!settings.value.address) {
         replaceCurrentMail(null);
+        totalCount.value = 0;
         return;
     }
-    const requestId = ++mailRequestSeq;
     try {
         const { results, count } = await api.fetch(`/api/mails?limit=1&offset=${currentPage.value - 1}`)
-        totalCount.value = count > 0 ? count : totalCount.value;
         const rawMail = results && results.length > 0 ? results[0] : null
         const nextMail = rawMail ? await processItem(rawMail) : null;
         if (requestId !== mailRequestSeq) {
             if (nextMail) revokeProcessedItemUrls(nextMail);
             return;
         }
+        totalCount.value = count > 0 ? count : 0;
         replaceCurrentMail(nextMail);
     } catch (error) {
+        if (requestId !== mailRequestSeq) return;
         console.error('Failed to fetch mails:', error)
         message.error('获取邮件失败')
     }

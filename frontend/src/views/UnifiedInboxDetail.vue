@@ -222,8 +222,12 @@ const generateAiAnalysis = () => {
   }, 400)
 }
 
+let loadRequestSeq = 0
 const load = async () => {
+  const requestId = ++loadRequestSeq
+  const requestedId = String(route.params.id || '')
   if (!hasAccess.value) {
+    email.value = null
     loading.value = false
     return
   }
@@ -231,19 +235,34 @@ const load = async () => {
   error.value = ''
   email.value = null
   try {
-    email.value = await api.unified.getEmail(route.params.id)
+    const nextEmail = await api.unified.getEmail(requestedId)
+    if (requestId !== loadRequestSeq || !hasAccess.value) return
+    email.value = nextEmail
   } catch (e) {
+    if (requestId !== loadRequestSeq || !hasAccess.value) return
     error.value = e.message || 'error'
   } finally {
-    loading.value = false
+    if (requestId === loadRequestSeq) {
+      loading.value = false
+    }
   }
 }
-watch(() => route.params.id, () => {
-  void load()
+watch([() => route.params.id, hasAccess], ([id, access], [oldId, oldAccess]) => {
+  if (!access) {
+    loadRequestSeq += 1
+    email.value = null
+    loading.value = false
+    error.value = ''
+    return
+  }
+  if (id !== oldId || access !== oldAccess) {
+    void load()
+  }
 })
 onMounted(load)
 
 onBeforeUnmount(() => {
+  loadRequestSeq += 1
   if (aiTimer) clearTimeout(aiTimer)
 })
 
