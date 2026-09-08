@@ -441,12 +441,12 @@ const loadList = async () => {
   loading.value = true
   listError.value = ''
   try {
-    const [listRes, countRes] = await Promise.all([
-      api.unified.listEmails(listParams.value),
-      api.unified.count(filterParams.value),
-    ])
+    const listRes = await api.unified.listEmails(listParams.value)
     emails.value = listRes.results || []
-    count.value = countRes.count || 0
+    // The first page already includes the scoped count; avoid a second full-table scan.
+    if (page.value === 1 && typeof listRes.count === 'number') {
+      count.value = listRes.count
+    }
     connected.value = true
     lastLoaded.value = new Date()
   } catch (e) {
@@ -524,8 +524,14 @@ const accountOptions = computed(() => {
   return list
 })
 
+let optionsScope = ''
+let optionsPromise = null
 const loadOptions = async () => {
   if (!hasAccess.value) return
+  const scope = isLoggedIn.value ? 'user' : 'key'
+  if (optionsScope === scope) return
+  if (optionsPromise) return optionsPromise
+  optionsPromise = (async () => {
   try {
     const promises = []
     if (isLoggedIn.value) {
@@ -547,7 +553,10 @@ const loadOptions = async () => {
     )
     await Promise.all(promises)
     connected.value = true
+    optionsScope = scope
   } catch { /* 容错静默降级 */ }
+  })().finally(() => { optionsPromise = null })
+  return optionsPromise
 }
 
 // ---- 验证码视图 ----
@@ -608,16 +617,13 @@ const loadStatus = async () => {
   statusLoading.value = true
   statusError.value = ''
   try {
-    const [total, unread] = await Promise.all([
-      api.unified.count({}),
-      api.unified.count({ unread: 1 }),
-    ])
+    const stats = await api.unified.stats({})
     if (!accountOptions.value.length && !sourceOptions.value.length) {
       await loadOptions()
     }
     status.value = {
-      emails: total.count || 0,
-      unread: unread.count || 0,
+      emails: stats.count || 0,
+      unread: stats.unread || 0,
       sources: sourceOptions.value.map(s => s.value),
       accounts: accountOptions.value.map(a => a.label || a.value),
     }
@@ -712,8 +718,8 @@ onMounted(async () => {
     await api.getUserSettings(message)
   }
   if (hasAccess.value) {
-    loadOptions()
-    loadList()
+    await loadOptions()
+    await loadList()
   }
 })
 </script>

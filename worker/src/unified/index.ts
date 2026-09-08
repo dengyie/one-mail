@@ -3,7 +3,7 @@ import { Jwt } from "hono/utils/jwt";
 import { handleListQuery, commonGetUserRole } from "../common";
 import { buildEmailFilters } from "./unified_query";
 import { ingestHandler } from "./ingest";
-import { countEmails, verifCodes, markRead, toggleStar, getMetaOptions } from "./extra_endpoints";
+import { countEmails, statsEmails, verifCodes, markRead, toggleStar, getMetaOptions } from "./extra_endpoints";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess, userAddressScope } from "./api_keys";
 import { resolveScope, checkRowAccess } from "./auth_scope";
@@ -81,6 +81,7 @@ api.get("/api/unified/emails", listEmails);
 api.get("/api/unified/meta", getMetaOptions);
 api.get("/api/unified/emails/:id", getEmail);
 api.get("/api/unified/count", countEmails);
+api.get("/api/unified/stats", statsEmails);
 api.get("/api/unified/verifcodes", verifCodes);
 api.post("/api/unified/emails/:id/read", markRead);   // readonly 被 canAccess 挡（POST）
 api.post("/api/unified/emails/:id/star", toggleStar); // readonly 被 canAccess 挡（POST）
