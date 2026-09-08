@@ -10,7 +10,7 @@ import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDom
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
-import { ensureSendMailLimit, increaseSendMailLimitCount } from './send_mail_limit_utils';
+import { reserveSendMailLimit } from './send_mail_limit_utils';
 
 
 export const api = new Hono<HonoCustomType>()
@@ -170,38 +170,33 @@ export const sendMail = async (
     if (!content) {
         throw new Error(msgs.ContentEmptyMsg)
     }
-    await ensureSendMailLimit(c);
-
-    // send to verified address list, do not update balance
+    // Resolve the dispatch path before taking any reservations. The actual provider
+    // call stays inside one try/catch so every failed attempt releases both quotas.
     const resendEnabled = c.env.RESEND_TOKEN || c.env[
         `RESEND_TOKEN_${mailDomain.replace(/\./g, "_").toUpperCase()}`
     ];
-    // send by smtp
     const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
     const smtpConfig = getDomainMapValue(smtpConfigMap, mailDomain);
-    // send by verified address list
-    let sendByVerifiedAddressList = false;
-    if (c.env.SEND_MAIL) {
-        const verifiedAddressList = await getJsonSetting(c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY) || [];
-        if (verifiedAddressList.includes(to_mail)) {
-            await sendMailToVerifyAddress(c, address, reqJson);
-            sendByVerifiedAddressList = true;
-        }
-    }
+    const verifiedAddressList = c.env.SEND_MAIL
+        ? await getJsonSetting(c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY) || []
+        : [];
+    const sendByVerifiedAddressList = verifiedAddressList.includes(to_mail);
     const sendMailBindingEnabled = isSendMailBindingEnabled(c, mailDomain);
+    let sendMailLimitReservation: (() => Promise<void>) | null = null;
 
-    // Verified recipients are free; reserve balance only for billable sends.
-    if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
-        balanceReserved = await reserveSendBalance(c, address);
-        if (!balanceReserved) {
-            throw new Error(msgs.NoBalanceMsg);
-        }
-    }
-
-    // send mail workflow; refund only when the provider dispatch itself fails.
+    // Reserve the server quota and sender balance immediately before dispatch.
     try {
+        sendMailLimitReservation = await reserveSendMailLimit(c);
+        // Verified recipients are free; reserve balance only for billable sends.
+        if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
+            balanceReserved = await reserveSendBalance(c, address);
+            if (!balanceReserved) {
+                throw new Error(msgs.NoBalanceMsg);
+            }
+        }
+
         if (sendByVerifiedAddressList) {
-            // do not update balance
+            await sendMailToVerifyAddress(c, address, reqJson);
         } else if (resendEnabled) {
             await sendMailByResend(c, address, reqJson);
         } else if (smtpConfig) {
@@ -212,13 +207,16 @@ export const sendMail = async (
             throw new Error(`${msgs.EnableResendOrSmtpOrSendMailMsg} (${mailDomain})`);
         }
     } catch (error) {
+        if (sendMailLimitReservation) {
+            try { await sendMailLimitReservation(); }
+            catch (releaseError) { console.error("Failed to release send mail limit reservation", releaseError); }
+        }
         if (balanceReserved) {
             try { await refundSendBalance(c, address); }
             catch (refundError) { console.error("Failed to refund send balance", refundError); }
         }
         throw error;
     }
-    await increaseSendMailLimitCount(c);
     // update address updated_at
     updateAddressUpdatedAt(c, address);
     // save to sendbox

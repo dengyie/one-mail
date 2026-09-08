@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
 import { sendMail } from "../mails_api/send_mail_api";
-import { ensureSendMailLimit, increaseSendMailLimitCount } from "../mails_api/send_mail_limit_utils";
+import { reserveSendMailLimit } from "../mails_api/send_mail_limit_utils";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -76,8 +76,9 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
     if (!isSendMailBindingEnabled(c, mailDomain)) {
         return c.text(msgs.EnableSendMailForDomainMsg, 400)
     }
+    let sendMailLimitReservation: (() => Promise<void>) | null = null;
     try {
-        await ensureSendMailLimit(c);
+        sendMailLimitReservation = await reserveSendMailLimit(c);
         await c.env.SEND_MAIL.send({
             from,
             to,
@@ -90,8 +91,11 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
             ...(attachments && attachments.length ? { attachments } : {}),
             ...(headers ? { headers } : {}),
         });
-        await increaseSendMailLimitCount(c);
     } catch (e) {
+        if (sendMailLimitReservation) {
+            try { await sendMailLimitReservation(); }
+            catch (releaseError) { console.error("Failed to release send mail limit reservation", releaseError); }
+        }
         console.error("Admin raw send_mail failed", e);
         return c.text(getAdminSendMailErrorMessage(msgs, e), 400)
     }
