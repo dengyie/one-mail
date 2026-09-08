@@ -584,6 +584,10 @@ export const MESSAGE_REGISTRY = {
       "en": "User",
       "zh": "用户"
     },
+    "user_settings": {
+      "en": "User Settings",
+      "zh": "用户设置"
+    },
     "webhookSettings": {
       "en": "Webhook Settings",
       "zh": "Webhook 设置"
