@@ -18,7 +18,7 @@ import SimpleIndex from './index/SimpleIndex.vue'
 
 const {
   loading, settings, openSettings, indexTab,
-  globalTabplacement, useSimpleIndex, userJwt, userSettings
+  globalTabplacement, useSimpleIndex, userJwt, userSettings, jwt
 } = useGlobalState()
 
 const message = useMessage()
@@ -26,7 +26,7 @@ const route = useRoute()
 const router = useRouter()
 const isMobile = useIsMobile()
 
-const isLoggedIn = computed(() => Boolean(userJwt.value))
+const isLoggedIn = computed(() => Boolean(userJwt.value || jwt.value))
 
 const SendMail = defineAsyncComponent(() => {
   loading.value = true

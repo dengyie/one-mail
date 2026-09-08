@@ -46,6 +46,7 @@ const handleNavigate = (path) => {
 
 const handleLogout = () => {
   userJwt.value = ''
+  jwt.value = ''
   userSettings.value = { fetched: true, user_email: '', user_id: 0, is_admin: false, access_token: null, user_role: null }
   router.push(getRouterPathWithLang('/', locale.value))
   emit('navigate')
