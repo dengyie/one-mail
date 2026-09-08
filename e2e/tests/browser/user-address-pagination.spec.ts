@@ -84,7 +84,7 @@ test.describe('User address pagination browser flow', () => {
       }, user.jwt);
       await page.goto(`${FRONTEND_URL}/en/user`);
 
-      await expect(page.getByText(user.email)).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole('complementary').getByText(user.email)).toBeVisible({ timeout: 15_000 });
       const pagination = page.locator('.n-pagination').first();
       const addressRows = page.locator('.n-data-table-tbody .n-data-table-tr');
       await expect(pagination).toContainText(/Total:\s*21/);
@@ -100,7 +100,7 @@ test.describe('User address pagination browser flow', () => {
         return url.pathname === '/user_api/bind_address'
           && url.searchParams.get('limit') === '100';
       });
-      await page.getByText('Mail Box', { exact: true }).click();
+      await page.getByRole('button', { name: /即时收件箱|Mail Box/ }).click();
       const initialMailboxResponse = await initialMailboxAddressesResponse;
       expect(initialMailboxResponse.ok()).toBe(true);
       const mailboxAddressSelect = page.locator('.n-input-group .n-select').first();
