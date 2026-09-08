@@ -10,8 +10,7 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml ./
 COPY frontend/package.json frontend/package.json
 COPY packages/shared/package.json packages/shared/package.json
-COPY worker/patches/ worker/patches/
-RUN pnpm install --filter @one-mail/frontend... --no-frozen-lockfile
+RUN pnpm install --filter @one-mail/frontend... --no-frozen-lockfile --ignore-patches
 
 COPY packages/shared/ packages/shared/
 RUN pnpm --filter @one-mail/shared build
