@@ -78,6 +78,36 @@ export const getSendMailLimitConfig = async (
     ));
 }
 
+/**
+ * Read the quota configuration for a send decision without conflating an
+ * unavailable database with an intentionally absent setting. The admin
+ * settings endpoint remains fail-soft, but the send path must fail closed:
+ * a D1 error or malformed stored value must never disable the quota guard.
+ */
+const getStrictSendMailLimitConfig = async (
+    c: Context<HonoCustomType>
+): Promise<SendMailLimitConfig | null> => {
+    let storedValue: string | null;
+    try {
+        storedValue = await c.env.DB.prepare(
+            `SELECT value FROM settings WHERE key = ?`
+        ).bind(CONSTANTS.SEND_MAIL_LIMIT_CONFIG_KEY).first<string>("value");
+    } catch (error) {
+        console.error("Failed to read send mail limit config", error);
+        throw error;
+    }
+    if (storedValue === null) {
+        return null;
+    }
+    const config = getSendMailLimitConfigToSave(
+        getJsonObjectValue<SendMailLimitConfig>(storedValue)
+    );
+    if (!config) {
+        throw new Error("Invalid stored send mail limit configuration");
+    }
+    return config;
+}
+
 const getDailyCountKey = (date: Date = new Date()): string => {
     const yyyy = date.getUTCFullYear();
     const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -133,7 +163,7 @@ export const reserveSendMailLimit = async (
     c: Context<HonoCustomType>
 ): Promise<SendMailLimitReservation | null> => {
     const msgs = i18n.getMessagesbyContext(c);
-    const config = await getSendMailLimitConfig(c);
+    const config = await getStrictSendMailLimitConfig(c);
     if (!config || (!config.dailyEnabled && !config.monthlyEnabled)) {
         return null;
     }
