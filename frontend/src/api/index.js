@@ -397,6 +397,10 @@ export const api = {
             const s = buildUnifiedQuery(params);
             return unifiedAuthFetch(`/api/unified/count${s ? `?${s}` : ''}`);
         },
+        stats: async (params = {}) => {
+            const s = buildUnifiedQuery(params);
+            return unifiedAuthFetch(`/api/unified/stats${s ? `?${s}` : ''}`);
+        },
         meta: () => unifiedAuthFetch('/api/unified/meta'),
         verifcodes: (addr, freshMs) =>
             unifiedAuthFetch(`/api/unified/verifcodes?addr=${encodeURIComponent(addr)}&fresh=${freshMs}`),
