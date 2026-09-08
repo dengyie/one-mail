@@ -482,9 +482,17 @@ export const MESSAGE_REGISTRY = {
       "en": "Created At",
       "zh": "创建时间"
     },
+    "success": {
+      "en": "Success",
+      "zh": "成功"
+    },
     "deletePasskey": {
       "en": "Delete Passkey",
       "zh": "删除 Passkey"
+    },
+    "deletePasskeyTip": {
+      "en": "Are you sure you want to delete this passkey?",
+      "zh": "确定要删除此 Passkey 吗？"
     },
     "logout": {
       "en": "Logout",
@@ -501,10 +509,6 @@ export const MESSAGE_REGISTRY = {
     "passkeyNamePlaceholder": {
       "en": "Please enter the passkey name or leave it empty to generate a random one",
       "zh": "请输入 Passkey 名称或者留空自动生成"
-    },
-    "passkeyList": {
-      "en": "Show Passkey List",
-      "zh": "查看 Passkey 列表"
     },
     "passkey_name": {
       "en": "Passkey Name",

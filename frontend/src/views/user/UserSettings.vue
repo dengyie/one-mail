@@ -99,7 +99,7 @@ const fetchPasskeyList = async () => {
 }
 
 const passkeyColumns = [
-    { title: t('passkeyName') || '名称', key: 'name' },
+    { title: t('passkey_name') || '名称', key: 'name' },
     {
         title: t('passkeyCreated') || '创建时间',
         key: 'created_at',
@@ -122,7 +122,7 @@ const passkeyColumns = [
                             showRenamePasskey.value = true
                         }
                     },
-                    { default: () => t('rename') || '重命名' }
+                    { default: () => t('renamePasskey') || '重命名' }
                 ),
                 h(NPopconfirm,
                     {
@@ -135,7 +135,7 @@ const passkeyColumns = [
                                 tertiary: true,
                                 type: "error"
                             },
-                            { default: () => t('delete') || '删除' }
+                            { default: () => t('deletePasskey') || '删除' }
                         ),
                         default: () => t('deletePasskeyTip') || '确认删除？'
                     }
@@ -154,7 +154,7 @@ const renamePasskey = async () => {
                 passkey_name: currentPasskeyName.value
             })
         })
-        message.success(t('rename') + " " + t('success'))
+        message.success(t('renamePasskey') + " " + t('success'))
         showRenamePasskey.value = false
         await fetchPasskeyList()
     } catch (error) {
@@ -168,7 +168,7 @@ const deletePasskey = async (id) => {
         await api.fetch(`/user_api/passkey/${encodeURIComponent(id)}`, {
             method: 'DELETE'
         })
-        message.success(t('delete') + " " + t('success'))
+        message.success(t('deletePasskey') + " " + t('success'))
         await fetchPasskeyList()
     } catch (error) {
         console.log(error)
@@ -182,7 +182,7 @@ const deletePasskey = async (id) => {
         <!-- 弹窗：新建 Passkey -->
         <n-modal v-model:show="showCreatePasskey" preset="dialog" :title="t('createPasskey')" class="rounded-3xl">
             <div class="py-2">
-                <n-input v-model:value="passkeyName" :placeholder="t('passkeyName')" class="rounded-xl" />
+                <n-input v-model:value="passkeyName" :placeholder="t('passkey_name')" class="rounded-xl" />
             </div>
             <template #action>
                 <n-button @click="createPasskey" type="primary" class="rounded-xl">
@@ -192,19 +192,19 @@ const deletePasskey = async (id) => {
         </n-modal>
 
         <!-- 弹窗：重命名 Passkey -->
-        <n-modal v-model:show="showRenamePasskey" preset="dialog" :title="t('rename')" class="rounded-3xl">
+        <n-modal v-model:show="showRenamePasskey" preset="dialog" :title="t('renamePasskey')" class="rounded-3xl">
             <div class="py-2">
-                <n-input v-model:value="currentPasskeyName" :placeholder="t('passkeyName')" class="rounded-xl" />
+                <n-input v-model:value="currentPasskeyName" :placeholder="t('passkey_name')" class="rounded-xl" />
             </div>
             <template #action>
                 <n-button @click="renamePasskey" type="primary" class="rounded-xl">
-                    {{ t('rename') }}
+                    {{ t('renamePasskey') }}
                 </n-button>
             </template>
         </n-modal>
 
         <!-- 弹窗：Passkey 列表 -->
-        <n-modal v-model:show="showPasskeyList" preset="card" :title="t('passkeyList')" class="rounded-3xl max-w-xl">
+        <n-modal v-model:show="showPasskeyList" preset="card" :title="t('showPasskeyList')" class="rounded-3xl max-w-xl">
             <n-data-table :columns="passkeyColumns" :data="passkeyList" :bordered="false" class="rounded-2xl overflow-hidden" />
         </n-modal>
 
@@ -237,7 +237,7 @@ const deletePasskey = async (id) => {
                             {{ t('createPasskey') || '+ 绑定新 Passkey' }}
                         </n-button>
                         <n-button @click="() => { fetchPasskeyList(); showPasskeyList = true; }" tertiary class="rounded-xl flex-1">
-                            {{ t('passkeyList') || '管理已有密钥' }}
+                            {{ t('showPasskeyList') || '管理已有密钥' }}
                         </n-button>
                     </div>
                 </div>
