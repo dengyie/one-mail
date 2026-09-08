@@ -265,9 +265,12 @@ const UserMailAccountsModule = {
         }
 
         // C1 一址一户：跨用户接入同名外部邮箱直接拒绝。同一用户重连/同名合法（user_id != ?）。
+        // 已禁用的账号也必须计入查重：删除账号前历史邮件按 to_addr 归属，允许
+        // 另一用户在此窗口接入会把旧历史暴露给新用户。移除账号会一并清理其归集邮件，
+        // 然后才允许该用户名重新绑定。
         // DB 部分唯一索引 idx_user_mail_accounts_username_uq 是最终兜底；此处前置给出明确 400。
         const { c: dupCount } = await c.env.DB.prepare(
-            `SELECT COUNT(*) AS c FROM user_mail_accounts WHERE username = ? AND user_id != ? AND enabled = 1`
+            `SELECT COUNT(*) AS c FROM user_mail_accounts WHERE username = ? AND user_id != ?`
         ).bind(username, user_id).first<{ c: number }>() || { c: 0 };
         if (dupCount > 0) {
             return c.text(msgs.AddressAlreadyExistsMsg, 400);
@@ -339,18 +342,21 @@ const UserMailAccountsModule = {
         ).bind(id, user_id).first<{ username: string }>();
         if (!row) return c.text(msgs.AddressNotFoundMsg, 404);
 
-        await c.env.DB.prepare(
-            `DELETE FROM user_mail_accounts WHERE id = ? AND user_id = ?`
-        ).bind(id, user_id).run();
-
-        // 仅解绑 users_address，不删 address 行——历史归集邮件仍按 to_addr 归属该用户
-        // （已删账号但邮件记录留痕），删掉 address 行会让这些邮件孤儿化。
-        // 一址一户后不存在「其他人在用同名引用」的情形，address 行留着无害
-        // （source_meta='external' 不参与建址）。
-        await c.env.DB.prepare(
-            `DELETE FROM users_address WHERE user_id = ? AND address_id IN
-             (SELECT id FROM address WHERE name = ?)`
-        ).bind(user_id, row.username).run();
+        // Emails are scoped by to_addr at read time, so leaving rows behind after an
+        // external account is removed would expose the old owner's history to a later
+        // account using the same address. Keep cleanup and ownership changes atomic.
+        await c.env.DB.batch([
+            c.env.DB.prepare(
+                `DELETE FROM emails WHERE account_id = ?`
+            ).bind(id),
+            c.env.DB.prepare(
+                `DELETE FROM user_mail_accounts WHERE id = ? AND user_id = ?`
+            ).bind(id, user_id),
+            c.env.DB.prepare(
+                `DELETE FROM users_address WHERE user_id = ? AND address_id IN
+                 (SELECT id FROM address WHERE name = ?)`
+            ).bind(user_id, row.username),
+        ]);
 
         return c.json({ success: true });
     },
