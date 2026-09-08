@@ -93,7 +93,9 @@ test.describe('User address pagination browser flow', () => {
       await pagination.locator('.n-pagination-item').filter({ hasText: /^2$/ }).click();
       await expect(addressRows).toHaveCount(1);
 
-      const selectedAddress = createdAddresses[20];
+      // The mailbox auto-selects the newest bound address (createdAddresses[20]).
+      // Choose the oldest address so selecting it exercises the reload path.
+      const selectedAddress = createdAddresses[0];
 
       const initialMailboxAddressesResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
@@ -103,7 +105,7 @@ test.describe('User address pagination browser flow', () => {
       await page.getByRole('button', { name: /即时收件箱|Mail Box/ }).click();
       const initialMailboxResponse = await initialMailboxAddressesResponse;
       expect(initialMailboxResponse.ok()).toBe(true);
-      const mailboxAddressSelect = page.locator('.n-input-group .n-select').first();
+      const mailboxAddressSelect = page.locator('.address-select').first();
       await mailboxAddressSelect.click();
 
       const mailboxOptions = page.locator('.n-base-select-menu:visible');
