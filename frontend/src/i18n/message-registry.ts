@@ -502,6 +502,10 @@ export const MESSAGE_REGISTRY = {
       "en": "Please enter the passkey name or leave it empty to generate a random one",
       "zh": "请输入 Passkey 名称或者留空自动生成"
     },
+    "passkeyList": {
+      "en": "Show Passkey List",
+      "zh": "查看 Passkey 列表"
+    },
     "passkey_name": {
       "en": "Passkey Name",
       "zh": "Passkey 名称"

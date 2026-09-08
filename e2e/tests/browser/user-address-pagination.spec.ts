@@ -94,8 +94,9 @@ test.describe('User address pagination browser flow', () => {
       await expect(addressRows).toHaveCount(1);
 
       // The mailbox auto-selects the newest bound address (createdAddresses[20]).
-      // Choose the oldest address so selecting it exercises the reload path.
-      const selectedAddress = createdAddresses[0];
+      // Naive UI virtualizes the menu, so choose a different address in the
+      // initially rendered window to exercise the reload path reliably.
+      const selectedAddress = createdAddresses[19];
 
       const initialMailboxAddressesResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
