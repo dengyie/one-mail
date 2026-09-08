@@ -44,18 +44,22 @@
 
    | 名称               | 说明                                                                                                                                                                                      |
    | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `FRONTEND_ENV`     | `Deploy Frontend` workflow 使用的前端配置文件，请复制 `frontend/.env.example` 的内容，[并参考此处修改](/zh/guide/cli/pages.html)。如果是前后端分离直连 Worker，`VITE_API_BASE` 应填写后端 Worker API 根地址，并且以 `https://` 开头、末尾不要带 `/`。地址配置错误时，常见现象是前端报 `map` 错误或接口返回 `405` |
+   | `FRONTEND_ENV`    | `Deploy Frontend` workflow 使用的前端配置文件，请复制 `frontend/.env.example` 的内容，[并参考此处修改](/zh/guide/cli/pages.html)。如果是前后端分离直连 Worker，`VITE_API_BASE` 应填写后端 Worker API 根地址，并且以 `https://` 开头、末尾不要带 `/`。地址配置错误时，常见现象是前端报 `map` 错误或接口返回 `405` |
    | `FRONTEND_NAME`    | 你在 Cloudflare Pages 创建的项目名称，可通过 [用户界面](https://temp-mail-docs.awsl.uk/zh/guide/ui/pages.html) 或者 [命令行](https://temp-mail-docs.awsl.uk/zh/guide/cli/pages.html) 创建 |
    | `FRONTEND_BRANCH`  | (可选) pages 部署的分支，可不配置，默认 `production`                                                                                                                                      |
    | `PAGE_TOML`        | (可选) 仅供 `Deploy Frontend with page function` workflow 使用。通过 page functions 转发后端请求时需要配置，请复制 `pages/wrangler.toml` 的内容，并根据实际情况修改 `service` 字段为你的 worker 后端名称。这个 workflow 会以 Pages 模式构建前端并走同域请求，因此不会读取 `FRONTEND_ENV` |
    | `TG_FRONTEND_NAME` | (可选) 你在 Cloudflare Pages 创建的项目名称，同 `FRONTEND_NAME`，如果需要 Telegram Mini App 功能，请填写                                                                                  |
 
+> [!warning] 安全提示
+> `CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID` 和 `BACKEND_TOML` 必须放在 Repository secrets 中。部署工作流不会接受在命令行或 workflow 输入中粘贴明文 Token；这样可以避免凭据出现在 workflow 运行参数和日志关联数据中。
+
 ### 部署
 
 - 打开仓库的 `Actions` 页面
-- 找到 `Deploy Backend` 点击 `Run workflow` 选择分支手动部署
+- 确认上面的后端 Secrets 已配置，再找到 `Deploy Backend` 点击 `Run workflow` 选择分支手动部署
 - 如果需要前后端分离并直连 Worker, 找到 `Deploy Frontend`，点击 `Run workflow` 选择分支手动部署
 - 如果需要通过 Page Functions 转发后端请求的 Pages 部署, 找到 `Deploy Frontend with page function`，点击 `Run workflow` 手动部署
+- 如果后端 Secrets 缺失，`Deploy Backend` 会在部署前直接失败并提示缺少的变量，不会执行半配置部署
 
 ### 自动更新与 Page Functions 转发
 
