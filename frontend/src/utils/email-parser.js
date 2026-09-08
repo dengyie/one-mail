@@ -5,7 +5,28 @@ function humanFileSize(size) {
     return parseFloat((size / Math.pow(1024, i)).toFixed(2)) + ' ' + ['B', 'KB', 'MB', 'GB', 'TB'][i];
 }
 
+function revokeBlobUrl(url) {
+    if (
+        typeof url !== 'string' ||
+        !url.startsWith('blob:') ||
+        typeof URL === 'undefined' ||
+        typeof URL.revokeObjectURL !== 'function'
+    ) {
+        return;
+    }
+    URL.revokeObjectURL(url);
+}
+
+export function revokeProcessedItemUrls(item) {
+    if (!item || !Array.isArray(item.attachments)) return;
+    for (const attachment of item.attachments) {
+        revokeBlobUrl(attachment?.url);
+    }
+    item.attachments = [];
+}
+
 export async function processItem(item) {
+    revokeProcessedItemUrls(item);
     // Try to parse the email using mail-parser-wasm
     item.originalSource = item.source;
     try {
@@ -39,6 +60,7 @@ export async function processItem(item) {
     if (item.subject && item.subject.length > 0 && item.message && item.message.length > 0) {
         return item;
     }
+    revokeProcessedItemUrls(item);
     // Fallback to PostalMime
     try {
         const parsedEmail = await PostalMime.parse(item.raw);

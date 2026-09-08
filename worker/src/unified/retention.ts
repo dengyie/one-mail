@@ -62,7 +62,9 @@ export async function cleanupReadEmails(
         const { results } = await env.DB.prepare(
             `SELECT id, attachments_json
              FROM emails
-             WHERE is_read = 1 AND received_at < ?
+             WHERE is_read = 1
+               AND received_at < ?
+               AND (is_starred IS NULL OR is_starred = 0)
              LIMIT ?`
         ).bind(cutoff, safeBatchLimit).all();
         const rows = (results ?? []) as { id: string; attachments_json: string }[];
@@ -83,7 +85,10 @@ export async function cleanupReadEmails(
         const placeholders = ids.map(() => "?").join(",");
         const { meta } = await env.DB.prepare(
             `DELETE FROM emails
-             WHERE is_read = 1 AND received_at < ? AND id IN (${placeholders})`
+             WHERE is_read = 1
+               AND received_at < ?
+               AND (is_starred IS NULL OR is_starred = 0)
+               AND id IN (${placeholders})`
         ).bind(cutoff, ...ids).run();
         deleted = (meta as { changes?: number })?.changes ?? 0;
         total += deleted;

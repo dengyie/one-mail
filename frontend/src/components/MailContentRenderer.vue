@@ -67,6 +67,31 @@ const curAttachments = ref([]);
 const attachmentLoding = ref(false);
 const showFullscreen = ref(false);
 
+const emlDownloadUrl = ref('');
+const revokeEmlDownloadUrl = () => {
+  const url = emlDownloadUrl.value;
+  if (
+    typeof url === 'string' &&
+    url.startsWith('blob:') &&
+    typeof URL !== 'undefined' &&
+    typeof URL.revokeObjectURL === 'function'
+  ) {
+    URL.revokeObjectURL(url);
+  }
+  emlDownloadUrl.value = '';
+};
+const refreshEmlDownloadUrl = () => {
+  revokeEmlDownloadUrl();
+  if (props.mail?.raw != null) {
+    emlDownloadUrl.value = getDownloadEmlUrl(props.mail.raw);
+  }
+};
+watch(
+  [() => props.mail?.id, () => props.mail?.raw],
+  refreshEmlDownloadUrl,
+  { immediate: true }
+);
+
 // AI Assistant state
 const showAiPanel = ref(false);
 const aiThinking = ref(false);
@@ -193,7 +218,11 @@ const handleCopyAiContent = async () => {
 };
 
 onBeforeUnmount(() => {
-  if (aiTimer) clearTimeout(aiTimer);
+  if (aiTimer) {
+    clearTimeout(aiTimer);
+    aiTimer = null;
+  }
+  revokeEmlDownloadUrl();
 }); 
 </script>
 
@@ -236,7 +265,7 @@ onBeforeUnmount(() => {
         </n-button>
 
         <n-button tag="a" target="_blank" tertiary type="info" size="small" :download="mail.id + '.eml'"
-          :href="getDownloadEmlUrl(mail.raw)">
+          :href="emlDownloadUrl">
           <template #icon>
             <n-icon :component="CloudDownloadRound" />
           </template>

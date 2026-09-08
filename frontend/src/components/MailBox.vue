@@ -5,7 +5,7 @@ import { useScopedI18n } from '@/i18n/app'
 import { useGlobalState } from '../store'
 import { CloudDownloadRound, ArrowBackIosNewFilled, ArrowForwardIosFilled, InboxRound } from '@vicons/material'
 import { useIsMobile } from '../utils/composables'
-import { processItem } from '../utils/email-parser'
+import { processItem, revokeProcessedItemUrls } from '../utils/email-parser'
 import { utcToLocalDate } from '../utils';
 import { buildReplyModel, buildForwardModel } from '../utils/mail-actions'
 import MailContentRenderer from "./MailContentRenderer.vue";
@@ -144,6 +144,19 @@ const showMultiActionDelete = ref(false)
 const multiActionDownloadZip = ref({})
 const multiActionDeleteProgress = ref({ percentage: 0, tip: '0/0' })
 
+const revokeZipUrl = () => {
+  const url = multiActionDownloadZip.value?.url;
+  if (
+    typeof url === 'string' &&
+    url.startsWith('blob:') &&
+    typeof URL !== 'undefined' &&
+    typeof URL.revokeObjectURL === 'function'
+  ) {
+    URL.revokeObjectURL(url);
+  }
+  multiActionDownloadZip.value = {};
+};
+
 const { t } = useScopedI18n('components.MailBox')
 
 const setupAutoRefresh = async (autoRefresh) => {
@@ -181,14 +194,17 @@ const refresh = async () => {
       pageSize.value, (page.value - 1) * pageSize.value
     );
     loading.value = true;
-    rawData.value = await Promise.all(results.map(async (item) => {
+    const nextData = await Promise.all(results.map(async (item) => {
       item.checked = false;
       return await processItem(item);
     }));
+    const previousData = rawData.value;
+    curMail.value = null;
+    rawData.value = nextData;
+    previousData.forEach(revokeProcessedItemUrls);
     if (totalCount > 0) {
       count.value = totalCount;
     }
-    curMail.value = null;
     if (!isMobile.value && !mailListView.value && data.value.length > 0) {
       curMail.value = data.value[0];
     }
@@ -316,8 +332,10 @@ const multiActionDownload = async () => {
     for (const mail of selectedMails) {
       zip.file(`${mail.id}.eml`, mail.raw);
     }
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    revokeZipUrl();
     multiActionDownloadZip.value = {
-      url: URL.createObjectURL(await zip.generateAsync({ type: "blob" })),
+      url: URL.createObjectURL(zipBlob),
       filename: `mails-${new Date().toISOString().replace(/:/g, '-')}.zip`
     }
     showMultiActionDownload.value = true;
@@ -333,7 +351,11 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  clearInterval(timer.value)
+  clearInterval(timer.value);
+  for (const item of rawData.value) {
+    revokeProcessedItemUrls(item);
+  }
+  revokeZipUrl();
 })
 </script>
 

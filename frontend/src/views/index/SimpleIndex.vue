@@ -15,7 +15,7 @@ import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import Login from '../common/Login.vue'
 import AccountSettings from './AccountSettings.vue'
-import { processItem } from '../../utils/email-parser'
+import { processItem, revokeProcessedItemUrls } from '../../utils/email-parser'
 import MailContentRenderer from '../../components/MailContentRenderer.vue'
 import AddressSelect from '../../components/AddressSelect.vue'
 
@@ -29,8 +29,17 @@ const currentMail = ref(null)
 const showAccountSettingsCard = ref(false)
 const currentAutoRefreshInterval = ref(60)
 const timer = ref(null)
+let mailRequestSeq = 0;
 
 const { t } = useScopedI18n('views.index.SimpleIndex')
+
+const replaceCurrentMail = (nextMail) => {
+    const previousMail = currentMail.value;
+    currentMail.value = nextMail;
+    if (previousMail && previousMail !== nextMail) {
+        revokeProcessedItemUrls(previousMail);
+    }
+};
 
 // 复制地址
 const copyAddress = async () => {
@@ -44,12 +53,21 @@ const copyAddress = async () => {
 
 // 获取邮件数据
 const fetchMails = async () => {
-    if (!settings.value.address) return
+    if (!settings.value.address) {
+        replaceCurrentMail(null);
+        return;
+    }
+    const requestId = ++mailRequestSeq;
     try {
         const { results, count } = await api.fetch(`/api/mails?limit=1&offset=${currentPage.value - 1}`)
         totalCount.value = count > 0 ? count : totalCount.value;
         const rawMail = results && results.length > 0 ? results[0] : null
-        currentMail.value = rawMail ? await processItem(rawMail) : null
+        const nextMail = rawMail ? await processItem(rawMail) : null;
+        if (requestId !== mailRequestSeq) {
+            if (nextMail) revokeProcessedItemUrls(nextMail);
+            return;
+        }
+        replaceCurrentMail(nextMail);
     } catch (error) {
         console.error('Failed to fetch mails:', error)
         message.error('获取邮件失败')
@@ -62,7 +80,7 @@ const deleteMail = async () => {
     try {
         await api.fetch(`/api/mails/${currentMail.value.id}`, { method: 'DELETE' });
         message.success(t('deleteSuccess'));
-        currentMail.value = null;
+        replaceCurrentMail(null);
         await refreshMails();
     } catch (error) {
         console.error('Failed to delete mail:', error);
@@ -122,7 +140,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-    clearInterval(timer.value)
+    mailRequestSeq += 1;
+    clearInterval(timer.value);
+    replaceCurrentMail(null);
 })
 </script>
 
