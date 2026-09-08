@@ -2,7 +2,7 @@ import { Context, Hono } from 'hono'
 import { cors } from 'hono/cors';
 import { jwt } from 'hono/jwt'
 import { Jwt } from 'hono/utils/jwt'
-import { verifyAddressJwt } from './core/auth'
+import { verifyActiveAddressJwt } from './core/auth'
 
 import { api as commonApi } from './commom_api';
 import { api as openAuthApi } from './open_api/auth';
@@ -182,8 +182,7 @@ app.use('/api/*', async (c, next) => {
 		return;
 	}
 
-	// 地址 JWT 校验（Phase 7 / I7a / 架构重构 P2）。统一走 core/auth verifyAddressJwt
-	// （内部 try/catch，失效返回 null；REJECT_EXPLESS_JWT 语义已内聚其中）。
+	// 地址 JWT 校验（签名、过期时间和当前地址绑定）。删除或替换地址后，旧凭据立即失效。
 	// 抽取逻辑与 hono jwt() 中间件一致：Authorization: Bearer <token>，失败 401。
 	const token = c.req.raw.headers.get("Authorization");
 	if (!token) {
@@ -197,7 +196,7 @@ app.use('/api/*', async (c, next) => {
 		const msgs = i18n.getMessages(lang);
 		return c.text(msgs.InvalidAddressCredentialMsg, 401);
 	}
-	const payload = await verifyAddressJwt(c, parts[1]);
+	const payload = await verifyActiveAddressJwt(c, parts[1]);
 	if (!payload) {
 		const lang = c.get("lang") || c.env.DEFAULT_LANG;
 		const msgs = i18n.getMessages(lang);

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 
 import utils, { checkCfTurnstile, getPasswords, getAdminPasswords, hashPassword } from '../utils';
 import { isAdminLockedOut, recordAdminFailure, clearAdminFailures } from '../unified/admin_lockout';
-import { verifyAddressJwt } from '../core/auth';
+import { verifyActiveAddressJwt } from '../core/auth';
 import i18n from '../i18n';
 
 const api = new Hono<HonoCustomType>()
@@ -73,11 +73,9 @@ api.post('/open_api/credential_login', async (c) => {
     if (!credential) {
         return c.text(msgs.InvalidAddressCredentialMsg, 401)
     }
-    // review W1：统一走 core/auth verifyAddressJwt —— H2 起无条件拒绝无 exp / 过期
-    // 的地址 JWT（REJECT_EXPLESS_JWT 门控已移除），内部 try/catch，无效一律返回 null。
-    // 此前这里用裸 JWT.verify 只查 address 非空，绕过该语义。
+    // 地址凭据同时校验签名、过期时间和当前 address id/name 绑定，删除或替换地址后立即失效。
     // 其余 Jwt.verify 残留（user/telegram/config 类）非地址 JWT，不在本次范围。
-    const payload = await verifyAddressJwt(c, credential);
+    const payload = await verifyActiveAddressJwt(c, credential);
     if (!payload || !payload.address) {
         return c.text(msgs.InvalidAddressCredentialMsg, 401)
     }

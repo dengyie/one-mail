@@ -44,3 +44,39 @@ export const verifyAddressJwt = async (
     return null;
   }
 };
+
+
+/**
+ * Verify an address credential and its current database binding.
+ *
+ * Address JWTs are intentionally long-lived, so signature/expiry checks alone
+ * would keep a deleted or replaced address usable until token expiry. Checking
+ * the id/name pair here revokes credentials when the address row changes and
+ * prevents a token for an old row from inheriting a reused address name.
+ */
+export const verifyActiveAddressJwt = async (
+  c: Context,
+  token: string,
+): Promise<AddressJwtPayload | null> => {
+  const payload = await verifyAddressJwt(c, token);
+  if (!payload || typeof payload.address !== "string" || !payload.address) {
+    return null;
+  }
+
+  const rawAddressId = (payload as unknown as { address_id?: unknown }).address_id;
+  const addressId = typeof rawAddressId === "number"
+    ? rawAddressId
+    : Number(rawAddressId);
+  if (!Number.isInteger(addressId) || addressId <= 0) {
+    return null;
+  }
+
+  const row = await c.env.DB.prepare(
+    "SELECT name FROM address WHERE id = ?"
+  ).bind(addressId).first<{ name: string }>();
+  if (!row || row.name !== payload.address) {
+    return null;
+  }
+
+  return { ...payload, address_id: addressId };
+};

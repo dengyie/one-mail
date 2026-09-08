@@ -1,5 +1,5 @@
 import { Context, Hono } from 'hono'
-import { verifyAddressJwt } from '../core/auth'
+import { verifyActiveAddressJwt } from '../core/auth'
 import { createMimeMessage } from 'mimetext';
 import { Resend } from 'resend';
 import { WorkerMailer, WorkerMailerOptions } from 'worker-mailer';
@@ -136,11 +136,22 @@ export const sendMail = async (
     },
     options?: {
         isAdmin?: boolean
+        addressId?: number | string
     }
 ): Promise<void> => {
     const msgs = i18n.getMessagesbyContext(c);
     if (!address) {
         throw new Error(msgs.AddressNotFoundMsg)
+    }
+    // A credential must still point at the same address row at dispatch time.
+    // This closes the delete/recreate race between middleware and provider send.
+    if (options?.addressId !== undefined && options?.addressId !== null) {
+        const activeAddress = await c.env.DB.prepare(
+            `SELECT id FROM address WHERE id = ? AND name = ?`
+        ).bind(options.addressId, address).first();
+        if (!activeAddress) {
+            throw new Error(msgs.AddressNotFoundMsg)
+        }
     }
     // check domain
     const mailDomain = getMailDomain(address);
@@ -240,10 +251,10 @@ export const sendMail = async (
 }
 
 api.post('/api/send_mail', async (c) => {
-    const { address } = c.get("jwtPayload")
+    const { address, address_id } = c.get("jwtPayload")
     const reqJson = await c.req.json();
     try {
-        await sendMail(c, address, reqJson);
+        await sendMail(c, address, reqJson, { addressId: address_id });
     } catch (e) {
         console.error("Failed to send mail", e);
         return c.text(`Failed to send mail ${(e as Error).message}`, 400)
@@ -256,12 +267,12 @@ api.post('/external/api/send_mail', async (c) => {
     try {
         const body = await c.req.json();
         const { token, ...reqJson } = body;
-        const payload = await verifyAddressJwt(c, token);
+        const payload = await verifyActiveAddressJwt(c, token);
         if (!payload) {
             throw new Error(msgs.AddressNotFoundMsg);
         }
         const { address } = payload;
-        await sendMail(c, address, reqJson);
+        await sendMail(c, address, reqJson, { addressId: payload.address_id });
         return c.json({ status: "ok" })
     } catch (e) {
         console.error("Failed to send mail", e);

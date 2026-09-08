@@ -1,5 +1,5 @@
 import { Context } from "hono";
-import { verifyAddressJwt } from "../core/auth";
+import { verifyActiveAddressJwt } from "../core/auth";
 import { CONSTANTS } from "../constants";
 import { getBooleanValue, getIntValue, getJsonSetting } from "../utils";
 import { deleteAddressWithData, newAddress, generateRandomName } from "../common";
@@ -63,21 +63,13 @@ export const jwtListToAddressData = async (
     const invalidJwtList = [] as string[];
     for (const jwt of jwtList) {
         try {
-            const payload = await verifyAddressJwt(c, jwt);
+            const payload = await verifyActiveAddressJwt(c, jwt);
             if (!payload) {
                 addressList.push(msgs.TgInvalidCredentialMsg);
                 invalidJwtList.push(jwt);
                 continue;
             }
             const { address, address_id } = payload;
-            const name = await c.env.DB.prepare(
-                `SELECT name FROM address WHERE id = ? `
-            ).bind(address_id).first("name");
-            if (!name) {
-                addressList.push(msgs.TgInvalidAddressMsg);
-                invalidJwtList.push(jwt);
-                continue;
-            }
             addressList.push(address as string);
             addressIdMap[address as string] = address_id as number;
         } catch (e) {
@@ -93,7 +85,7 @@ export const bindTelegramAddress = async (
     c: Context<HonoCustomType>, userId: string, jwt: string,
     msgs: LocaleMessages
 ): Promise<string> => {
-    const payload = await verifyAddressJwt(c, jwt);
+    const payload = await verifyActiveAddressJwt(c, jwt);
     if (!payload || !payload.address) {
         throw Error(msgs.TgInvalidCredentialMsg);
     }
@@ -119,7 +111,7 @@ export const unbindTelegramAddress = async (
     const newJwtList = [];
     for (const jwt of jwtList) {
         try {
-            const payload = await verifyAddressJwt(c, jwt);
+            const payload = await verifyActiveAddressJwt(c, jwt);
             if (payload && payload.address == address) {
                 continue;
             }
