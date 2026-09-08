@@ -7,107 +7,120 @@ import { executeCustomSqlCleanup } from './admin_api/cleanup_api';
 import { cleanupReadEmails, purgeOldEmailBodies } from './unified/retention';
 
 const RETENTION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
-const RETENTION_KEY = "one-mail:retention:last-run";
+const RETENTION_KEY = "one-mail:retention:last-success";
+const RETENTION_LOCK_NAME = "one-mail:retention";
+const RETENTION_LOCK_TTL_MS = 30 * 60 * 1000;
+const RETENTION_BATCH_LIMIT = 500;
+const RETENTION_MAX_BATCHES = 4;
+
+function resultChanges(result: D1Result<unknown>): number {
+    return Number((result.meta as { changes?: number } | undefined)?.changes ?? 0);
+}
+
+async function acquireRetentionLock(env: Bindings): Promise<string | null> {
+    const owner = crypto.randomUUID();
+    const now = Date.now();
+    try {
+        const result = await env.DB.prepare(`INSERT INTO scheduled_locks (name, owner, locked_until)
+             VALUES (?, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET
+                 owner = excluded.owner,
+                 locked_until = excluded.locked_until
+             WHERE scheduled_locks.locked_until <= ?`)
+            .bind(RETENTION_LOCK_NAME, owner, now + RETENTION_LOCK_TTL_MS, now).run();
+        return resultChanges(result) === 1 ? owner : null;
+    } catch (error) {
+        console.error("retention lock unavailable; skipping scheduled cleanup", error);
+        return null;
+    }
+}
+
+async function releaseRetentionLock(env: Bindings, owner: string): Promise<void> {
+    try {
+        await env.DB.prepare(`DELETE FROM scheduled_locks WHERE name = ? AND owner = ?`)
+            .bind(RETENTION_LOCK_NAME, owner).run();
+    } catch (error) {
+        console.error("retention lock release failed", error);
+    }
+}
 
 export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) {
     console.log("Scheduled event: ", event);
-    // Retention scans are expensive on D1. Run at most once per six hours even when
-    // the cron trigger fires every ten minutes; KV is already a production binding.
-    let runRetention = true;
-    if (env.KV) {
-        const last = Number(await env.KV.get(RETENTION_KEY) || 0);
-        runRetention = !last || Date.now() - last >= RETENTION_COOLDOWN_MS;
-        if (runRetention) {
-            await env.KV.put(RETENTION_KEY, String(Date.now()), { expirationTtl: 24 * 60 * 60 });
-        }
-    }
-    const autoCleanupSetting = await getJsonSetting<CleanupSettings>(
-        { env: env, } as Context<HonoCustomType>,
-        CONSTANTS.AUTO_CLEANUP_KEY
-    );
-    // one-mail: 自动清理 30 天以前非星标邮件的正文，保护 D1 存储配额
-    if (!runRetention) {
-        console.log("one-mail retention skipped (cooldown)");
-    }
-    if (runRetention) try {
-        const p = await purgeOldEmailBodies(env, 30);
-        console.log("one-mail body retention purge:", JSON.stringify(p));
-    } catch (e) {
-        console.error("one-mail body retention purge error", e);
-    }
-    // one-mail: 清理 90 天前已读的统一邮件（受同一冷却窗口保护）
-    if (runRetention) try {
-        const r = await cleanupReadEmails(env, 90);
-        console.log("one-mail retention cleanup:", JSON.stringify(r));
-    } catch (e) {
-        console.error("one-mail retention cleanup error", e);
-    }
-    if (!autoCleanupSetting) {
-        console.log("No auto cleanup settings found, skipping cleanup.");
+    const owner = await acquireRetentionLock(env);
+    if (!owner) {
+        console.log("one-mail retention skipped (lock held or migration pending)");
         return;
     }
-    console.log("autoCleanupSetting:", JSON.stringify(autoCleanupSetting));
-    if (autoCleanupSetting.enableMailsAutoCleanup) {
-        await cleanup(
+    try {
+        // Without a durable success marker, fail closed instead of running an
+        // expensive retention scan on every ten-minute cron invocation.
+        if (!env.KV) {
+            console.error("one-mail retention skipped (KV binding is required)");
+            return;
+        }
+        const now = Date.now();
+        const last = Number(await env.KV.get(RETENTION_KEY) || 0);
+        if (Number.isFinite(last) && last > 0 && now - last < RETENTION_COOLDOWN_MS) {
+            console.log("one-mail retention skipped (cooldown)");
+            return;
+        }
+
+        const p = await purgeOldEmailBodies(env, 30, RETENTION_BATCH_LIMIT, RETENTION_MAX_BATCHES);
+        console.log("one-mail body retention purge:", JSON.stringify(p));
+        const r = await cleanupReadEmails(env, 90, RETENTION_BATCH_LIMIT, RETENTION_MAX_BATCHES);
+        console.log("one-mail retention cleanup:", JSON.stringify(r));
+
+        // Legacy cleanup is intentionally in the same bounded six-hour window;
+        // otherwise auto_cleanup would bypass the retention quota guard.
+        const autoCleanupSetting = await getJsonSetting<CleanupSettings>(
             { env: env, } as Context<HonoCustomType>,
-            "mails",
-            autoCleanupSetting.cleanMailsDays
+            CONSTANTS.AUTO_CLEANUP_KEY
         );
-    }
-    if (autoCleanupSetting.enableUnknowMailsAutoCleanup) {
-        await cleanup(
-            { env: env, } as Context<HonoCustomType>,
-            "mails_unknow",
-            autoCleanupSetting.cleanUnknowMailsDays
-        );
-    }
-    if (autoCleanupSetting.enableSendBoxAutoCleanup) {
-        await cleanup(
-            { env: env, } as Context<HonoCustomType>,
-            "sendbox",
-            autoCleanupSetting.cleanSendBoxDays
-        );
-    }
-    if (autoCleanupSetting.enableInactiveAddressAutoCleanup) {
-        await cleanup(
-            { env: env, } as Context<HonoCustomType>,
-            "inactiveAddress",
-            autoCleanupSetting.cleanInactiveAddressDays
-        );
-    }
-    if (autoCleanupSetting.enableAddressAutoCleanup) {
-        await cleanup(
-            { env: env, } as Context<HonoCustomType>,
-            "addressCreated",
-            autoCleanupSetting.cleanAddressDays
-        );
-    }
-    if (autoCleanupSetting.enableUnboundAddressAutoCleanup) {
-        await cleanup(
-            { env: env, } as Context<HonoCustomType>,
-            "unboundAddress",
-            autoCleanupSetting.cleanUnboundAddressDays
-        );
-    }
-    if (autoCleanupSetting.enableEmptyAddressAutoCleanup) {
-        await cleanup(
-            { env: env, } as Context<HonoCustomType>,
-            "emptyAddress",
-            autoCleanupSetting.cleanEmptyAddressDays
-        );
-    }
-    // Execute custom SQL cleanup tasks
-    if (autoCleanupSetting.customSqlCleanupList && autoCleanupSetting.customSqlCleanupList.length > 0) {
-        for (const customSql of autoCleanupSetting.customSqlCleanupList) {
-            if (customSql.enabled && customSql.sql) {
-                const result = await executeCustomSqlCleanup(
-                    { env: env, } as Context<HonoCustomType>,
-                    customSql
-                );
-                if (!result.success) {
-                    console.error(`Custom SQL cleanup [${customSql.name}] failed: ${result.error}`);
+        if (autoCleanupSetting) {
+            console.log("autoCleanupSetting:", JSON.stringify(autoCleanupSetting));
+            if (autoCleanupSetting.enableMailsAutoCleanup) {
+                await cleanup({ env: env, } as Context<HonoCustomType>, "mails", autoCleanupSetting.cleanMailsDays);
+            }
+            if (autoCleanupSetting.enableUnknowMailsAutoCleanup) {
+                await cleanup({ env: env, } as Context<HonoCustomType>, "mails_unknow", autoCleanupSetting.cleanUnknowMailsDays);
+            }
+            if (autoCleanupSetting.enableSendBoxAutoCleanup) {
+                await cleanup({ env: env, } as Context<HonoCustomType>, "sendbox", autoCleanupSetting.cleanSendBoxDays);
+            }
+            if (autoCleanupSetting.enableInactiveAddressAutoCleanup) {
+                await cleanup({ env: env, } as Context<HonoCustomType>, "inactiveAddress", autoCleanupSetting.cleanInactiveAddressDays);
+            }
+            if (autoCleanupSetting.enableAddressAutoCleanup) {
+                await cleanup({ env: env, } as Context<HonoCustomType>, "addressCreated", autoCleanupSetting.cleanAddressDays);
+            }
+            if (autoCleanupSetting.enableUnboundAddressAutoCleanup) {
+                await cleanup({ env: env, } as Context<HonoCustomType>, "unboundAddress", autoCleanupSetting.cleanUnboundAddressDays);
+            }
+            if (autoCleanupSetting.enableEmptyAddressAutoCleanup) {
+                await cleanup({ env: env, } as Context<HonoCustomType>, "emptyAddress", autoCleanupSetting.cleanEmptyAddressDays);
+            }
+            if (autoCleanupSetting.customSqlCleanupList && autoCleanupSetting.customSqlCleanupList.length > 0) {
+                for (const customSql of autoCleanupSetting.customSqlCleanupList) {
+                    if (customSql.enabled && customSql.sql) {
+                        const result = await executeCustomSqlCleanup(
+                            { env: env, } as Context<HonoCustomType>,
+                            customSql
+                        );
+                        if (!result.success) {
+                            throw new Error(`Custom SQL cleanup [${customSql.name}] failed: ${result.error}`);
+                        }
+                    }
                 }
             }
+        } else {
+            console.log("No auto cleanup settings found, skipping cleanup.");
         }
+
+        // Record success only after every bounded cleanup path completed.
+        await env.KV.put(RETENTION_KEY, String(Date.now()), { expirationTtl: 24 * 60 * 60 });
+    } catch (error) {
+        console.error("one-mail scheduled cleanup failed; next run may retry", error);
+    } finally {
+        await releaseRetentionLock(env, owner);
     }
 }

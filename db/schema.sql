@@ -181,6 +181,12 @@ CREATE INDEX IF NOT EXISTS idx_emails_to_read_received ON emails(to_addr, is_rea
 CREATE INDEX IF NOT EXISTS idx_emails_to_star_received ON emails(to_addr, is_starred, received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS scheduled_locks (
+    name TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    locked_until INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mail_accounts (
     id TEXT PRIMARY KEY,
     source_type TEXT NOT NULL,

@@ -165,6 +165,12 @@ CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DES
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS scheduled_locks (
+    name TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    locked_until INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mail_accounts (
     id TEXT PRIMARY KEY, source_type TEXT NOT NULL, name TEXT, config_json TEXT,
     enabled INTEGER DEFAULT 1, last_sync_at INTEGER, created_at INTEGER
@@ -231,6 +237,11 @@ async function ensurePop3Columns(db: D1Database): Promise<string[]> {
 
 async function ensureUnifiedColumns(db: D1Database): Promise<string[]> {
     const changes: string[] = [];
+    await db.exec(`CREATE TABLE IF NOT EXISTS scheduled_locks (
+        name TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        locked_until INTEGER NOT NULL
+    )`);
     if (await ensureColumn(db, 'emails', 'is_starred', 'INTEGER DEFAULT 0')) {
         changes.push('emails.is_starred');
     }
