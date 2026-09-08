@@ -98,6 +98,13 @@ export async function processItem(item) {
 }
 
 export function getDownloadEmlUrl(raw) {
+    if (
+        typeof URL === 'undefined' ||
+        typeof URL.createObjectURL !== 'function' ||
+        typeof Blob === 'undefined'
+    ) {
+        return '';
+    }
     return URL.createObjectURL(
         new Blob([raw], { type: 'text/plain' }
         ))
