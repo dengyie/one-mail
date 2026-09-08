@@ -596,20 +596,22 @@ const loadOptions = async () => {
     }
     optionsScope = identity
   })()
-  optionsPromise = promise
-  optionsPromiseIdentity = identity
-  promise.catch(error => {
+  const handledPromise = promise.catch(error => {
     if (generation === optionsGeneration && identity === authIdentity.value) {
       optionsScope = ''
       optionsError.value = error.message || '筛选项加载失败，请重试'
     }
-  }).finally(() => {
-    if (optionsPromise === promise) {
+    return null
+  })
+  optionsPromise = handledPromise
+  optionsPromiseIdentity = identity
+  handledPromise.finally(() => {
+    if (optionsPromise === handledPromise) {
       optionsPromise = null
       optionsPromiseIdentity = ''
     }
   })
-  return promise
+  return handledPromise
 }
 
 const retryOptions = () => {
