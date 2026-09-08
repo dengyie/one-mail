@@ -108,10 +108,13 @@ test.describe('User address pagination browser flow', () => {
 
       const mailboxOptions = page.locator('.n-base-select-menu:visible');
       await expect(mailboxOptions).toContainText(selectedAddress.address);
+      // Selecting a bound address reloads the mailbox with the address JWT;
+      // the mailbox API is address-scoped and therefore has no address query.
       const filteredMailResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
-        return url.pathname === '/user_api/mails'
-          && url.searchParams.get('address') === selectedAddress.address;
+        return url.pathname === '/api/mails'
+          && url.searchParams.get('limit') === '20'
+          && url.searchParams.get('offset') === '0';
       });
       await mailboxOptions.getByText(selectedAddress.address, { exact: true }).click();
       expect((await filteredMailResponse).ok()).toBe(true);
