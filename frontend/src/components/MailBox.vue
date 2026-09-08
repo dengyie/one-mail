@@ -208,7 +208,7 @@ const refresh = async () => {
     curMail.value = null;
     rawData.value = nextData;
     previousData.forEach(revokeProcessedItemUrls);
-    if (totalCount > 0) {
+    if (typeof totalCount === 'number' && Number.isFinite(totalCount) && totalCount >= 0) {
       count.value = totalCount;
     }
     if (!isMobile.value && !mailListView.value && data.value.length > 0) {

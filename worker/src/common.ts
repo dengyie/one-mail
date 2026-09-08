@@ -492,7 +492,7 @@ export const cleanup = async (
     cleanDays: number | undefined | null
 ): Promise<boolean> => {
     const msgs = i18n.getMessagesbyContext(c);
-    if (!cleanType || typeof cleanDays !== 'number' || cleanDays < 0 || cleanDays > 1000) {
+    if (!cleanType || typeof cleanDays !== 'number' || !Number.isFinite(cleanDays) || cleanDays < 0 || cleanDays > 1000) {
         throw new Error(msgs.InvalidCleanupConfigMsg)
     }
     let cleanupBatchSize = getIntValue(c.env.CLEANUP_BATCH_SIZE, 3000);

@@ -243,6 +243,8 @@ const load = async () => {
   }
   loading.value = true
   error.value = ''
+  marking.value = false
+  starring.value = false
   email.value = null
   try {
     const nextEmail = await api.unified.getEmail(requestedId)
@@ -335,34 +337,64 @@ const attachments = computed(() => {
 })
 
 const markRead = async () => {
-  if (email.value.is_read) return
+  const target = email.value
+  if (!target || target.is_read) return
+  const targetId = String(target.id)
+  const targetIdentity = authIdentity.value
   marking.value = true
   try {
-    await api.unified.markRead(email.value.id)
-    email.value.is_read = 1
+    await api.unified.markRead(target.id)
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
+    target.is_read = 1
     message.success(t('detail.markRead'))
   } catch (e) {
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
     message.error(e.message || 'error')
   } finally {
-    marking.value = false
+    if (email.value === target) {
+      marking.value = false
+    }
   }
 }
 
 const toggleStar = async () => {
-  if (!email.value) return
+  const target = email.value
+  if (!target) return
+  const targetId = String(target.id)
+  const targetIdentity = authIdentity.value
   starring.value = true
   try {
-    const res = await api.unified.toggleStar(email.value.id)
-    email.value.is_starred = res.is_starred
+    const res = await api.unified.toggleStar(target.id)
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
+    target.is_starred = res.is_starred
     if (res.is_starred) {
       message.success('已标为星标邮件（正文永久保留）')
     } else {
       message.info('已取消星标')
     }
   } catch (e) {
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
     message.error(e.message || '操作失败')
   } finally {
-    starring.value = false
+    if (email.value === target) {
+      starring.value = false
+    }
   }
 }
 

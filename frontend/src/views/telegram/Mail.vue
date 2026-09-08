@@ -23,6 +23,9 @@ const replaceCurrentMail = (nextMail) => {
 };
 
 const fetchMailData = async (requestId) => {
+    if (requestId === mailRequestSeq) {
+        loading.value = true;
+    }
     try {
         const res = await api.fetch(`/telegram/get_mail`, {
             method: 'POST',
@@ -31,7 +34,6 @@ const fetchMailData = async (requestId) => {
                 mailId: route.query.mail_id
             })
         });
-        loading.value = true;
         const parsedMail = await processItem(res);
         if (requestId !== mailRequestSeq) {
             revokeProcessedItemUrls(parsedMail);
@@ -44,7 +46,9 @@ const fetchMailData = async (requestId) => {
         return {};
     }
     finally {
-        loading.value = false;
+        if (requestId === mailRequestSeq) {
+            loading.value = false;
+        }
     }
 };
 
