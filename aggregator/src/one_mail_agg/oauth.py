@@ -56,9 +56,9 @@ _TOKEN_FN = {
     "gmail": gmail_access_token,
     "outlook": outlook_access_token,
     "msa": msa_access_token,
-    # 兼容别名：配置里写 hotmail / outlook_personal 归一化为 msa
-    "hotmail": msa_access_token,
-    "outlook_personal": msa_access_token,
+    # 注意：这里只注册 canonical provider。别名 hotmail / outlook_personal
+    # 由 normalize_provider（在 oauth_client_factory 里先调用）归一化为 msa，
+    # 不在此重复注册，避免两份映射漂移（单一事实来源）。
 }
 
 

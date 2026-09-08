@@ -9,7 +9,7 @@ from imapclient.exceptions import IMAPClientError, IMAPClientAbortError
 from .config import Config, AccountConfig
 from .state import SyncState
 from .sync import sync_imap, default_client_factory
-from .oauth import oauth_client_factory
+from .oauth import oauth_client_factory, normalize_provider
 
 log = logging.getLogger("one-mail-agg")
 
@@ -130,16 +130,47 @@ class ImapIdleWorker(threading.Thread):
         log.info("IMAP IDLE worker stopped for account %s", self.account.id)
 
 
+def _is_msa_like(acc: AccountConfig) -> bool:
+    """判断是否为个人 Hotmail/Outlook（MSA）账号：host 落在 major outlook host 或
+    source 为 imap_outlook、且配置了 oauth。MSA 账号一旦 token 工厂解析失败，几乎
+    可以确定是当前 token 已吊销/无效，后端 basic auth 对微软个人号必败。"""
+    if acc.oauth is None:
+        return False
+    host = (acc.host or "").strip().lower()
+    outlook_hosts = {
+        "outlook.office365.com", "outlook.office.com", "imap-mail.outlook.com",
+        "outlook.nohav.net",
+    }
+    if host in outlook_hosts:
+        return True
+    provider = None
+    try:
+        provider = normalize_provider((acc.oauth.get("provider") if isinstance(acc.oauth, dict) else None))
+    except AttributeError:
+        return False
+    return provider == "msa"
+
+
 def _resolve_client_factory(acc: AccountConfig):
     """OAuth 账号走 oauth_client_factory（XOAUTH2/用户 token），否则默认基础登录。
 
     未知/畸形 provider 不在此处抛异常（与 sync 路径一致：账号级隔离，不拖垮整轮）。
+    MSA（Hotmail/Outlook 个人号）账号若 token 工厂无法解析 = 当前 token 基本确定吊销，
+    给出明确的「需重新授权」告警；对非 MSA 账号仍回退基础登录（qq/163 行为不变）。
     """
     if acc.oauth is not None:
         try:
             return oauth_client_factory(acc)
-        except (KeyError, AttributeError, TypeError):
-            log.error("entry %s: unsupported oauth provider for IDLE, falling back to basic login", acc.id)
+        except (KeyError, AttributeError, TypeError) as e:
+            if _is_msa_like(acc):
+                log.error(
+                    "entry %s: MSA (Hotmail/Outlook) oauth factory failed (%s) — refresh_token "
+                    "过期/吊销或 provider 误配，该账号已无法以基础认证登录（微软已禁用），"
+                    "需要重新授权拿到新 token 才能恢复 IDLE。",
+                    acc.id, e,
+                )
+            else:
+                log.error("entry %s: unsupported oauth provider for IDLE, falling back to basic login", acc.id)
     return default_client_factory
 
 

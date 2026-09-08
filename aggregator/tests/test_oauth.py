@@ -128,12 +128,20 @@ def test_normalize_provider():
 
 
 def test_token_fn_registration():
-    """所有 canonical provider + aliases 都注册了 token 函数。"""
+    """canonical provider 都注册了 token 函数；别名经 normalize_provider 归一化到 msa。
+
+    `_TOKEN_FN` 只存 canonical（gmail/outlook/msa），别名不重复注册
+    （oauth_client_factory 先 normalize_provider 再索引，单一事实来源）。
+    """
     assert _TOKEN_FN["msa"] is msa_access_token
-    assert _TOKEN_FN["hotmail"] is msa_access_token
-    assert _TOKEN_FN["outlook_personal"] is msa_access_token
     assert _TOKEN_FN["outlook"] is outlook_access_token
     assert _TOKEN_FN["gmail"] is gmail_access_token
+    # 别名不另行注册，交给 normalize_provider
+    assert "hotmail" not in _TOKEN_FN
+    assert "outlook_personal" not in _TOKEN_FN
+    # 双向确认：别名的 canonical 目标是 msa
+    assert _TOKEN_FN[normalize_provider("hotmail")] is msa_access_token
+    assert _TOKEN_FN[normalize_provider("outlook_personal")] is msa_access_token
 
 
 @responses.activate
@@ -170,8 +178,9 @@ def test_alias_hotmail_uses_msa(monkeypatch):
     def _fake_msa(oauth):
         called["provider"] = oauth.get("provider")
         return "alias-tok"
+    # 单一事实来源：factory 先 normalize_provider(hotmail)->msa，再索引 _TOKEN_FN["msa"]。
+    # 所以只 patch canonical 键即可证明别名归一路径。
     monkeypatch.setitem(oauth_mod._TOKEN_FN, "msa", _fake_msa)
-    monkeypatch.setitem(oauth_mod._TOKEN_FN, "hotmail", _fake_msa)
 
     class _FakeClient:
         def __init__(self, *a, **kw):

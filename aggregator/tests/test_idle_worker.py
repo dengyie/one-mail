@@ -5,6 +5,7 @@ from one_mail_agg.idle_worker import (
     ImapIdleWorker,
     ensure_idle_workers,
     _resolve_client_factory,
+    _is_msa_like,
     _active_idle_workers,
 )
 from one_mail_agg.oauth import oauth_client_factory
@@ -90,3 +91,49 @@ def test_resolve_client_factory_unknown_provider_falls_back():
         oauth={"provider": "totally-unknown", "client_id": "c", "refresh_token": "rt"},
     )
     assert _resolve_client_factory(acc) is default_client_factory
+
+
+def test_is_msa_like_by_host():
+    """MSA 账号按 major outlook host 识别（即便 provider 缺失/拼错）。"""
+    acc = AccountConfig(
+        id="h1", source="imap_outlook", host="outlook.office365.com", port=993,
+        username="a@outlook.com", password="p",
+        oauth={"provider": "hotmail", "client_id": "c", "refresh_token": "rt"},
+    )
+    assert _is_msa_like(acc) is True
+
+
+def test_is_msa_like_by_provider_alias():
+    """非 outlook host 但 provider 归一化为 msa（outlook_personal）也应判定为 MSA。"""
+    acc = AccountConfig(
+        id="h2", source="imap_custom", host="imap.custombox.com", port=993,
+        username="b@custom.com", password="p",
+        oauth={"provider": "outlook_personal", "client_id": "c", "refresh_token": "rt"},
+    )
+    assert _is_msa_like(acc) is True
+
+
+def test_is_msa_like_false_for_normal_account():
+    """非 MSA（qq/163/gmail 等）账号 —— host 不符且 provider 非 msa。"""
+    acc = AccountConfig(
+        id="qq2", source="imap_qq", host="imap.qq.com", port=993,
+        username="u@qq.com", password="pwd",
+    )
+    assert _is_msa_like(acc) is False
+
+
+def test_resolve_client_factory_msa_failure_logs_reauth(caplog):
+    """MSA 账号 token 工厂解析失败：不静默回退 basic，而是打清晰的「需重新授权」错误。"""
+    import logging
+    with caplog.at_level(logging.ERROR, logger="one-mail-agg"):
+        acc = AccountConfig(
+            id="dead-msa", source="imap_outlook", host="outlook.office365.com", port=993,
+            username="dead@outlook.com", password="p",
+            oauth={"provider": "totally-unknown", "client_id": "c", "refresh_token": "rt"},
+        )
+        factory = _resolve_client_factory(acc)
+    # 为了账号隔离仍返回默认工厂（不会抛异常拖垮线程）
+    assert factory is default_client_factory
+    joined = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert "重新授权" in joined
+    assert "outlook.office365.com" in str(acc.host.lower()) or "outlook" in joined
