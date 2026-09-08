@@ -437,6 +437,11 @@ export const checkRegistrationRateLimit = async (
     c: Context<HonoCustomType>, action: string, limit = 5, windowSec = 60
 ): Promise<boolean> => {
     if (!c.env.KV) return true;
+    // E2E uses an isolated local KV namespace and deliberately creates more
+    // than five users in one run. Keep this test-only mode from exercising
+    // the production abuse limiter; the flag is already required for the
+    // local-only admin test endpoints.
+    if (getBooleanValue(c.env.E2E_TEST_MODE)) return true;
     const ip = c.req.raw.headers.get("cf-connecting-ip");
     // Cloudflare supplies this header at the edge. When it is absent (local
     // development, health checks, or a direct test harness), there is no safe
