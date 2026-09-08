@@ -93,6 +93,11 @@ watch(route, () => {
 })
 
 onMounted(async () => {
+  // Address JWT sessions bypass the user login page, so load the public
+  // feature flags here before MailBox renders actions such as Reply.
+  if (jwt.value && !openSettings.value.fetched) {
+    await api.getOpenSettings(message)
+  }
   if (route.query.mail_id) {
     showMailIdQuery.value = true
     mailIdQuery.value = route.query.mail_id
