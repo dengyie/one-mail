@@ -3,12 +3,21 @@ FROM node:24-slim
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@10.10.0 --activate
 
-WORKDIR /app/frontend
+WORKDIR /app
 
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile || (echo "WARN: frozen-lockfile failed, falling back to pnpm install" && pnpm install)
+# Install the frontend through the workspace manifest; the repository does not
+# carry a per-package pnpm lockfile.
+COPY package.json pnpm-workspace.yaml ./
+COPY frontend/package.json frontend/package.json
+COPY packages/shared/package.json packages/shared/package.json
+RUN pnpm install --filter @one-mail/frontend... --no-frozen-lockfile
 
-COPY frontend/ .
+COPY packages/shared/ packages/shared/
+RUN pnpm --filter @one-mail/shared build
+
+COPY frontend/ frontend/
+
+WORKDIR /app/frontend .
 
 # Generate self-signed cert for HTTPS (required for WebAuthn/crypto.subtle)
 RUN openssl req -x509 -newkey rsa:2048 -keyout /tmp/key.pem -out /tmp/cert.pem \
