@@ -23,6 +23,21 @@ export const countEmails = async (c: Context<HonoCustomType>) => {
     return c.json({ count });
 };
 
+export const statsEmails = async (c: Context<HonoCustomType>) => {
+    const q = await resolveScope(c, c.req.query());
+    if (q === null) return c.json({ count: 0, unread: 0 });
+    const { where, params } = buildEmailFilters(q);
+    const row = await c.env.DB.prepare(
+        `SELECT count(*) as count,
+                COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread
+         FROM emails WHERE ${where}`
+    ).bind(...params).first() as { count?: number | string; unread?: number | string } | null;
+    return c.json({
+        count: Number(row?.count || 0),
+        unread: Number(row?.unread || 0),
+    });
+};
+
 export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
     const addr = q.addr;
