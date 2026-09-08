@@ -133,5 +133,12 @@ if [ -n "${WORKER_GZIP_URL:-}" ]; then
   echo "    Gzip worker database initialized"
 fi
 
+if [ -n "${WORKER_URL_SEND_MAIL_DOMAIN:-}" ]; then
+  echo "==> Initializing send-mail-domain worker database"
+  post_checked "Send-mail-domain database" "$WORKER_URL_SEND_MAIL_DOMAIN" "/admin/db_initialize"
+  post_checked "Send-mail-domain database" "$WORKER_URL_SEND_MAIL_DOMAIN" "/admin/db_migration"
+  echo "    Send-mail-domain database initialized"
+fi
+
 echo "==> Running Playwright tests"
 exec npx playwright test "$@"
