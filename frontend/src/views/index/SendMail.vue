@@ -25,7 +25,7 @@ const initializing = ref(true)
 // 是发送前唯一的富文本防线；仍建议仅对自己的可见内容开启正文加载。
 const safePreviewContent = computed(() => sanitizeHtml(sendMailModel.value?.content || ''))
 
-const { settings, sendMailModel, indexTab, userSettings, userJwt } = useGlobalState()
+const { settings, sendMailModel, userSettings, userJwt } = useGlobalState()
 
 const { t, locale } = useScopedI18n('views.index.SendMail')
 
@@ -111,7 +111,6 @@ const send = async () => {
         }
         isPreview.value = false
         message.success(t("successSend"));
-        indexTab.value = 'sendbox'
     } catch (error) {
         message.error(error.message || "error");
     } finally {

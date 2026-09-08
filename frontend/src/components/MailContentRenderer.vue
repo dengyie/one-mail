@@ -19,7 +19,7 @@ import { useGlobalState } from '../store';
 import { useMessage } from 'naive-ui';
 
 const message = useMessage();
-const { preferShowTextMail, useIframeShowMail, useUTCDate, isDark, autoLoadRemoteImages, sendMailModel, indexTab } = useGlobalState();
+const { preferShowTextMail, useIframeShowMail, useUTCDate, isDark, autoLoadRemoteImages } = useGlobalState();
 const { t } = useScopedI18n('components.MailContentRenderer');
 
 const props = defineProps({

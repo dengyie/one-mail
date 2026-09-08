@@ -1,17 +1,19 @@
 <script setup>
 import { watch, onMounted, ref, onBeforeUnmount, computed } from "vue";
+import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
 import { useGlobalState } from '../store'
 import { CloudDownloadRound, ArrowBackIosNewFilled, ArrowForwardIosFilled, InboxRound } from '@vicons/material'
 import { useIsMobile } from '../utils/composables'
 import { processItem, revokeProcessedItemUrls } from '../utils/email-parser'
-import { utcToLocalDate } from '../utils';
+import { getRouterPathWithLang, utcToLocalDate } from '../utils';
 import { buildReplyModel, buildForwardModel } from '../utils/mail-actions'
 import MailContentRenderer from "./MailContentRenderer.vue";
 import AiExtractInfo from "./AiExtractInfo.vue";
 
 const message = useMessage()
+const router = useRouter()
 const isMobile = useIsMobile()
 
 const props = defineProps({
@@ -60,7 +62,7 @@ const props = defineProps({
 const localFilterKeyword = ref('')
 
 const {
-  isDark, mailboxSplitSize, mailListView, mailListPreviewLineClamp, indexTab, loading, useUTCDate,
+  isDark, mailboxSplitSize, mailListView, mailListPreviewLineClamp, loading, useUTCDate,
   autoRefresh, configAutoRefreshInterval, sendMailModel
 } = useGlobalState()
 const autoRefreshInterval = ref(configAutoRefreshInterval.value)
@@ -157,7 +159,7 @@ const revokeZipUrl = () => {
   multiActionDownloadZip.value = {};
 };
 
-const { t } = useScopedI18n('components.MailBox')
+const { t, locale } = useScopedI18n('components.MailBox')
 
 const setupAutoRefresh = async (autoRefresh) => {
   // auto refresh every configAutoRefreshInterval seconds
@@ -261,12 +263,12 @@ const deleteMail = async () => {
 
 const replyMail = async () => {
   Object.assign(sendMailModel.value, buildReplyModel(curMail.value, t('reply')));
-  indexTab.value = 'sendmail';
+  await router.push(getRouterPathWithLang('/sendmail', locale.value));
 };
 
 const forwardMail = async () => {
   Object.assign(sendMailModel.value, buildForwardModel(curMail.value, t('forwardMail')));
-  indexTab.value = 'sendmail';
+  await router.push(getRouterPathWithLang('/sendmail', locale.value));
 };
 
 const onSpiltSizeChange = (size) => {

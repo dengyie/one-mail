@@ -34,7 +34,7 @@ const { t, locale } = useScopedI18n('views.Header')
 
 const {
   settings, userSettings, openSettings, showAdminPage,
-  userJwt, jwt, adminAuth, preferredLocale, indexTab, userTab, adminTab
+  userJwt, jwt, adminAuth, preferredLocale, userTab, adminTab
 } = useGlobalState()
 
 const isLoggedIn = computed(() => Boolean(userJwt.value))

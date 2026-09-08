@@ -1,40 +1,29 @@
 <script setup>
-import { defineAsyncComponent, onMounted, watch, ref, computed } from 'vue'
+import { onMounted, watch, ref, computed } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
 import { useGlobalState } from '../store'
 import { api } from '../api'
 import { useIsMobile } from '../utils/composables'
 import { FullscreenExitOutlined } from '@vicons/material'
-import { getRouterPathWithLang } from '../utils'
-
 import UserLogin from './user/UserLogin.vue'
 import AddressBar from './index/AddressBar.vue'
 import MailBox from '../components/MailBox.vue'
-import SendBox from '../components/SendBox.vue'
 import SimpleIndex from './index/SimpleIndex.vue'
 
 const {
-  loading, settings, openSettings, indexTab,
-  globalTabplacement, useSimpleIndex, userJwt, userSettings, jwt
+  settings, openSettings, useSimpleIndex, userJwt, jwt
 } = useGlobalState()
 
 const message = useMessage()
 const route = useRoute()
-const router = useRouter()
 const isMobile = useIsMobile()
 
 const isLoggedIn = computed(() => Boolean(userJwt.value || jwt.value))
 
-const SendMail = defineAsyncComponent(() => {
-  loading.value = true
-  return import('./index/SendMail.vue')
-    .finally(() => loading.value = false)
-})
-
-const { t, locale } = useScopedI18n('views.Index')
+const { t } = useScopedI18n('views.Index')
 
 const fetchMailData = async (limit, offset) => {
   if (mailIdQuery.value > 0) {
