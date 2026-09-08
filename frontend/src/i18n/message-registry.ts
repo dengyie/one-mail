@@ -552,6 +552,10 @@ export const MESSAGE_REGISTRY = {
       "en": "Menu",
       "zh": "菜单"
     },
+    "switchLanguage": {
+      "en": "Change language",
+      "zh": "切换语言"
+    },
     "ok": {
       "en": "OK",
       "zh": "确定"

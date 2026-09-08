@@ -46,16 +46,15 @@ test.describe('Locale switching', () => {
     await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe('zh');
   });
 
-  test('mobile drawer switch updates locale route and persisted preference', async ({ page }) => {
+  test('mobile navbar switch updates locale route and persisted preference', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 844 });
     await installLocaleInitScript(page, ['zh-CN']);
 
     await page.goto(`${FRONTEND_URL}/`);
 
-    await page.getByRole('button', { name: /菜单|Menu/i }).click();
-
-    const drawerLocaleDropdown = page.locator('.n-drawer').getByRole('button', { name: /中文|English|Español|Português|日本語|Deutsch/ }).first();
-    await selectLanguage(page, drawerLocaleDropdown, 'Deutsch');
+    // The language control stays in the sticky navbar on mobile.
+    const navbarLocaleDropdown = page.getByRole('button', { name: /切换语言|Change language/i });
+    await selectLanguage(page, navbarLocaleDropdown, 'Deutsch');
 
     await expect(page).toHaveURL(`${FRONTEND_URL}/de/`);
     await expect.poll(() => page.evaluate(() => window.localStorage.getItem('preferredLocale'))).toBe('de');

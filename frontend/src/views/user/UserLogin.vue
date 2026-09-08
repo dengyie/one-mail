@@ -147,12 +147,16 @@ const passkeyLogin = async () => {
   try {
     const opts = await api.fetch('/user_api/passkey/authenticate_request', {
       method: 'POST',
-      body: JSON.stringify({ email: form.value.email })
+      body: JSON.stringify({ domain: location.hostname })
     })
     const authResp = await startAuthentication({ optionsJSON: opts })
     const res = await api.fetch('/user_api/passkey/authenticate_response', {
       method: 'POST',
-      body: JSON.stringify(authResp)
+      body: JSON.stringify({
+        domain: location.hostname,
+        credential: authResp,
+        origin: location.origin,
+      })
     })
     userJwt.value = res.jwt
     await api.getUserSettings(message)
@@ -379,7 +383,7 @@ onMounted(async () => {
               class="w-full py-2.5 px-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700/80 transition-all flex items-center justify-center gap-2"
             >
               <n-icon size="16" :component="KeyFilled" />
-              <span>使用 Passkey 通行密钥登录</span>
+              <span>{{ t('loginWithPasskey') || '使用 Passkey 通行密钥登录' }}</span>
             </button>
 
             <!-- OAuth2 Providers (e.g., LinuxDo, GitHub, etc.) -->

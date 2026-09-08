@@ -68,7 +68,11 @@ const createPasskey = async () => {
         const res = await startRegistration({ optionsJSON: options })
         await api.fetch(`/user_api/passkey/register_response`, {
             method: 'POST',
-            body: JSON.stringify(res)
+            body: JSON.stringify({
+                credential: res,
+                origin: location.origin,
+                passkey_name: passkeyName.value,
+            })
         })
         message.success(t('createPasskey') + " " + t('success'))
         showCreatePasskey.value = false
@@ -82,8 +86,12 @@ const createPasskey = async () => {
 const passkeyList = ref([])
 const fetchPasskeyList = async () => {
     try {
-        const res = await api.fetch(`/user_api/passkey/list`)
-        passkeyList.value = res || []
+        const res = await api.fetch(`/user_api/passkey`)
+        passkeyList.value = (Array.isArray(res) ? res : []).map((row) => ({
+            ...row,
+            id: row.id ?? row.passkey_id,
+            name: row.name ?? row.passkey_name,
+        }))
     } catch (error) {
         console.log(error)
         message.error(error.message || "error")
@@ -142,8 +150,8 @@ const renamePasskey = async () => {
         await api.fetch(`/user_api/passkey/rename`, {
             method: 'POST',
             body: JSON.stringify({
-                id: currentPasskeyId.value,
-                name: currentPasskeyName.value
+                passkey_id: currentPasskeyId.value,
+                passkey_name: currentPasskeyName.value
             })
         })
         message.success(t('rename') + " " + t('success'))
@@ -157,9 +165,8 @@ const renamePasskey = async () => {
 
 const deletePasskey = async (id) => {
     try {
-        await api.fetch(`/user_api/passkey/delete`, {
-            method: 'POST',
-            body: JSON.stringify({ id })
+        await api.fetch(`/user_api/passkey/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
         })
         message.success(t('delete') + " " + t('success'))
         await fetchPasskeyList()
