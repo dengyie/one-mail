@@ -38,6 +38,12 @@ jobs:
         with:
           run_install: false
 
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build @one-mail/shared
+        run: pnpm --filter @one-mail/shared build
+
       - name: Deploy Backend for ${{ github.ref_name }}
         run: |
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
