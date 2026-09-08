@@ -180,7 +180,13 @@ const loading = ref(true)
 const error = ref('')
 const marking = ref(false)
 const starring = ref(false)
-const hasAccess = computed(() => !!userJwt.value?.trim() || !!unifiedApiKey.value?.trim())
+const authIdentity = computed(() => {
+  const jwt = userJwt.value?.trim()
+  if (jwt) return `user:${jwt}`
+  const key = unifiedApiKey.value?.trim()
+  return key ? `key:${key}` : ''
+})
+const hasAccess = computed(() => !!authIdentity.value)
 
 // AI assistant state
 const showAiPanel = ref(false)
@@ -226,6 +232,10 @@ let loadRequestSeq = 0
 const load = async () => {
   const requestId = ++loadRequestSeq
   const requestedId = String(route.params.id || '')
+  const isCurrent = () =>
+    requestId === loadRequestSeq
+    && hasAccess.value
+    && String(route.params.id || '') === requestedId
   if (!hasAccess.value) {
     email.value = null
     loading.value = false
@@ -236,26 +246,26 @@ const load = async () => {
   email.value = null
   try {
     const nextEmail = await api.unified.getEmail(requestedId)
-    if (requestId !== loadRequestSeq || !hasAccess.value) return
+    if (!isCurrent()) return
     email.value = nextEmail
   } catch (e) {
-    if (requestId !== loadRequestSeq || !hasAccess.value) return
+    if (!isCurrent()) return
     error.value = e.message || 'error'
   } finally {
-    if (requestId === loadRequestSeq) {
+    if (isCurrent()) {
       loading.value = false
     }
   }
 }
-watch([() => route.params.id, hasAccess], ([id, access], [oldId, oldAccess]) => {
-  if (!access) {
+watch([() => route.params.id, authIdentity], ([id, identity], [oldId, oldIdentity]) => {
+  if (!identity) {
     loadRequestSeq += 1
     email.value = null
     loading.value = false
     error.value = ''
     return
   }
-  if (id !== oldId || access !== oldAccess) {
+  if (id !== oldId || identity !== oldIdentity) {
     void load()
   }
 })

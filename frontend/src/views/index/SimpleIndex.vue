@@ -30,6 +30,7 @@ const showAccountSettingsCard = ref(false)
 const currentAutoRefreshInterval = ref(60)
 const timer = ref(null)
 let mailRequestSeq = 0;
+let simpleMounted = false;
 
 const { t } = useScopedI18n('views.index.SimpleIndex')
 
@@ -124,8 +125,18 @@ watch(currentPage, () => {
     fetchMails()
 })
 
+watch(() => settings.value.address, (address, previousAddress) => {
+    if (!simpleMounted || address === previousAddress) return
+    mailRequestSeq += 1
+    currentPage.value = 1
+    totalCount.value = 0
+    replaceCurrentMail(null)
+    if (address) void fetchMails()
+})
+
 onMounted(async () => {
     await api.getSettings()
+    simpleMounted = true
     await fetchMails()
 
     // 启动自动刷新

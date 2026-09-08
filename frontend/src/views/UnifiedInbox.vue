@@ -445,6 +445,8 @@ const filterActive = computed(() => !!(
 ))
 
 let listRequestSeq = 0
+let codesRequestSeq = 0
+let statusRequestSeq = 0
 const loadList = async () => {
   const requestId = ++listRequestSeq
   if (!hasAccess.value) return
@@ -634,24 +636,34 @@ const freshOptions = [
 ]
 
 const loadCodes = async () => {
-  if (!hasAccess.value) return
+  const requestId = ++codesRequestSeq
+  const identity = authIdentity.value
+  const isCurrent = () =>
+    requestId === codesRequestSeq && identity === authIdentity.value && hasAccess.value
+  if (!identity) {
+    codesLoading.value = false
+    return
+  }
   if (!codesAddr.value.trim()) {
     codesError.value = t('codes.empty')
     codes.value = []
+    codesLoading.value = false
     return
   }
   codesLoading.value = true
   codesError.value = ''
   try {
     const res = await api.unified.verifcodes(codesAddr.value.trim(), codesFresh.value * 60 * 1000)
+    if (!isCurrent()) return
     codes.value = res.results || []
     connected.value = true
   } catch (e) {
+    if (!isCurrent()) return
     codesError.value = e.message || 'error'
     connected.value = false
     codes.value = []
   } finally {
-    codesLoading.value = false
+    if (isCurrent()) codesLoading.value = false
   }
 }
 
@@ -674,13 +686,22 @@ const lastRefresh = ref(null)
 const lastLoaded = ref(null)
 
 const loadStatus = async () => {
-  if (!hasAccess.value) return
+  const requestId = ++statusRequestSeq
+  const identity = authIdentity.value
+  const isCurrent = () =>
+    requestId === statusRequestSeq && identity === authIdentity.value && hasAccess.value
+  if (!identity) {
+    statusLoading.value = false
+    return
+  }
   statusLoading.value = true
   statusError.value = ''
   try {
     const stats = await api.unified.stats({})
+    if (!isCurrent()) return
     if (!accountOptions.value.length && !sourceOptions.value.length) {
       await loadOptions()
+      if (!isCurrent()) return
     }
     status.value = {
       emails: stats.count || 0,
@@ -692,10 +713,11 @@ const loadStatus = async () => {
     lastLoaded.value = lastRefresh.value
     connected.value = true
   } catch (e) {
+    if (!isCurrent()) return
     statusError.value = e.message || 'error'
     connected.value = false
   } finally {
-    statusLoading.value = false
+    if (isCurrent()) statusLoading.value = false
   }
 }
 
@@ -774,10 +796,19 @@ const refreshCurrent = () => {
 
 watch(authIdentity, (identity, previousIdentity) => {
   if (identity === previousIdentity) return
+  listRequestSeq += 1
+  codesRequestSeq += 1
+  statusRequestSeq += 1
   resetOptions()
   connected.value = false
+  codesAddr.value = ''
+  codes.value = []
+  codesError.value = ''
+  codesLoading.value = false
+  status.value = { emails: 0, unread: 0, sources: [], accounts: [] }
+  statusError.value = ''
+  statusLoading.value = false
   if (!identity) {
-    listRequestSeq += 1
     emails.value = []
     count.value = 0
     return
