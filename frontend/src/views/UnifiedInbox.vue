@@ -801,6 +801,8 @@ watch(authIdentity, (identity, previousIdentity) => {
   statusRequestSeq += 1
   resetOptions()
   connected.value = false
+  loading.value = false
+  listError.value = ''
   codesAddr.value = ''
   codes.value = []
   codesError.value = ''
