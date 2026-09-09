@@ -3,6 +3,8 @@
 ALTER TABLE send_mail_limit_reservations ADD COLUMN dispatch_state TEXT NOT NULL DEFAULT 'pending' CHECK (dispatch_state IN ('pending', 'unknown', 'sent'));
 ALTER TABLE send_mail_limit_reservations ADD COLUMN idempotency_key TEXT;
 ALTER TABLE send_mail_limit_reservations ADD COLUMN request_hash TEXT;
+ALTER TABLE send_mail_limit_reservations ADD COLUMN sender_address TEXT;
+ALTER TABLE send_mail_limit_reservations ADD COLUMN balance_reserved INTEGER NOT NULL DEFAULT 0;
 DROP TRIGGER IF EXISTS one_mail_send_limit_reservation_release;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_idempotency ON send_mail_limit_reservations(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry ON send_mail_limit_reservations(status, dispatch_state, expires_at);

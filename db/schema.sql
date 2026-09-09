@@ -225,7 +225,9 @@ CREATE TABLE IF NOT EXISTS send_mail_limit_reservations (
     expires_at INTEGER NOT NULL,
     dispatch_state TEXT NOT NULL DEFAULT 'pending' CHECK (dispatch_state IN ('pending', 'unknown', 'sent')),
     idempotency_key TEXT,
-    request_hash TEXT
+    request_hash TEXT,
+    sender_address TEXT,
+    balance_reserved INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry
