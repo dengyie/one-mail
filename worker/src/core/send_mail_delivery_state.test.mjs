@@ -46,6 +46,7 @@ class DeliveryStateD1 {
         dispatch_state: row.dispatchState,
         sender_address: row.senderAddress,
         balance_reserved: row.balanceReserved,
+        balance_refunded: row.balanceRefunded,
       } : null;
     }
     if (sql.includes("WHERE id = ?")) {
@@ -132,6 +133,7 @@ class DeliveryStateD1 {
       if (!row || row.status !== "active" || row.balanceReserved) return { meta: { changes: 0 } };
       row.senderAddress = address;
       row.balanceReserved = 1;
+      row.balanceRefunded = 0;
       row.updatedAt = updatedAt;
       return { meta: { changes: 1 } };
     }
