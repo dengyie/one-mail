@@ -43,12 +43,12 @@ jobs:
       - name: Build @one-mail/shared
         run: pnpm --filter @one-mail/shared build
 
-      - name: Run Worker tests (123 test cases)
+      - name: Run Worker tests (144 test cases)
         run: |
           cd worker
           node --experimental-strip-types --test src/core/*.test.mjs src/unified/*.test.mjs src/user_api/*.test.mjs src/email/*.test.mjs
 
-      - name: Run Frontend tests (82 test cases)
+      - name: Run Frontend tests (92 test cases)
         run: pnpm --filter @one-mail/frontend test
 
       - name: Setup Python
@@ -56,7 +56,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run Aggregator tests (97 test cases)
+      - name: Run Aggregator tests (136 test cases)
         run: |
           cd aggregator
           python -m pip install --upgrade pip

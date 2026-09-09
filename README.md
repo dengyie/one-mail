@@ -4,6 +4,7 @@
 <p align="center">
   <a href="README.md"><img alt="中文" src="https://img.shields.io/badge/README-中文-blue"></a>
   <a href="README_EN.md"><img alt="English" src="https://img.shields.io/badge/README-English-blue"></a>
+  <a href="README_JA.md"><img alt="日本語" src="https://img.shields.io/badge/README-日本語-blue"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
