@@ -56,6 +56,7 @@ class DeliveryStateD1 {
         status: row.status,
         dispatch_state: row.dispatchState,
         sender_address: row.senderAddress,
+        sender_address_id: row.senderAddressId,
         balance_reserved: row.balanceReserved,
         balance_refunded: row.balanceRefunded,
       } : null;
