@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
 import { sendMail } from "../mails_api/send_mail_api";
-import { reserveSendMailLimit } from "../mails_api/send_mail_limit_utils";
+import { reserveSendMailLimit, type SendMailLimitReservation } from "../mails_api/send_mail_limit_utils";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -76,7 +76,8 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
     if (!isSendMailBindingEnabled(c, mailDomain)) {
         return c.text(msgs.EnableSendMailForDomainMsg, 400)
     }
-    let sendMailLimitReservation: (() => Promise<void>) | null = null;
+    let sendMailLimitReservation: SendMailLimitReservation | null = null;
+    let providerDispatchSucceeded = false;
     try {
         sendMailLimitReservation = await reserveSendMailLimit(c);
         await c.env.SEND_MAIL.send({
@@ -91,13 +92,20 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
             ...(attachments && attachments.length ? { attachments } : {}),
             ...(headers ? { headers } : {}),
         });
+        providerDispatchSucceeded = true;
     } catch (e) {
-        if (sendMailLimitReservation) {
-            try { await sendMailLimitReservation(); }
+        if (!providerDispatchSucceeded && sendMailLimitReservation) {
+            try { await sendMailLimitReservation.release(); }
             catch (releaseError) { console.error("Failed to release send mail limit reservation", releaseError); }
         }
         console.error("Admin raw send_mail failed", e);
         return c.text(getAdminSendMailErrorMessage(msgs, e), 400)
+    }
+    if (sendMailLimitReservation) {
+        try { await sendMailLimitReservation.commit(); }
+        catch (commitError) {
+            console.error("Failed to commit send mail limit reservation; reconciliation will expire it", commitError);
+        }
     }
     return c.json({ status: "ok" });
 }
