@@ -118,6 +118,17 @@ app.use('/*', async (c, next) => {
 	await next()
 });
 
+const isActiveUser = async (
+	c: Context<HonoCustomType>,
+	userId: unknown
+): Promise<boolean> => {
+	if (typeof userId !== "number" && typeof userId !== "string") return false;
+	const row = await c.env.DB.prepare(
+		`SELECT id FROM users WHERE id = ?`
+	).bind(userId).first("id");
+	return row !== undefined && row !== null;
+}
+
 const checkUserPayload = async (
 	c: Context<HonoCustomType>
 ): Promise<void> => {
@@ -129,6 +140,9 @@ const checkUserPayload = async (
 		if (!payload.exp) return;
 		// exp is in seconds
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
+			return;
+		}
+		if (!(await isActiveUser(c, payload.user_id))) {
 			return;
 		}
 		c.set("userPayload", payload as UserPayload);
@@ -151,6 +165,9 @@ const checkoutUserRolePayload = async (
 			return;
 		}
 		if (typeof payload?.user_role !== "string") return;
+		if (!(await isActiveUser(c, payload.user_id))) {
+			return;
+		}
 		c.set("userRolePayload", payload.user_role);
 	} catch (e) {
 		console.error(e);
@@ -231,6 +248,9 @@ app.use('/user_api/*', async (c, next) => {
 		if (!payload.exp) return c.text(msgs.UserTokenExpiredMsg, 401);
 		// exp is in seconds
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
+			return c.text(msgs.UserTokenExpiredMsg, 401)
+		}
+		if (!(await isActiveUser(c, payload.user_id))) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
 		c.set("userPayload", payload as UserPayload);

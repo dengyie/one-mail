@@ -211,53 +211,36 @@ const UserBindAddressModule = {
             `SELECT user_id FROM users_address where user_id = ? and address_id = ?`
         ).bind(user_id, address_id).first("user_id");
         if (!db_user_address_id) return c.text(msgs.AddressNotBindedMsg, 400)
-        // unbind telegram address
+        // Remove the Telegram route before replacing the mailbox. D1 writes
+        // below are one atomic batch so a failed statement cannot leave the
+        // address deleted without a new owner.
         await unbindTelegramByAddress(c, address);
-        // unbind user address
         try {
-            const { success } = await c.env.DB.prepare(
-                `DELETE FROM users_address where user_id = ? and address_id = ?`
-            ).bind(user_id, address_id).run();
-            if (!success) {
-                return c.text(msgs.OperationFailedMsg, 500)
+            const results = await c.env.DB.batch([
+                c.env.DB.prepare(
+                    `DELETE FROM users_address WHERE user_id = ? AND address_id = ?`
+                ).bind(user_id, address_id),
+                c.env.DB.prepare(
+                    `DELETE FROM address WHERE id = ?`
+                ).bind(address_id),
+                c.env.DB.prepare(
+                    `INSERT INTO address(name) VALUES(?)`
+                ).bind(address),
+                c.env.DB.prepare(
+                    `INSERT INTO users_address (user_id, address_id)
+                     SELECT ?, id FROM address WHERE name = ?`
+                ).bind(target_user_id, address),
+            ]);
+            const bindingResult = results[results.length - 1];
+            if (!results.every((result) => result.success)
+                || (bindingResult?.meta?.changes ?? 0) !== 1) {
+                return c.text(msgs.OperationFailedMsg, 500);
             }
-        } catch (e) {
-            return c.text(msgs.OperationFailedMsg, 500)
-        }
-        // delete address
-        await c.env.DB.prepare(
-            `DELETE FROM address WHERE id = ? `
-        ).bind(address_id).run();
-        // new address
-        const { success: newAddressSuccess } = await c.env.DB.prepare(
-            `INSERT INTO address(name) VALUES(?)`
-        ).bind(address).run();
-        if (!newAddressSuccess) {
-            throw new Error(msgs.FailedCreateAddressMsg)
+        } catch (error) {
+            console.error("[transfer-address] transaction failed:", error);
+            return c.text(msgs.OperationFailedMsg, 500);
         }
         await updateAddressUpdatedAt(c, address);
-        // find new address id
-        const new_address_id = await c.env.DB.prepare(
-            `SELECT id FROM address WHERE name = ?`
-        ).bind(address).first<number | null | undefined>("id");
-        if (!new_address_id) {
-            throw new Error(msgs.OperationFailedMsg)
-        }
-        // bind
-        try {
-            const { success } = await c.env.DB.prepare(
-                `INSERT INTO users_address (user_id, address_id) VALUES (?, ?)`
-            ).bind(target_user_id, new_address_id).run();
-            if (!success) {
-                return c.text(msgs.OperationFailedMsg, 500)
-            }
-        } catch (e) {
-            const error = e as Error;
-            if (error.message && error.message.includes("UNIQUE")) {
-                return c.text(msgs.AddressAlreadyBindedMsg, 400)
-            }
-            return c.text(msgs.OperationFailedMsg, 500)
-        }
         return c.json({ success: true })
     }
 }

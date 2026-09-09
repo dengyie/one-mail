@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| Make user deletion and address transfer atomic in D1: deletion removes roles, passkeys, external-mail credentials, and ownership links together, revoked user JWTs stop working immediately, and transfer no longer has a delete-then-recreate data-loss window.
+
 - fix: |Worker| Store user and address passwords as salted server-side PBKDF2 verifiers: browser login/registration/password changes now send the raw password over HTTPS, while legacy SHA-256 clients remain accepted and migrate after successful authentication; the reusable client digest is no longer used as the database password.
 
 - fix: |Worker| Make send-mail quota reservations durable in D1: slot allocation and the send attempt are persisted atomically, while failed or abandoned reservations are recoverable by the request path and scheduled reconciler instead of permanently exhausting the daily counter.

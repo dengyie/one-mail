@@ -156,6 +156,10 @@ test.describe('User address pagination', () => {
         if (userId !== undefined) {
           const deleteUserRes = await request.delete(`${WORKER_URL}/admin/users/${userId}`);
           expect(deleteUserRes.ok()).toBe(true);
+          const revokedUserTokenRes = await request.get(`${WORKER_URL}/user_api/bind_address`, {
+            headers: { 'x-user-token': userJwt },
+          });
+          expect(revokedUserTokenRes.status()).toBe(401);
         }
       } finally {
         if (originalUserSettings) {
