@@ -191,6 +191,7 @@ const ensureExternalBinding = async (c: Context<HonoCustomType>, userId: number,
         }
         throw error;
     }
+};
 
 const UserMailAccountsModule = {
     list: async (c: Context<HonoCustomType>) => {
