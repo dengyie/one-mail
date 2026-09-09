@@ -144,6 +144,8 @@ const RESERVATION_SCHEMA_STATEMENTS = [
     ")",
     "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry " +
         "ON send_mail_limit_reservations(status, dispatch_state, expires_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_idempotency " +
+        "ON send_mail_limit_reservations(idempotency_key) WHERE idempotency_key IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_terminal " +
         "ON send_mail_limit_reservations(status, updated_at)",
     "CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_increment " +
@@ -177,6 +179,13 @@ const RESERVATION_SCHEMA_STATEMENTS = [
             "AND MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) > 0; " +
         "END",
 ];
+
+type ExistingReservation = {
+    id: string;
+    request_hash: string | null;
+    status: "active" | "committed" | "released";
+    dispatch_state: "pending" | "unknown" | "sent";
+};
 
 const schemaReady = new WeakMap<object, Promise<void>>();
 
@@ -296,7 +305,8 @@ const updateReservationStatus = async (
 ): Promise<void> => {
     await c.env.DB.prepare(
         "UPDATE send_mail_limit_reservations SET status = ?, updated_at = ? " +
-        "WHERE id = ? AND status = 'active' AND (? = 'committed' OR dispatch_state = 'pending')"
+        "WHERE id = ? AND status = 'active' AND " +
+        "(dispatch_state = CASE WHEN ? = 'committed' THEN 'sent' ELSE 'pending' END)"
     ).bind(status, Date.now(), id, status).run();
 };
 
