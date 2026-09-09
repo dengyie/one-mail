@@ -154,7 +154,8 @@ export const resolveUnknownSendMail = async (c: Context<HonoCustomType>) => {
         if (result.status === "already_resolved") return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 409);
         if (result.refundAddress) {
             try {
-                const refunded = await refundResolvedSendMailBalance(c, id, result.refundAddress);
+                const refunded = result.refundAddressId !== undefined
+                    && await refundResolvedSendMailBalance(c, id, result.refundAddress, result.refundAddressId);
                 if (!refunded) {
                     console.error("Unknown delivery was released but balance refund was not applied");
                     return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 500);
