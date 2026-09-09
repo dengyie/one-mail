@@ -10,7 +10,7 @@ import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDom
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
-import { reserveSendMailLimit, type SendMailLimitReservation } from './send_mail_limit_utils';
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError } from './send_mail_limit_utils';
 
 
 export const api = new Hono<HonoCustomType>()
@@ -137,6 +137,7 @@ export const sendMail = async (
     options?: {
         isAdmin?: boolean
         addressId?: number | string
+        idempotencyKey?: string
     }
 ): Promise<void> => {
     const msgs = i18n.getMessagesbyContext(c);
@@ -193,11 +194,15 @@ export const sendMail = async (
     const sendByVerifiedAddressList = verifiedAddressList.includes(to_mail);
     const sendMailBindingEnabled = isSendMailBindingEnabled(c, mailDomain);
     let sendMailLimitReservation: SendMailLimitReservation | null = null;
-    let providerDispatchSucceeded = false;
+    let providerDispatchStarted = false;
 
     // Reserve the server quota and sender balance immediately before dispatch.
     try {
-        sendMailLimitReservation = await reserveSendMailLimit(c);
+        const idempotencyKey = options?.idempotencyKey;
+        const requestHash = idempotencyKey ? await hashSendMailRequest({ address, reqJson }) : undefined;
+        sendMailLimitReservation = await reserveSendMailLimit(c, { idempotencyKey, requestHash });
+        if (sendMailLimitReservation?.replay === "sent") return;
+        if (sendMailLimitReservation?.replay === "unknown") throw new SendMailDeliveryUnknownError();
         // Verified recipients are free; reserve balance only for billable sends.
         if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
             balanceReserved = await reserveSendBalance(c, address);
@@ -206,6 +211,10 @@ export const sendMail = async (
             }
         }
 
+        if (sendMailLimitReservation) {
+            await sendMailLimitReservation.markDispatchStarted();
+            providerDispatchStarted = true;
+        }
         if (sendByVerifiedAddressList) {
             await sendMailToVerifyAddress(c, address, reqJson);
         } else if (resendEnabled) {
@@ -217,30 +226,31 @@ export const sendMail = async (
         } else {
             throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");
         }
-        providerDispatchSucceeded = true;
+        if (sendMailLimitReservation) await sendMailLimitReservation.markDispatchSucceeded();
     } catch (error) {
-        if (!providerDispatchSucceeded && sendMailLimitReservation) {
+        if (providerDispatchStarted) {
+            console.error("Provider dispatch outcome is unknown", error);
+            throw new SendMailDeliveryUnknownError();
+        }
+        if (sendMailLimitReservation) {
             try { await sendMailLimitReservation.release(); }
             catch (releaseError) { console.error("Failed to release send mail limit reservation", releaseError); }
         }
-        if (!providerDispatchSucceeded && balanceReserved) {
+        if (balanceReserved) {
             try { await refundSendBalance(c, address); }
             catch (refundError) { console.error("Failed to refund send balance", refundError); }
         }
         throw error;
     }
 
-    // The provider has accepted the message. Committing the durable marker is
-    // best effort: an outage after delivery must not turn a successful send into
-    // a client-visible failure that invites a duplicate retry. The reservation
-    // remains active and the scheduled reconciler will release it if commit
-    // cannot be persisted.
+    // The provider has accepted the message. A commit failure leaves a durable
+    // sent marker; the scheduled reconciler promotes it without releasing quota.
     if (sendMailLimitReservation) {
         try {
             await sendMailLimitReservation.commit();
         } catch (commitError) {
             console.error(
-                "Failed to commit send mail limit reservation; reconciliation will expire it",
+                "Failed to commit send mail limit reservation; reconciliation will promote sent state",
                 commitError
             );
         }
@@ -271,10 +281,12 @@ api.post('/api/send_mail', async (c) => {
     const { address, address_id } = c.get("jwtPayload")
     const reqJson = await c.req.json();
     try {
-        await sendMail(c, address, reqJson, { addressId: address_id });
+        await sendMail(c, address, reqJson, { addressId: address_id, idempotencyKey: c.req.raw.headers.get("x-idempotency-key") ?? undefined });
     } catch (e) {
         console.error("Failed to send mail", e);
-        return c.text(`Failed to send mail ${(e as Error).message}`, 400)
+        const error = e as Error & { status?: number };
+        const status = error instanceof SendMailDeliveryUnknownError ? 503 : error instanceof SendMailIdempotencyConflictError ? 409 : 400;
+        return c.text(`Failed to send mail ${error.message}`, status as 400 | 409 | 503)
     }
     return c.json({ status: "ok" })
 })
@@ -289,11 +301,13 @@ api.post('/external/api/send_mail', async (c) => {
             throw new Error(msgs.AddressNotFoundMsg);
         }
         const { address } = payload;
-        await sendMail(c, address, reqJson, { addressId: payload.address_id });
+        await sendMail(c, address, reqJson, { addressId: payload.address_id, idempotencyKey: c.req.raw.headers.get("x-idempotency-key") ?? undefined });
         return c.json({ status: "ok" })
     } catch (e) {
         console.error("Failed to send mail", e);
-        return c.text(`Failed to send mail ${(e as Error).message}`, 400)
+        const error = e as Error & { status?: number };
+        const status = error instanceof SendMailDeliveryUnknownError ? 503 : error instanceof SendMailIdempotencyConflictError ? 409 : 400;
+        return c.text(`Failed to send mail ${error.message}`, status as 400 | 409 | 503)
     }
 })
 
