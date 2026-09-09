@@ -105,14 +105,16 @@ test.describe('User domain normalization', () => {
       });
       expect(saveRes.ok()).toBe(true);
 
-      const state = `case-state-${Date.now()}`;
       const loginUrlRes = await request.get(
-        `${WORKER_URL}/user_api/oauth2/login_url?clientID=case-client&state=${encodeURIComponent(state)}`,
+        `${WORKER_URL}/user_api/oauth2/login_url?clientID=case-client`,
       );
       expect(loginUrlRes.ok()).toBe(true);
+      const loginUrlBody = await loginUrlRes.json() as { url: string; state: string };
+      expect(loginUrlBody.state).toMatch(/^[0-9a-f-]{36}$/i);
+      expect(new URL(loginUrlBody.url).searchParams.get('state')).toBe(loginUrlBody.state);
 
       const callbackRes = await request.post(`${WORKER_URL}/user_api/oauth2/callback`, {
-        data: { clientID: 'case-client', code: 'case-code', state },
+        data: { clientID: 'case-client', code: 'case-code', state: loginUrlBody.state },
       });
       expect(callbackRes.ok()).toBe(true);
       const body = await callbackRes.json();

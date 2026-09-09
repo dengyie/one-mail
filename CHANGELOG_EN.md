@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |OAuth| Generate and return a random state from the Worker login-link endpoint, fixing the frontend path that otherwise always failed state validation and preventing callers from predicting or reusing state.
+
 - fix: |Worker| Make user deletion and address transfer atomic in D1: deletion removes roles, passkeys, external-mail credentials, and ownership links together, revoked user JWTs stop working immediately, and transfer no longer has a delete-then-recreate data-loss window.
 
 - fix: |Worker| Store user and address passwords as salted server-side PBKDF2 verifiers: browser login/registration/password changes now send the raw password over HTTPS, while legacy SHA-256 clients remain accepted and migrate after successful authentication; the reusable client digest is no longer used as the database password.

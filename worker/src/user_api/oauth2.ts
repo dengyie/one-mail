@@ -11,19 +11,20 @@ import { storeOAuthState, verifyOAuthState, resolveOAuthState } from '../unified
 export default {
     getOauth2LoginUrl: async (c: Context<HonoCustomType>) => {
         const settings = await getJsonSetting<UserOauth2Settings[]>(c, CONSTANTS.OAUTH2_SETTINGS_KEY);
-        const { clientID, state } = c.req.query();
+        const { clientID } = c.req.query();
         const msgs = i18n.getMessagesbyContext(c);
         const setting = settings?.find(s => s.clientID === clientID);
         if (!setting) {
             return c.text(msgs.Oauth2ClientIDNotFoundMsg, 400);
         }
-        // H6: 后端状态存储 —— 将 state 存入 KV（校验防 CSRF 换 code 用，10min TTL）。
-        // 存 KV 失败则 400，绝不在无后端状态的前提下放行换取授权码的请求。
-        if (!state || !(await storeOAuthState(c, state, clientID))) {
+        // Generate state server-side so callers cannot choose or reuse a predictable value.
+        // Store it before redirecting; callback verification remains fail-closed when KV is unavailable.
+        const state = crypto.randomUUID();
+        if (!(await storeOAuthState(c, state, clientID))) {
             return c.text(msgs.Oauth2CliendIDOrCodeMissingMsg, 400);
         }
         const url = `${setting.authorizationURL}?client_id=${setting.clientID}&response_type=code&redirect_uri=${setting.redirectURL}&scope=${setting.scope}&state=${state}`
-        return c.json({ url });
+        return c.json({ url, state });
     },
     oauth2Login: async (c: Context<HonoCustomType>) => {
         const body = await c.req.json<{ clientID?: string, code?: string, state?: string }>();
