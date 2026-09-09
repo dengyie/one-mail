@@ -318,7 +318,7 @@ export const resolveUnknownSendMailReservation = async (
     c: Context<HonoCustomType>,
     id: string,
     outcome: "sent" | "rejected",
-): Promise<{ status: "sent" | "released" | "already_resolved" | "not_found"; refundAddress?: string }> => {
+): Promise<{ status: "sent" | "released" | "already_resolved" | "not_found"; refundAddress?: string; refundAddressId?: string | number }> => {
     await ensureSendMailLimitReservationSchema(c.env.DB);
     const row = await c.env.DB.prepare(
         "SELECT status, dispatch_state, sender_address, sender_address_id, balance_reserved, balance_refunded FROM send_mail_limit_reservations WHERE id = ?"
