@@ -38,7 +38,9 @@ const {
 const instance = axios.create({
     baseURL: API_BASE,
     timeout: 30000,
-    validateStatus: (status) => status >= 200 && status <= 500
+    // Keep provider-uncertain 503 responses in the normal response path so
+    // callers can preserve and retry the same idempotency key.
+    validateStatus: (status) => status >= 200 && status < 600
 });
 
 // 统一请求核心（架构重构 P7）：4 个 wrapper 收敛为 1 个工厂。
@@ -64,9 +66,13 @@ const createApiClient = (headerInjector, hooks = {}) => {
             }
             if (response.status >= 300) {
                 const detail = response.data && typeof response.data === 'object'
-                    ? response.data.error || JSON.stringify(response.data)
+                    ? response.data.error || response.data.message || JSON.stringify(response.data)
                     : response.data;
-                throw new Error(`Code ${response.status}: ${detail || "error"}`);
+                const error = new Error(`Code ${response.status}: ${detail || "error"}`);
+                error.status = response.status;
+                error.code = response.data && typeof response.data === 'object' ? response.data.code : undefined;
+                error.retryable = response.status === 503;
+                throw error;
             }
             return response.data;
         } finally {
