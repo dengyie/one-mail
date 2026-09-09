@@ -1,6 +1,7 @@
 import { Context } from "hono";
 import { CONSTANTS } from "../constants";
 import utils from "../utils";
+import { ensureSendMailLimitReservationSchema } from "../mails_api/send_mail_limit_utils";
 
 const DB_INIT_QUERIES = `
 CREATE TABLE IF NOT EXISTS raw_mails (
@@ -271,6 +272,7 @@ export default {
         await ensureLegacyColumns(c.env.DB);
         await ensurePop3Columns(c.env.DB);
         await ensureUnifiedColumns(c.env.DB);
+        await ensureSendMailLimitReservationSchema(c.env.DB);
 
         const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
         if (version) {
@@ -342,6 +344,7 @@ export default {
         await ensureLegacyColumns(c.env.DB);
         const migrationChanges = await ensurePop3Columns(c.env.DB);
         const unifiedChanges = await ensureUnifiedColumns(c.env.DB);
+        await ensureSendMailLimitReservationSchema(c.env.DB);
         if (version != CONSTANTS.DB_VERSION || migrationChanges.length > 0 || unifiedChanges.length > 0) {
             await utils.saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
             return c.json({

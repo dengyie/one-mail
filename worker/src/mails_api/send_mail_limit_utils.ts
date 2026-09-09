@@ -80,9 +80,9 @@ export const getSendMailLimitConfig = async (
 
 /**
  * Read the quota configuration for a send decision without conflating an
- * unavailable database with an intentionally absent setting. The admin
- * settings endpoint remains fail-soft, but the send path must fail closed:
- * a D1 error or malformed stored value must never disable the quota guard.
+ * unavailable database with an intentionally absent setting. The send path
+ * must fail closed: a D1 error or malformed stored value never disables the
+ * quota guard.
  */
 const getStrictSendMailLimitConfig = async (
     c: Context<HonoCustomType>
@@ -90,7 +90,7 @@ const getStrictSendMailLimitConfig = async (
     let storedValue: string | null;
     try {
         storedValue = await c.env.DB.prepare(
-            `SELECT value FROM settings WHERE key = ?`
+            "SELECT value FROM settings WHERE key = ?"
         ).bind(CONSTANTS.SEND_MAIL_LIMIT_CONFIG_KEY).first<string>("value");
     } catch (error) {
         console.error("Failed to read send mail limit config", error);
@@ -112,52 +112,165 @@ const getDailyCountKey = (date: Date = new Date()): string => {
     const yyyy = date.getUTCFullYear();
     const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
     const dd = String(date.getUTCDate()).padStart(2, "0");
-    return `${CONSTANTS.SEND_MAIL_LIMIT_COUNT_KEY_PREFIX}daily:${yyyy}-${mm}-${dd}`;
+    return CONSTANTS.SEND_MAIL_LIMIT_COUNT_KEY_PREFIX + "daily:" +
+        yyyy + "-" + mm + "-" + dd;
 }
 
 const getMonthlyCountKey = (date: Date = new Date()): string => {
     const yyyy = date.getUTCFullYear();
     const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
-    return `${CONSTANTS.SEND_MAIL_LIMIT_COUNT_KEY_PREFIX}monthly:${yyyy}-${mm}`;
+    return CONSTANTS.SEND_MAIL_LIMIT_COUNT_KEY_PREFIX + "monthly:" +
+        yyyy + "-" + mm;
 }
 
-const releaseCount = async (
-    c: Context<HonoCustomType>,
-    key: string,
-): Promise<void> => {
-    await c.env.DB.prepare(
-        "UPDATE settings SET " +
-        "value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) - 1 AS TEXT), " +
-        "updated_at = datetime('now') " +
-        "WHERE key = ? " +
-        "AND MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) > 0"
-    ).bind(key).run();
-};
+const RESERVATION_TTL_MS = 15 * 60 * 1000;
+const RESERVATION_RECONCILE_BATCH_SIZE = 100;
+const RESERVATION_TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
-const releaseReservedCounts = async (
-    c: Context<HonoCustomType>,
-    keys: string[],
+const RESERVATION_SCHEMA_STATEMENTS = [
+    "CREATE TABLE IF NOT EXISTS send_mail_limit_reservations (" +
+        "id TEXT PRIMARY KEY, " +
+        "daily_key TEXT, " +
+        "monthly_key TEXT, " +
+        "daily_limit INTEGER, " +
+        "monthly_limit INTEGER, " +
+        "status TEXT NOT NULL CHECK (status IN ('active', 'committed', 'released')), " +
+        "created_at INTEGER NOT NULL, " +
+        "updated_at INTEGER NOT NULL, " +
+        "expires_at INTEGER NOT NULL" +
+    ")",
+    "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry " +
+        "ON send_mail_limit_reservations(status, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_terminal " +
+        "ON send_mail_limit_reservations(status, updated_at)",
+    "CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_increment " +
+        "AFTER INSERT ON send_mail_limit_reservations " +
+        "WHEN NEW.status = 'active' BEGIN " +
+        "INSERT OR IGNORE INTO settings(key, value) " +
+            "SELECT NEW.daily_key, '0' WHERE NEW.daily_key IS NOT NULL; " +
+        "UPDATE settings SET " +
+            "value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) + 1 AS TEXT), " +
+            "updated_at = datetime('now') " +
+            "WHERE key = NEW.daily_key AND NEW.daily_key IS NOT NULL; " +
+        "INSERT OR IGNORE INTO settings(key, value) " +
+            "SELECT NEW.monthly_key, '0' WHERE NEW.monthly_key IS NOT NULL; " +
+        "UPDATE settings SET " +
+            "value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) + 1 AS TEXT), " +
+            "updated_at = datetime('now') " +
+            "WHERE key = NEW.monthly_key AND NEW.monthly_key IS NOT NULL; " +
+        "END",
+    "CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_release " +
+        "AFTER UPDATE OF status ON send_mail_limit_reservations " +
+        "WHEN OLD.status = 'active' AND NEW.status = 'released' BEGIN " +
+        "UPDATE settings SET " +
+            "value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) - 1 AS TEXT), " +
+            "updated_at = datetime('now') " +
+            "WHERE key = OLD.daily_key AND OLD.daily_key IS NOT NULL " +
+            "AND MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) > 0; " +
+        "UPDATE settings SET " +
+            "value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) - 1 AS TEXT), " +
+            "updated_at = datetime('now') " +
+            "WHERE key = OLD.monthly_key AND OLD.monthly_key IS NOT NULL " +
+            "AND MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) > 0; " +
+        "END",
+];
+
+const schemaReady = new WeakMap<object, Promise<void>>();
+
+export const ensureSendMailLimitReservationSchema = async (
+    db: D1Database
 ): Promise<void> => {
-    for (const key of keys.reverse()) {
-        try {
-            await releaseCount(c, key);
-        } catch (error) {
-            // The provider error remains the primary failure. A release failure is
-            // logged so operators can repair a leaked reservation without hiding it.
-            console.error(`Failed to release send mail limit reservation for ${key}`, error);
+    const dbObject = db as unknown as object;
+    const existing = schemaReady.get(dbObject);
+    if (existing) {
+        return existing;
+    }
+    const setup = (async () => {
+        for (const statement of RESERVATION_SCHEMA_STATEMENTS) {
+            await db.prepare(statement).run();
         }
+    })();
+    schemaReady.set(dbObject, setup);
+    try {
+        await setup;
+    } catch (error) {
+        schemaReady.delete(dbObject);
+        throw error;
     }
 };
 
-export type SendMailLimitReservation = () => Promise<void>;
+const resultChanges = (
+    result: { meta?: { changes?: number } } | null | undefined
+): number => Number(result?.meta?.changes ?? 0);
+
+const readCounter = async (
+    c: Context<HonoCustomType>,
+    key: string
+): Promise<number> => {
+    const value = await c.env.DB.prepare(
+        "SELECT value FROM settings WHERE key = ?"
+    ).bind(key).first<string>("value");
+    const parsed = Number.parseInt(value ?? "0", 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+const releaseExpiredReservations = async (
+    db: D1Database,
+    now: number,
+    batchLimit: number
+): Promise<number> => {
+    const result = await db.prepare(
+        "UPDATE send_mail_limit_reservations SET status = 'released', updated_at = ? " +
+        "WHERE id IN (" +
+            "SELECT id FROM send_mail_limit_reservations " +
+            "WHERE status = 'active' AND expires_at <= ? " +
+            "ORDER BY expires_at, id LIMIT ?" +
+        ")"
+    ).bind(now, now, batchLimit).run();
+    return resultChanges(result);
+};
+
+export const reconcileSendMailLimitReservations = async (
+    env: Pick<Bindings, "DB">,
+    now: number = Date.now(),
+    batchLimit: number = RESERVATION_RECONCILE_BATCH_SIZE
+): Promise<{ released: number; purged: number }> => {
+    await ensureSendMailLimitReservationSchema(env.DB);
+    const released = await releaseExpiredReservations(env.DB, now, batchLimit);
+    const purgeBefore = now - RESERVATION_TERMINAL_RETENTION_MS;
+    const purgedResult = await env.DB.prepare(
+        "DELETE FROM send_mail_limit_reservations " +
+        "WHERE id IN (" +
+            "SELECT id FROM send_mail_limit_reservations " +
+            "WHERE status IN ('released', 'committed') AND updated_at < ? " +
+            "ORDER BY updated_at, id LIMIT ?" +
+        ")"
+    ).bind(purgeBefore, batchLimit).run();
+    return { released, purged: resultChanges(purgedResult) };
+};
+
+export type SendMailLimitReservation = {
+    commit: () => Promise<void>;
+    release: () => Promise<void>;
+};
+
+const updateReservationStatus = async (
+    c: Context<HonoCustomType>,
+    id: string,
+    status: "committed" | "released"
+): Promise<void> => {
+    await c.env.DB.prepare(
+        "UPDATE send_mail_limit_reservations SET status = ?, updated_at = ? " +
+        "WHERE id = ? AND status = 'active'"
+    ).bind(status, Date.now(), id).run();
+};
 
 /**
- * Atomically reserve one daily/monthly quota slot before dispatching mail.
- *
- * The conditional UPSERT serializes competing requests on each counter row, so
- * concurrent sends cannot all pass a read-then-increment check. A reservation is
- * released only when the downstream provider rejects the dispatch; on success it
- * remains as the committed send count.
+ * Atomically reserve the daily/monthly quota slots and persist the reservation
+ * before a provider call. The INSERT ... SELECT guard and its triggers execute
+ * as one SQLite write. D1 serializes writes to a database, so concurrent sends
+ * cannot all pass a read-then-increment check. Failed/abandoned active rows are
+ * released by the request path or by the scheduled reconciler.
  */
 export const reserveSendMailLimit = async (
     c: Context<HonoCustomType>
@@ -168,53 +281,67 @@ export const reserveSendMailLimit = async (
         return null;
     }
 
-    const dailyKey = getDailyCountKey();
-    const monthlyKey = getMonthlyCountKey();
-    const reservedKeys: string[] = [];
+    const dailyLimit = config.dailyEnabled &&
+        config.dailyLimit !== null && config.dailyLimit !== -1
+        ? config.dailyLimit : null;
+    const monthlyLimit = config.monthlyEnabled &&
+        config.monthlyLimit !== null && config.monthlyLimit !== -1
+        ? config.monthlyLimit : null;
+    const dailyKey = dailyLimit === null ? null : getDailyCountKey();
+    const monthlyKey = monthlyLimit === null ? null : getMonthlyCountKey();
+
     try {
-        if (config.dailyEnabled && config.dailyLimit !== null && config.dailyLimit !== -1) {
-            const limit = config.dailyLimit;
-            if (limit === 0 || !(await reserveCount(c, dailyKey, limit))) {
+        await ensureSendMailLimitReservationSchema(c.env.DB);
+        // Opportunistically release abandoned rows so a failed request does not
+        // consume a slot until the next cron invocation.
+        await releaseExpiredReservations(c.env.DB, Date.now(), RESERVATION_RECONCILE_BATCH_SIZE);
+
+        const id = crypto.randomUUID();
+        const now = Date.now();
+        const result = await c.env.DB.prepare(
+            "INSERT INTO send_mail_limit_reservations " +
+            "(id, daily_key, monthly_key, daily_limit, monthly_limit, status, created_at, updated_at, expires_at) " +
+            "SELECT ?, ?, ?, ?, ?, 'active', ?, ?, ? " +
+            "WHERE (? IS NULL OR CAST(COALESCE((" +
+                "SELECT value FROM settings WHERE key = ?), '0') AS INTEGER) < ?) " +
+            "AND (? IS NULL OR CAST(COALESCE((" +
+                "SELECT value FROM settings WHERE key = ?), '0') AS INTEGER) < ?)"
+        ).bind(
+            id, dailyKey, monthlyKey, dailyLimit, monthlyLimit, now, now,
+            now + RESERVATION_TTL_MS,
+            dailyKey, dailyKey, dailyLimit,
+            monthlyKey, monthlyKey, monthlyLimit
+        ).run();
+
+        if (resultChanges(result) !== 1) {
+            if (dailyLimit !== null && await readCounter(c, dailyKey!) >= dailyLimit) {
                 throw new SendMailLimitError(msgs.ServerSendMailDailyLimitMsg);
             }
-            reservedKeys.push(dailyKey);
-        }
-        if (config.monthlyEnabled && config.monthlyLimit !== null && config.monthlyLimit !== -1) {
-            const limit = config.monthlyLimit;
-            if (limit === 0 || !(await reserveCount(c, monthlyKey, limit))) {
+            if (monthlyLimit !== null && await readCounter(c, monthlyKey!) >= monthlyLimit) {
                 throw new SendMailLimitError(msgs.ServerSendMailMonthlyLimitMsg);
             }
-            reservedKeys.push(monthlyKey);
+            throw new Error(msgs.OperationFailedMsg);
         }
 
-        let released = false;
-        return async () => {
-            if (released) return;
-            released = true;
-            await releaseReservedCounts(c, reservedKeys);
+        let settled = false;
+        return {
+            commit: async () => {
+                if (settled) return;
+                await updateReservationStatus(c, id, "committed");
+                settled = true;
+            },
+            release: async () => {
+                if (settled) return;
+                await updateReservationStatus(c, id, "released");
+                settled = true;
+            },
         };
     } catch (error) {
-        await releaseReservedCounts(c, reservedKeys);
         if (error instanceof SendMailLimitError) {
             throw error;
         }
         console.error("Failed to reserve send mail limit", error);
-        // Fail closed when the quota reservation itself cannot be evaluated.
+        // Fail closed when the quota reservation cannot be evaluated.
         throw new Error(msgs.OperationFailedMsg);
     }
-};
-
-const reserveCount = async (
-    c: Context<HonoCustomType>,
-    key: string,
-    limit: number,
-): Promise<boolean> => {
-    const result = await c.env.DB.prepare(
-        "INSERT INTO settings (key, value) VALUES (?, '1') " +
-        "ON CONFLICT(key) DO UPDATE SET " +
-        "value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) + 1 AS TEXT), " +
-        "updated_at = datetime('now') " +
-        "WHERE MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) < ?"
-    ).bind(key, limit).run();
-    return Number(result.meta?.changes ?? 0) > 0;
 };

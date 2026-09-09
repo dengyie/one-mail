@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| Make send-mail quota reservations durable in D1: slot allocation and the send attempt are persisted atomically, while failed or abandoned reservations are recoverable by the request path and scheduled reconciler instead of permanently exhausting the daily counter.
+
 - feat: |Aggregator| Add OAuth2/XOAUTH2 onboarding for **personal Hotmail / Outlook.com (MSA)** accounts: since Microsoft has disabled IMAP Basic authentication in all tenants (App Passwords also unavailable for many accounts), `aggregator/oauth.py` adds `msa_access_token` using the `/consumers` tenant with a public client (no `client_secret` required, scope `IMAP.AccessAsUser.All offline_access`) while reusing the existing `oauth2_login` XOAUTH2 channel; `normalize_provider` maps `hotmail`/`outlook_personal` to `msa` so all three `provider` spellings work in `config.json`; the Worker `user_api/mail_accounts.ts` `OAUTH_PROVIDERS` whitelist now accepts `msa`/`hotmail`/`outlook_personal`; added `aggregator/scripts/msa_authorize.py` (Device Code Flow) to obtain a long-lived `refresh_token` in one run; `config.example.json` and the deploy README document personal-account onboarding; organizational accounts still use `outlook` + secret, unchanged. Tests: 10 new MSA cases (no-secret public client / optional secret / 400 rejection / provider normalization / factory routing / aliases) — aggregator 126 pass, worker 127 pass, vitepress build green.
 
 - feat: |Worker| Phase 0 external-mail connection test and immediate-sync contracts: added user-ownership-checked `test-connection` / `sync` routes; because the Worker has no VPS/queue dispatch binding yet, they explicitly return `501 unsupported` and never fake connection success or queued state.

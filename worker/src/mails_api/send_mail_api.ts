@@ -10,7 +10,7 @@ import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDom
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
-import { reserveSendMailLimit } from './send_mail_limit_utils';
+import { reserveSendMailLimit, type SendMailLimitReservation } from './send_mail_limit_utils';
 
 
 export const api = new Hono<HonoCustomType>()
@@ -183,9 +183,8 @@ export const sendMail = async (
     }
     // Resolve the dispatch path before taking any reservations. The actual provider
     // call stays inside one try/catch so every failed attempt releases both quotas.
-    const resendEnabled = c.env.RESEND_TOKEN || c.env[
-        `RESEND_TOKEN_${mailDomain.replace(/\./g, "_").toUpperCase()}`
-    ];
+    const resendTokenKey = "RESEND_TOKEN_" + mailDomain.replace(/\\./g, "_").toUpperCase();
+    const resendEnabled = c.env.RESEND_TOKEN || c.env[resendTokenKey];
     const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
     const smtpConfig = getDomainMapValue(smtpConfigMap, mailDomain);
     const verifiedAddressList = c.env.SEND_MAIL
@@ -193,7 +192,8 @@ export const sendMail = async (
         : [];
     const sendByVerifiedAddressList = verifiedAddressList.includes(to_mail);
     const sendMailBindingEnabled = isSendMailBindingEnabled(c, mailDomain);
-    let sendMailLimitReservation: (() => Promise<void>) | null = null;
+    let sendMailLimitReservation: SendMailLimitReservation | null = null;
+    let providerDispatchSucceeded = false;
 
     // Reserve the server quota and sender balance immediately before dispatch.
     try {
@@ -215,18 +215,35 @@ export const sendMail = async (
         } else if (sendMailBindingEnabled) {
             await sendMailByBinding(c, address, reqJson);
         } else {
-            throw new Error(`${msgs.EnableResendOrSmtpOrSendMailMsg} (${mailDomain})`);
+            throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");
         }
+        providerDispatchSucceeded = true;
     } catch (error) {
-        if (sendMailLimitReservation) {
-            try { await sendMailLimitReservation(); }
+        if (!providerDispatchSucceeded && sendMailLimitReservation) {
+            try { await sendMailLimitReservation.release(); }
             catch (releaseError) { console.error("Failed to release send mail limit reservation", releaseError); }
         }
-        if (balanceReserved) {
+        if (!providerDispatchSucceeded && balanceReserved) {
             try { await refundSendBalance(c, address); }
             catch (refundError) { console.error("Failed to refund send balance", refundError); }
         }
         throw error;
+    }
+
+    // The provider has accepted the message. Committing the durable marker is
+    // best effort: an outage after delivery must not turn a successful send into
+    // a client-visible failure that invites a duplicate retry. The reservation
+    // remains active and the scheduled reconciler will release it if commit
+    // cannot be persisted.
+    if (sendMailLimitReservation) {
+        try {
+            await sendMailLimitReservation.commit();
+        } catch (commitError) {
+            console.error(
+                "Failed to commit send mail limit reservation; reconciliation will expire it",
+                commitError
+            );
+        }
     }
     // update address updated_at
     updateAddressUpdatedAt(c, address);

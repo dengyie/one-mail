@@ -5,6 +5,7 @@ import { getJsonSetting } from './utils';
 import { CleanupSettings } from './models';
 import { executeCustomSqlCleanup } from './admin_api/cleanup_api';
 import { cleanupReadEmails, purgeOldEmailBodies } from './unified/retention';
+import { reconcileSendMailLimitReservations } from './mails_api/send_mail_limit_utils';
 
 const RETENTION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const RETENTION_KEY = "one-mail:retention:last-success";
@@ -53,8 +54,17 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
         return;
     }
     try {
+        try {
+            const quota = await reconcileSendMailLimitReservations(env);
+            if (quota.released > 0 || quota.purged > 0) {
+                console.log("one-mail send quota reconciliation:", JSON.stringify(quota));
+            }
+        } catch (error) {
+            console.error("one-mail send quota reconciliation failed", error);
+        }
+
         // Without a durable success marker, fail closed instead of running an
-        // expensive retention scan on every ten-minute cron invocation.
+          // expensive retention scan on every ten-minute cron invocation.
         if (!env.KV) {
             console.error("one-mail retention skipped (KV binding is required)");
             return;
