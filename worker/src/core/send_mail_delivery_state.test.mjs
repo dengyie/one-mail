@@ -88,6 +88,20 @@ class DeliveryStateD1 {
   async run(sql, args) {
     if (sql.startsWith("CREATE ")) return { meta: { changes: 0 } };
     if (sql.includes("UPDATE send_mail_limit_reservations SET status = 'released'")) {
+      // 两类 SQL 共用 SET status = 'released' 子串，但参数契约不同：
+      // ① releaseExpiredReservations 批量过期：args=[now, now, batchLimit]，SQL 含 WHERE id IN (SELECT...)。
+      // ② resolveUnknownSendMailReservation(rejected) 单条释放：args=[now, id]，SQL 含 WHERE id = ?。
+      // 必须精确分流，否则单条释放会误入批量分支（把 id 当 limit → NaN slice → changes=0）。
+      if (!sql.includes("WHERE id IN (")) {
+        // 单条释放：resolver rejected 分支的第二个 UPDATE
+        const [updatedAt, id] = args;
+        const row = this.reservations.get(id);
+        if (!row || row.status !== "active" || row.dispatchState !== "pending") return { meta: { changes: 0 } };
+        row.status = "released";
+        row.updatedAt = updatedAt;
+        this.decrement(row.dailyKey);
+        return { meta: { changes: 1 } };
+      }
       const [updatedAt, now, limit] = args;
       const rows = [...this.reservations.values()]
         .filter((row) => row.status === "active" && row.dispatchState === "pending" && row.expiresAt <= now)
@@ -107,7 +121,7 @@ class DeliveryStateD1 {
       return { meta: { changes: row?.status === "released" ? 1 : 0 } };
     }
     if (sql.includes("INSERT INTO send_mail_limit_reservations")) {
-      const [id, dailyKey, monthlyKey, dailyLimit, monthlyLimit, createdAt, updatedAt, expiresAt, , idempotencyKey, requestHash] = args;
+      const [id, dailyKey, monthlyKey, dailyLimit, monthlyLimit, createdAt, updatedAt, expiresAt, idempotencyKey, requestHash] = args;
       if (idempotencyKey && [...this.reservations.values()].some((row) => row.idempotencyKey === idempotencyKey)) {
         throw new Error("UNIQUE constraint failed");
       }
