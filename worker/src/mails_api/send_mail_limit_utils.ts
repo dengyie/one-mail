@@ -142,6 +142,7 @@ const RESERVATION_SCHEMA_STATEMENTS = [
         "idempotency_key TEXT, " +
         "request_hash TEXT, " +
         "sender_address TEXT, " +
+        "sender_address_id TEXT, " +
         "balance_reserved INTEGER NOT NULL DEFAULT 0, " +
         "balance_refunded INTEGER NOT NULL DEFAULT 0" +
     ")",
@@ -189,6 +190,7 @@ type ExistingReservation = {
     status: "active" | "committed" | "released";
     dispatch_state: "pending" | "unknown" | "sent";
     sender_address?: string | null;
+    sender_address_id?: string | number | null;
     balance_reserved?: number;
     balance_refunded?: number;
 };
@@ -281,6 +283,7 @@ export const reconcileSendMailLimitReservations = async (
 export type UnknownSendMailReservation = {
     id: string;
     sender_address: string | null;
+    sender_address_id: string | number | null;
     balance_reserved: number;
     balance_refunded: number;
     idempotency_key: string | null;
@@ -296,7 +299,7 @@ export const listUnknownSendMailReservations = async (
     await ensureSendMailLimitReservationSchema(db);
     const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 100);
     const result = await db.prepare(
-        "SELECT id, sender_address, balance_reserved, balance_refunded, idempotency_key, created_at, updated_at, expires_at " +
+        "SELECT id, sender_address, sender_address_id, balance_reserved, balance_refunded, idempotency_key, created_at, updated_at, expires_at " +
         "FROM send_mail_limit_reservations WHERE status = 'active' AND dispatch_state = 'unknown' " +
         "ORDER BY updated_at ASC, id ASC LIMIT ?"
     ).bind(safeLimit).all<UnknownSendMailReservation>();
@@ -318,11 +321,11 @@ export const resolveUnknownSendMailReservation = async (
 ): Promise<{ status: "sent" | "released" | "already_resolved" | "not_found"; refundAddress?: string }> => {
     await ensureSendMailLimitReservationSchema(c.env.DB);
     const row = await c.env.DB.prepare(
-        "SELECT status, dispatch_state, sender_address, balance_reserved, balance_refunded FROM send_mail_limit_reservations WHERE id = ?"
-    ).bind(id).first<{ status: string; dispatch_state: string; sender_address: string | null; balance_reserved: number; balance_refunded: number }>();
+        "SELECT status, dispatch_state, sender_address, sender_address_id, balance_reserved, balance_refunded FROM send_mail_limit_reservations WHERE id = ?"
+    ).bind(id).first<{ status: string; dispatch_state: string; sender_address: string | null; sender_address_id: string | number | null; balance_reserved: number; balance_refunded: number }>();
     if (!row) return { status: "not_found" };
     if (row.status === "released" && row.balance_reserved === 1 && row.balance_refunded === 0 && outcome === "rejected") {
-        return { status: "released", refundAddress: row.sender_address ?? undefined };
+        return { status: "released", refundAddress: row.sender_address ?? undefined, refundAddressId: row.sender_address_id ?? undefined };
     }
     if (row.status !== "active" || row.dispatch_state !== "unknown") return { status: "already_resolved" };
     if (outcome === "sent") {
@@ -347,7 +350,7 @@ export const resolveUnknownSendMailReservation = async (
     ]);
     const released = resultChanges(results[1]);
     return released === 1
-        ? { status: "released", refundAddress: row.balance_reserved === 1 && row.balance_refunded === 0 ? (row.sender_address ?? undefined) : undefined }
+        ? { status: "released", refundAddress: row.balance_reserved === 1 && row.balance_refunded === 0 ? (row.sender_address ?? undefined) : undefined, refundAddressId: row.balance_reserved === 1 && row.balance_refunded === 0 ? (row.sender_address_id ?? undefined) : undefined }
         : { status: "already_resolved" };
 };
 
@@ -355,18 +358,21 @@ export const refundResolvedSendMailBalance = async (
     c: Context<HonoCustomType>,
     id: string,
     address: string,
+    addressId: string | number,
 ): Promise<boolean> => {
     await ensureSendMailLimitReservationSchema(c.env.DB);
     const results = await c.env.DB.batch([
         c.env.DB.prepare(
             "UPDATE address_sender SET balance = balance + 1 WHERE address = ? AND EXISTS (" +
-            "SELECT 1 FROM send_mail_limit_reservations WHERE id = ? AND status = 'released' AND balance_reserved = 1 AND balance_refunded = 0)"
-        ).bind(address, id),
+            "SELECT 1 FROM send_mail_limit_reservations r JOIN address a ON a.id = r.sender_address_id AND a.name = r.sender_address " +
+            "WHERE r.id = ? AND r.sender_address_id = ? AND r.status = 'released' AND r.balance_reserved = 1 AND r.balance_refunded = 0)"
+        ).bind(address, id, addressId),
         c.env.DB.prepare(
             "UPDATE send_mail_limit_reservations SET balance_refunded = 1, updated_at = ? " +
             "WHERE id = ? AND status = 'released' AND balance_reserved = 1 AND balance_refunded = 0 " +
-            "AND EXISTS (SELECT 1 FROM address_sender WHERE address = ?)"
-        ).bind(Date.now(), id, address),
+            "AND EXISTS (SELECT 1 FROM address_sender WHERE address = ?) " +
+            "AND EXISTS (SELECT 1 FROM address a WHERE a.id = ? AND a.name = ?)"
+        ).bind(Date.now(), id, address, addressId),
     ]);
     return resultChanges(results[1]) === 1;
 };
@@ -399,7 +405,7 @@ export type SendMailLimitReservation = {
     replay?: "sent" | "unknown";
     markDispatchStarted: () => Promise<void>;
     markDispatchSucceeded: () => Promise<void>;
-    markBalanceReserved: (address: string) => Promise<void>;
+    markBalanceReserved: (address: string, addressId: string | number) => Promise<void>;
     commit: () => Promise<void>;
     release: () => Promise<void>;
 };
@@ -422,10 +428,10 @@ const updateDispatchState = async (c: Context<HonoCustomType>, id: string, state
     ).bind(state, Date.now(), id, expected).run();
 };
 
-const markBalanceReserved = async (c: Context<HonoCustomType>, id: string, address: string) => {
+const markBalanceReserved = async (c: Context<HonoCustomType>, id: string, address: string, addressId: string | number) => {
     await c.env.DB.prepare(
-        "UPDATE send_mail_limit_reservations SET sender_address = ?, balance_reserved = 1, balance_refunded = 0, updated_at = ? WHERE id = ? AND status = 'active' AND balance_reserved = 0"
-    ).bind(address, Date.now(), id).run();
+        "UPDATE send_mail_limit_reservations SET sender_address = ?, sender_address_id = ?, balance_reserved = 1, balance_refunded = 0, updated_at = ? WHERE id = ? AND status = 'active' AND balance_reserved = 0"
+    ).bind(address, addressId, Date.now(), id).run();
 };
 
 /**
