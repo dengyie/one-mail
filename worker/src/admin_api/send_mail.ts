@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
 import { sendMail } from "../mails_api/send_mail_api";
-import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError } from "../mails_api/send_mail_limit_utils";
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, listUnknownSendMailReservations, resolveUnknownSendMailReservation } from "../mails_api/send_mail_limit_utils";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -43,7 +43,8 @@ export const sendMailbyAdmin = async (c: Context<HonoCustomType>) => {
         })
     } catch (e) {
         console.error("Admin send_mail failed", e);
-        return c.text(getAdminSendMailErrorMessage(msgs, e), 400)
+        const status = e instanceof SendMailDeliveryUnknownError ? 503 : e instanceof SendMailIdempotencyConflictError ? 409 : 400;
+        return c.text(getAdminSendMailErrorMessage(msgs, e), status as 400 | 409 | 503)
     }
     return c.json({ status: "ok" });
 }
@@ -123,3 +124,46 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
     }
     return c.json({ status: "ok" });
 }
+
+
+export const listUnknownSendMail = async (c: Context<HonoCustomType>) => {
+    try {
+        const rawLimit = Number(c.req.query("limit") || 100);
+        const results = await listUnknownSendMailReservations(c.env.DB, Number.isFinite(rawLimit) ? rawLimit : 100);
+        return c.json({ results });
+    } catch (error) {
+        console.error("Failed to list unknown send-mail reservations", error);
+        return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 500);
+    }
+};
+
+export const resolveUnknownSendMail = async (c: Context<HonoCustomType>) => {
+    const id = c.req.param("id");
+    let body: { outcome?: string };
+    try {
+        body = await c.req.json();
+    } catch {
+        return c.text(i18n.getMessagesbyContext(c).InvalidInputMsg, 400);
+    }
+    if (body.outcome !== "sent" && body.outcome !== "rejected") {
+        return c.text(i18n.getMessagesbyContext(c).InvalidInputMsg, 400);
+    }
+    try {
+        const result = await resolveUnknownSendMailReservation(c, id, body.outcome);
+        if (result.status === "not_found") return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 404);
+        if (result.status === "already_resolved") return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 409);
+        if (result.refundAddress) {
+            try {
+                const { refundSendBalance } = await import("../mails_api/send_balance");
+                await refundSendBalance(c, result.refundAddress);
+            } catch (error) {
+                console.error("Unknown delivery was released but balance refund failed", error);
+                return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 500);
+            }
+        }
+        return c.json({ status: result.status });
+    } catch (error) {
+        console.error("Failed to resolve unknown send-mail reservation", error);
+        return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 500);
+    }
+};
