@@ -11,6 +11,7 @@ import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import { sanitizeHtml } from '../../utils/sanitize-html'
 import { getRouterPathWithLang } from '../../utils'
+import { getSendMailIdempotencyKey, clearSendMailIdempotencyKey } from '../../utils/idempotency'
 
 const router = useRouter()
 const message = useMessage()
@@ -18,6 +19,17 @@ const isPreview = ref(false)
 const editorRef = shallowRef()
 const sending = ref(false)
 const initializing = ref(true)
+let activeSendMailIdempotencyKey = ''
+
+const currentSendMailIdempotencyKey = () => {
+    if (!activeSendMailIdempotencyKey) activeSendMailIdempotencyKey = getSendMailIdempotencyKey('user')
+    return activeSendMailIdempotencyKey
+}
+
+const resetSendMailIdempotencyKey = () => {
+    activeSendMailIdempotencyKey = ''
+    clearSendMailIdempotencyKey('user')
+}
 
 // 富文本/HTML 预览一律先消毒再 v-html（自伤防护）：编辑器内容可含外部粘贴
 // 的 HTML（如 "回信时引用原始邮件"），javascript:/data:text/html/form-action
@@ -99,7 +111,8 @@ const send = async () => {
         await api.fetch(`/api/send_mail`,
             {
                 method: 'POST',
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                headers: { 'x-idempotency-key': currentSendMailIdempotencyKey() },
             })
         sendMailModel.value = {
             fromName: "",
@@ -110,9 +123,11 @@ const send = async () => {
             content: "",
         }
         isPreview.value = false
+        resetSendMailIdempotencyKey()
         message.success(t("successSend"));
     } catch (error) {
-        message.error(error.message || "error");
+        if (error?.status !== 503) resetSendMailIdempotencyKey()
+        message.error(error?.status === 503 ? t('deliveryUnknown') : (error.message || "error"));
     } finally {
         sending.value = false
     }
