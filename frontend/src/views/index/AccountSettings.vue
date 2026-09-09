@@ -6,7 +6,6 @@ import { useRouter } from 'vue-router'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
-import { hashPassword } from '../../utils'
 import { getRouterPathWithLang } from '../../utils'
 import { clearLocalAddressCache } from '../../utils/address-cache'
 
@@ -101,7 +100,7 @@ const changePassword = async () => {
         await api.fetch(`/api/address_change_password`, {
             method: 'POST',
             body: JSON.stringify({
-                new_password: await hashPassword(newPassword.value)
+                new_password: newPassword.value
             })
         });
         message.success(t("passwordChanged"));

@@ -1,8 +1,9 @@
 import { Context } from 'hono';
 import { WorkerMailerOptions } from 'worker-mailer';
 
-import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, hashPassword, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
+import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
 import { unbindTelegramByAddress } from './telegram_api/common';
+import { hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
 import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
 import { signAddressJwt } from './core/auth';
@@ -301,7 +302,7 @@ const generatePasswordForAddress = async (
     }
 
     const plainPassword = generateRandomPassword();
-    const hashedPassword = await hashPassword(plainPassword);
+    const hashedPassword = await hashPasswordForStorage(plainPassword);
     const { success } = await c.env.DB.prepare(
         `UPDATE address SET password = ?, updated_at = datetime('now') WHERE name = ?`
     ).bind(hashedPassword, address).run();

@@ -414,7 +414,7 @@ export const checkCfTurnstile = async (
 }
 
 export const checkUserPassword = (password: string) => {
-    if (!password || password.length < 1 || password.length > 100) {
+    if (typeof password !== "string" || password.length < 1 || password.length > 100) {
         throw new Error("Invalid password")
     }
     return true;

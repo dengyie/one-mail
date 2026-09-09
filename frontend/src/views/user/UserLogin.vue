@@ -14,7 +14,7 @@ import { startAuthentication } from '@simplewebauthn/browser'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
-import { hashPassword, getRouterPathWithLang } from '../../utils'
+import { getRouterPathWithLang } from '../../utils'
 import StatusIndicator from '../../components/ai/StatusIndicator.vue'
 import Turnstile from '../../components/Turnstile.vue'
 
@@ -96,7 +96,7 @@ const handleLogin = async () => {
       method: 'POST',
       body: JSON.stringify({
         email: form.value.email,
-        password: await hashPassword(form.value.password),
+        password: form.value.password,
         cf_token: loginCfToken.value
       })
     })
@@ -127,7 +127,7 @@ const handleRegister = async () => {
       method: 'POST',
       body: JSON.stringify({
         email: form.value.email,
-        password: await hashPassword(form.value.password),
+        password: form.value.password,
         code: form.value.code,
         cf_token: signupCfToken.value
       })

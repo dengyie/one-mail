@@ -41,7 +41,8 @@ Test categories: `tests/api/` (API tests), `tests/browser/` (UI tests with Chrom
 The Docker frontend serves over **HTTPS** (self-signed cert) with Vite proxy to worker — required for WebAuthn (`navigator.credentials`) and `crypto.subtle` which need a secure context. Browser tests use `ignoreHTTPSErrors: true`.
 
 Key patterns for browser tests:
-- Frontend hashes passwords with SHA-256 (`crypto.subtle`) before sending — API test registration must use pre-hashed passwords if UI login is needed.
+- User and address password forms now send the raw password over HTTPS; the Worker stores salted PBKDF2 verifiers. Legacy API clients that send the previous SHA-256 value remain accepted during migration.
+- The site/admin shared-password dialogs still hash their configured shared secret with SHA-256; this is a separate protocol and must not be mixed with user/address password storage.
 - VueUse `useStorage('key', '')` with string default uses **raw string** serialization — set localStorage with raw value, not `JSON.stringify()`.
 - WebAuthn browser tests use CDP virtual authenticator (`WebAuthn.enable` + `WebAuthn.addVirtualAuthenticator`).
 

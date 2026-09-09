@@ -7,6 +7,7 @@ import { handleListQuery } from '../common'
 import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
 import { mergeRoleAddressConfigs } from "../unified/rbac_config";
+import { hashPasswordForStorage } from "../core/password.ts";
 
 export default {
     getSetting: async (c: Context<HonoCustomType>) => {
@@ -79,11 +80,12 @@ export default {
         const userInfo = new UserInfo(geoData, email);
         try {
             checkUserPassword(password);
+            const storedPassword = await hashPasswordForStorage(password);
             const { success } = await c.env.DB.prepare(
                 `INSERT INTO users (user_email, password, user_info)`
                 + ` VALUES (?, ?, ?)`
             ).bind(
-                email, password, JSON.stringify(userInfo)
+                email, storedPassword, JSON.stringify(userInfo)
             ).run();
             if (!success) {
                 return c.text(msgs.FailedToRegisterMsg, 500)
@@ -119,9 +121,10 @@ export default {
         if (!user_id) return c.text(msgs.UserNotFoundMsg, 400);
         try {
             checkUserPassword(password);
+            const storedPassword = await hashPasswordForStorage(password);
             const { success } = await c.env.DB.prepare(
                 `UPDATE users SET password = ? WHERE id = ?`
-            ).bind(password, user_id).run();
+            ).bind(storedPassword, user_id).run();
             if (!success) {
                 return c.text(msgs.FailedUpdatePasswordMsg, 500)
             }

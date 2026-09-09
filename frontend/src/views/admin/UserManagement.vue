@@ -6,7 +6,6 @@ import { MenuFilled } from '@vicons/material'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
-import { hashPassword } from '../../utils';
 
 import UserAddressManagement from './UserAddressManagement.vue'
 
@@ -80,7 +79,7 @@ const resetPassword = async () => {
         await api.fetch(`/admin/users/${curUserId.value}/reset_password`, {
             method: "POST",
             body: JSON.stringify({
-                password: await hashPassword(newResetPassword.value)
+                password: newResetPassword.value
             })
         });
         message.success(t('success'));
@@ -101,7 +100,7 @@ const createUser = async () => {
             method: "POST",
             body: JSON.stringify({
                 email: user.value.email,
-                password: await hashPassword(user.value.password)
+                password: user.value.password
             })
         });
         message.success(t('success'));

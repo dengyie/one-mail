@@ -1,6 +1,7 @@
 import { Context } from 'hono'
 import i18n from '../i18n'
-import { getBooleanValue } from '../utils'
+import { getBooleanValue, checkUserPassword } from '../utils'
+import { hashPasswordForStorage } from '../core/password.ts'
 import { newAddress, handleListQuery } from '../common'
 import { signAddressJwt } from '../core/auth'
 
@@ -160,16 +161,18 @@ const resetPassword = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
     const { id } = c.req.param();
     const { password } = await c.req.json();
-    // NOTE: Keep the admin API field as password, but the value is a frontend SHA-256 hash.
     if (!getBooleanValue(c.env.ENABLE_ADDRESS_PASSWORD)) {
         return c.text(msgs.PasswordChangeDisabledMsg, 403);
     }
-    if (!password) {
+    try {
+        checkUserPassword(password);
+    } catch {
         return c.text(msgs.NewPasswordRequiredMsg, 400);
     }
+    const storedPassword = await hashPasswordForStorage(password);
     const { success } = await c.env.DB.prepare(
         `UPDATE address SET password = ?, updated_at = datetime('now') WHERE id = ?`
-    ).bind(password, id).run();
+    ).bind(storedPassword, id).run();
     if (!success) {
         return c.text(msgs.FailedUpdatePasswordMsg, 500);
     }

@@ -59,7 +59,7 @@ test.describe('Address Password Login', () => {
     }
   });
 
-  test('admin reset stores frontend-hashed address password', async ({ request }) => {
+  test('admin reset stores a server-side password record and keeps legacy clients working', async ({ request }) => {
     const { jwt, address, address_id } = await createTestAddress(request, 'pwd-admin-reset');
     const plainPassword = `admin-reset-${Date.now()}`;
     const passwordHash = hashPassword(plainPassword);
@@ -74,8 +74,11 @@ test.describe('Address Password Login', () => {
       const plaintextLoginRes = await request.post(`${WORKER_URL}/api/address_login`, {
         data: { email: address, password: plainPassword },
       });
-      expect(plaintextLoginRes.status()).toBe(401);
+      expect(plaintextLoginRes.ok()).toBe(true);
+      const plaintextLoginBody = await plaintextLoginRes.json();
+      expect(plaintextLoginBody.jwt).toBeTruthy();
 
+      // Existing clients that still send SHA-256(password) remain accepted.
       const loginRes = await request.post(`${WORKER_URL}/api/address_login`, {
         data: { email: address, password: passwordHash },
       });
