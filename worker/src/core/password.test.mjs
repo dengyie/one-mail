@@ -9,7 +9,7 @@ test("stores a salted PBKDF2 record and verifies raw passwords", async () => {
   const first = await hashPasswordForStorage("correct horse battery staple");
   const second = await hashPasswordForStorage("correct horse battery staple");
 
-  assert.match(first, /^pbkdf2-sha256-v2\\$120000\\$/);
+  assert.match(first, /^pbkdf2-sha256-v2\$120000\$/);
   assert.notEqual(first, second, "each password record must use a fresh salt");
   assert.deepEqual(
     await verifyPassword("correct horse battery staple", first),
