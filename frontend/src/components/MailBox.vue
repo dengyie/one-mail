@@ -1,17 +1,19 @@
 <script setup>
 import { watch, onMounted, ref, onBeforeUnmount, computed } from "vue";
+import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
 import { useGlobalState } from '../store'
 import { CloudDownloadRound, ArrowBackIosNewFilled, ArrowForwardIosFilled, InboxRound } from '@vicons/material'
 import { useIsMobile } from '../utils/composables'
-import { processItem } from '../utils/email-parser'
-import { utcToLocalDate } from '../utils';
+import { processItem, revokeProcessedItemUrls } from '../utils/email-parser'
+import { getRouterPathWithLang, utcToLocalDate } from '../utils';
 import { buildReplyModel, buildForwardModel } from '../utils/mail-actions'
 import MailContentRenderer from "./MailContentRenderer.vue";
 import AiExtractInfo from "./AiExtractInfo.vue";
 
 const message = useMessage()
+const router = useRouter()
 const isMobile = useIsMobile()
 
 const props = defineProps({
@@ -60,7 +62,7 @@ const props = defineProps({
 const localFilterKeyword = ref('')
 
 const {
-  isDark, mailboxSplitSize, mailListView, mailListPreviewLineClamp, indexTab, loading, useUTCDate,
+  isDark, mailboxSplitSize, mailListView, mailListPreviewLineClamp, loading, useUTCDate,
   autoRefresh, configAutoRefreshInterval, sendMailModel
 } = useGlobalState()
 const autoRefreshInterval = ref(configAutoRefreshInterval.value)
@@ -144,7 +146,20 @@ const showMultiActionDelete = ref(false)
 const multiActionDownloadZip = ref({})
 const multiActionDeleteProgress = ref({ percentage: 0, tip: '0/0' })
 
-const { t } = useScopedI18n('components.MailBox')
+const revokeZipUrl = () => {
+  const url = multiActionDownloadZip.value?.url;
+  if (
+    typeof url === 'string' &&
+    url.startsWith('blob:') &&
+    typeof URL !== 'undefined' &&
+    typeof URL.revokeObjectURL === 'function'
+  ) {
+    URL.revokeObjectURL(url);
+  }
+  multiActionDownloadZip.value = {};
+};
+
+const { t, locale } = useScopedI18n('components.MailBox')
 
 const setupAutoRefresh = async (autoRefresh) => {
   // auto refresh every configAutoRefreshInterval seconds
@@ -175,28 +190,40 @@ watch([page, pageSize], async ([page, pageSize], [oldPage, oldPageSize]) => {
   }
 })
 
+let refreshRequestSeq = 0;
 const refresh = async () => {
+  const requestId = ++refreshRequestSeq;
+  loading.value = true;
   try {
     const { results, count: totalCount } = await props.fetchMailData(
       pageSize.value, (page.value - 1) * pageSize.value
     );
-    loading.value = true;
-    rawData.value = await Promise.all(results.map(async (item) => {
+    const nextData = await Promise.all(results.map(async (item) => {
       item.checked = false;
       return await processItem(item);
     }));
-    if (totalCount > 0) {
+    if (requestId !== refreshRequestSeq) {
+      nextData.forEach(revokeProcessedItemUrls);
+      return;
+    }
+    const previousData = rawData.value;
+    curMail.value = null;
+    rawData.value = nextData;
+    previousData.forEach(revokeProcessedItemUrls);
+    if (typeof totalCount === 'number' && Number.isFinite(totalCount) && totalCount >= 0) {
       count.value = totalCount;
     }
-    curMail.value = null;
     if (!isMobile.value && !mailListView.value && data.value.length > 0) {
       curMail.value = data.value[0];
     }
   } catch (error) {
+    if (requestId !== refreshRequestSeq) return;
     message.error(error.message || "error");
     console.error(error);
   } finally {
-    loading.value = false;
+    if (requestId === refreshRequestSeq) {
+      loading.value = false;
+    }
   }
 };
 
@@ -236,12 +263,12 @@ const deleteMail = async () => {
 
 const replyMail = async () => {
   Object.assign(sendMailModel.value, buildReplyModel(curMail.value, t('reply')));
-  indexTab.value = 'sendmail';
+  await router.push(getRouterPathWithLang('/sendmail', locale.value));
 };
 
 const forwardMail = async () => {
   Object.assign(sendMailModel.value, buildForwardModel(curMail.value, t('forwardMail')));
-  indexTab.value = 'sendmail';
+  await router.push(getRouterPathWithLang('/sendmail', locale.value));
 };
 
 const onSpiltSizeChange = (size) => {
@@ -316,8 +343,10 @@ const multiActionDownload = async () => {
     for (const mail of selectedMails) {
       zip.file(`${mail.id}.eml`, mail.raw);
     }
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    revokeZipUrl();
     multiActionDownloadZip.value = {
-      url: URL.createObjectURL(await zip.generateAsync({ type: "blob" })),
+      url: URL.createObjectURL(zipBlob),
       filename: `mails-${new Date().toISOString().replace(/:/g, '-')}.zip`
     }
     showMultiActionDownload.value = true;
@@ -333,7 +362,12 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  clearInterval(timer.value)
+  refreshRequestSeq += 1;
+  clearInterval(timer.value);
+  for (const item of rawData.value) {
+    revokeProcessedItemUrls(item);
+  }
+  revokeZipUrl();
 })
 </script>
 

@@ -3,8 +3,8 @@ import { useRoute } from 'vue-router'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
-import { computed, onMounted, watch, ref } from 'vue';
-import { processItem } from '../../utils/email-parser'
+import { computed, onMounted, onBeforeUnmount, watch, ref } from 'vue';
+import { processItem, revokeProcessedItemUrls } from '../../utils/email-parser'
 import { utcToLocalDate } from '../../utils';
 import { sanitizeHtmlMail } from '../../utils/sanitize-html-mail';
 
@@ -12,14 +12,20 @@ const { telegramApp, loading, useUTCDate } = useGlobalState()
 const route = useRoute()
 
 const curMail = ref({});
+let mailRequestSeq = 0;
 
-watch(telegramApp, async () => {
-    if (telegramApp.value.initData) {
-        curMail.value = await fetchMailData();
+const replaceCurrentMail = (nextMail) => {
+    const previousMail = curMail.value;
+    curMail.value = nextMail || {};
+    if (previousMail && previousMail !== curMail.value) {
+        revokeProcessedItemUrls(previousMail);
     }
-});
+};
 
-const fetchMailData = async () => {
+const fetchMailData = async (requestId) => {
+    if (requestId === mailRequestSeq) {
+        loading.value = true;
+    }
     try {
         const res = await api.fetch(`/telegram/get_mail`, {
             method: 'POST',
@@ -28,20 +34,44 @@ const fetchMailData = async () => {
                 mailId: route.query.mail_id
             })
         });
-        loading.value = true;
-        return await processItem(res);
+        const parsedMail = await processItem(res);
+        if (requestId !== mailRequestSeq) {
+            revokeProcessedItemUrls(parsedMail);
+            return null;
+        }
+        return parsedMail;
     }
     catch (error) {
         console.error(error);
         return {};
     }
     finally {
-        loading.value = false;
+        if (requestId === mailRequestSeq) {
+            loading.value = false;
+        }
     }
 };
 
-onMounted(async () => {
-    curMail.value = await fetchMailData();
+const loadMail = async () => {
+    const requestId = ++mailRequestSeq;
+    const nextMail = await fetchMailData(requestId);
+    if (requestId !== mailRequestSeq || nextMail === null) return;
+    replaceCurrentMail(nextMail);
+};
+
+watch(telegramApp, () => {
+    if (telegramApp.value.initData) {
+        void loadMail();
+    }
+});
+
+onMounted(() => {
+    void loadMail();
+});
+
+onBeforeUnmount(() => {
+    mailRequestSeq += 1;
+    revokeProcessedItemUrls(curMail.value);
 });
 
 // C2：与主邮件正文相同安全管道——srcdoc 只喂经 blockRemoteContent

@@ -1,5 +1,4 @@
 import { Context, Hono } from "hono";
-import { Jwt } from "hono/utils/jwt";
 import { handleListQuery, commonGetUserRole } from "../common";
 import { buildEmailFilters } from "./unified_query";
 import { ingestHandler } from "./ingest";
@@ -19,12 +18,13 @@ const api = new Hono<HonoCustomType>();
 api.use("/api/unified/*", async (c, next) => {
     const userToken = c.req.raw.headers.get("x-user-token");
     if (userToken) {
+        // worker.ts has already verified the signature, expiry, and the
+        // user_id + user_email identity binding before this route runs.
+        const payload = c.get("userPayload") as UserPayload | undefined;
+        if (!payload || !payload.exp || payload.exp < Math.floor(Date.now() / 1000)) {
+            return c.json({ error: "invalid user token" }, 401);
+        }
         try {
-            const payload = await Jwt.verify(userToken, c.env.JWT_SECRET, "HS256") as UserPayload;
-            if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) {
-                return c.json({ error: "user token expired" }, 401);
-            }
-            c.set("userPayload", payload);
             // 管理员判定：role_text == ADMIN_USER_ROLE（环境变量）。未配置 ADMIN_USER_ROLE
             // 时任何用户都不算管理员，落到普通用户的 to_addr 作用域。
             const isAdmin = !!c.env.ADMIN_USER_ROLE

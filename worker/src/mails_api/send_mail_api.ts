@@ -1,5 +1,5 @@
 import { Context, Hono } from 'hono'
-import { verifyAddressJwt } from '../core/auth'
+import { verifyActiveAddressJwt } from '../core/auth'
 import { createMimeMessage } from 'mimetext';
 import { Resend } from 'resend';
 import { WorkerMailer, WorkerMailerOptions } from 'worker-mailer';
@@ -10,7 +10,7 @@ import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDom
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
-import { ensureSendMailLimit, increaseSendMailLimitCount } from './send_mail_limit_utils';
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError } from './send_mail_limit_utils';
 
 
 export const api = new Hono<HonoCustomType>()
@@ -136,11 +136,23 @@ export const sendMail = async (
     },
     options?: {
         isAdmin?: boolean
+        addressId?: number | string
+        idempotencyKey?: string
     }
 ): Promise<void> => {
     const msgs = i18n.getMessagesbyContext(c);
     if (!address) {
         throw new Error(msgs.AddressNotFoundMsg)
+    }
+    // A credential must still point at the same address row at dispatch time.
+    // This closes the delete/recreate race between middleware and provider send.
+    if (options?.addressId !== undefined && options?.addressId !== null) {
+        const activeAddress = await c.env.DB.prepare(
+            `SELECT id FROM address WHERE id = ? AND name = ?`
+        ).bind(options.addressId, address).first();
+        if (!activeAddress) {
+            throw new Error(msgs.AddressNotFoundMsg)
+        }
     }
     // check domain
     const mailDomain = getMailDomain(address);
@@ -170,38 +182,49 @@ export const sendMail = async (
     if (!content) {
         throw new Error(msgs.ContentEmptyMsg)
     }
-    await ensureSendMailLimit(c);
-
-    // send to verified address list, do not update balance
-    const resendEnabled = c.env.RESEND_TOKEN || c.env[
-        `RESEND_TOKEN_${mailDomain.replace(/\./g, "_").toUpperCase()}`
-    ];
-    // send by smtp
+    // Resolve the dispatch path before taking any reservations. The actual provider
+    // call stays inside one try/catch so every failed attempt releases both quotas.
+    const resendTokenKey = "RESEND_TOKEN_" + mailDomain.replace(/\./g, "_").toUpperCase();
+    const resendEnabled = c.env.RESEND_TOKEN || c.env[resendTokenKey];
     const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
     const smtpConfig = getDomainMapValue(smtpConfigMap, mailDomain);
-    // send by verified address list
-    let sendByVerifiedAddressList = false;
-    if (c.env.SEND_MAIL) {
-        const verifiedAddressList = await getJsonSetting(c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY) || [];
-        if (verifiedAddressList.includes(to_mail)) {
-            await sendMailToVerifyAddress(c, address, reqJson);
-            sendByVerifiedAddressList = true;
-        }
-    }
+    const verifiedAddressList = c.env.SEND_MAIL
+        ? await getJsonSetting(c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY) || []
+        : [];
+    const sendByVerifiedAddressList = verifiedAddressList.includes(to_mail);
     const sendMailBindingEnabled = isSendMailBindingEnabled(c, mailDomain);
+    let sendMailLimitReservation: SendMailLimitReservation | null = null;
+    let providerDispatchStarted = false;
 
-    // Verified recipients are free; reserve balance only for billable sends.
-    if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
-        balanceReserved = await reserveSendBalance(c, address);
-        if (!balanceReserved) {
-            throw new Error(msgs.NoBalanceMsg);
-        }
-    }
-
-    // send mail workflow; refund only when the provider dispatch itself fails.
+    // Reserve the server quota and sender balance immediately before dispatch.
     try {
+        const idempotencyKey = options?.idempotencyKey;
+        const requestHash = idempotencyKey ? await hashSendMailRequest({ address, reqJson }) : undefined;
+        sendMailLimitReservation = await reserveSendMailLimit(c, { idempotencyKey, requestHash });
+        if (sendMailLimitReservation?.replay === "sent") return;
+        if (sendMailLimitReservation?.replay === "unknown") throw new SendMailDeliveryUnknownError();
+        // Verified recipients are free; reserve balance only for billable sends.
+        if (!sendByVerifiedAddressList && sendBalanceState.needCheckBalance) {
+            balanceReserved = await reserveSendBalance(c, address);
+            if (!balanceReserved) {
+                throw new Error(msgs.NoBalanceMsg);
+            }
+            if (sendMailLimitReservation) {
+                await sendMailLimitReservation.markBalanceReserved(address, options?.addressId ?? "");
+            }
+        }
+
+        // Validate that a provider is configured before marking the attempt
+        // unknown; a configuration error never touched an external service.
+        if (!sendByVerifiedAddressList && !resendEnabled && !smtpConfig && !sendMailBindingEnabled) {
+            throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");
+        }
+        if (sendMailLimitReservation) {
+            await sendMailLimitReservation.markDispatchStarted();
+            providerDispatchStarted = true;
+        }
         if (sendByVerifiedAddressList) {
-            // do not update balance
+            await sendMailToVerifyAddress(c, address, reqJson);
         } else if (resendEnabled) {
             await sendMailByResend(c, address, reqJson);
         } else if (smtpConfig) {
@@ -209,16 +232,37 @@ export const sendMail = async (
         } else if (sendMailBindingEnabled) {
             await sendMailByBinding(c, address, reqJson);
         } else {
-            throw new Error(`${msgs.EnableResendOrSmtpOrSendMailMsg} (${mailDomain})`);
+            throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");
         }
+        if (sendMailLimitReservation) await sendMailLimitReservation.markDispatchSucceeded();
     } catch (error) {
+        if (providerDispatchStarted) {
+            console.error("Provider dispatch outcome is unknown", error);
+            throw new SendMailDeliveryUnknownError();
+        }
+        if (sendMailLimitReservation) {
+            try { await sendMailLimitReservation.release(); }
+            catch (releaseError) { console.error("Failed to release send mail limit reservation", releaseError); }
+        }
         if (balanceReserved) {
             try { await refundSendBalance(c, address); }
             catch (refundError) { console.error("Failed to refund send balance", refundError); }
         }
         throw error;
     }
-    await increaseSendMailLimitCount(c);
+
+    // The provider has accepted the message. A commit failure leaves a durable
+    // sent marker; the scheduled reconciler promotes it without releasing quota.
+    if (sendMailLimitReservation) {
+        try {
+            await sendMailLimitReservation.commit();
+        } catch (commitError) {
+            console.error(
+                "Failed to commit send mail limit reservation; reconciliation will promote sent state",
+                commitError
+            );
+        }
+    }
     // update address updated_at
     updateAddressUpdatedAt(c, address);
     // save to sendbox
@@ -242,13 +286,15 @@ export const sendMail = async (
 }
 
 api.post('/api/send_mail', async (c) => {
-    const { address } = c.get("jwtPayload")
+    const { address, address_id } = c.get("jwtPayload")
     const reqJson = await c.req.json();
     try {
-        await sendMail(c, address, reqJson);
+        await sendMail(c, address, reqJson, { addressId: address_id, idempotencyKey: c.req.raw.headers.get("x-idempotency-key") ?? undefined });
     } catch (e) {
         console.error("Failed to send mail", e);
-        return c.text(`Failed to send mail ${(e as Error).message}`, 400)
+        const error = e as Error & { status?: number };
+        const status = error instanceof SendMailDeliveryUnknownError ? 503 : error instanceof SendMailIdempotencyConflictError ? 409 : 400;
+        return c.text(`Failed to send mail ${error.message}`, status as 400 | 409 | 503)
     }
     return c.json({ status: "ok" })
 })
@@ -258,16 +304,18 @@ api.post('/external/api/send_mail', async (c) => {
     try {
         const body = await c.req.json();
         const { token, ...reqJson } = body;
-        const payload = await verifyAddressJwt(c, token);
+        const payload = await verifyActiveAddressJwt(c, token);
         if (!payload) {
             throw new Error(msgs.AddressNotFoundMsg);
         }
         const { address } = payload;
-        await sendMail(c, address, reqJson);
+        await sendMail(c, address, reqJson, { addressId: payload.address_id, idempotencyKey: c.req.raw.headers.get("x-idempotency-key") ?? undefined });
         return c.json({ status: "ok" })
     } catch (e) {
         console.error("Failed to send mail", e);
-        return c.text(`Failed to send mail ${(e as Error).message}`, 400)
+        const error = e as Error & { status?: number };
+        const status = error instanceof SendMailDeliveryUnknownError ? 503 : error instanceof SendMailIdempotencyConflictError ? 409 : 400;
+        return c.text(`Failed to send mail ${error.message}`, status as 400 | 409 | 503)
     }
 })
 

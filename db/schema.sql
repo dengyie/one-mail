@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS emails (
     internal_date INTEGER,
     headers_json TEXT,
     is_read INTEGER DEFAULT 0,
+    is_starred INTEGER DEFAULT 0,
     flags_json TEXT,
     attachments_json TEXT,
     raw_ref TEXT,
@@ -172,7 +173,19 @@ CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_order_received ON emails(COALESCE(internal_date, received_at) DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_read_received ON emails(is_read, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_star_received ON emails(is_starred, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_order_received ON emails(to_addr, COALESCE(internal_date, received_at) DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_read_received ON emails(to_addr, is_read, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_star_received ON emails(to_addr, is_starred, received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS scheduled_locks (
+    name TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    locked_until INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS mail_accounts (
     id TEXT PRIMARY KEY,
@@ -195,3 +208,72 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at INTEGER,
     last_used_at INTEGER
 );
+
+
+-- Durable send-mail quota reservations.
+-- Counter increments happen in the INSERT trigger and are released only by a
+-- durable status transition, so a crashed request can be recovered by cron.
+CREATE TABLE IF NOT EXISTS send_mail_limit_reservations (
+    id TEXT PRIMARY KEY,
+    daily_key TEXT,
+    monthly_key TEXT,
+    daily_limit INTEGER,
+    monthly_limit INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('active', 'committed', 'released')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    dispatch_state TEXT NOT NULL DEFAULT 'pending' CHECK (dispatch_state IN ('pending', 'unknown', 'sent')),
+    idempotency_key TEXT,
+    request_hash TEXT,
+    sender_address TEXT,
+    sender_address_id TEXT,
+    balance_reserved INTEGER NOT NULL DEFAULT 0,
+    balance_refunded INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry
+    ON send_mail_limit_reservations(status, dispatch_state, expires_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_idempotency
+    ON send_mail_limit_reservations(idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_terminal
+    ON send_mail_limit_reservations(status, updated_at);
+
+CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_increment
+AFTER INSERT ON send_mail_limit_reservations
+WHEN NEW.status = 'active'
+BEGIN
+    INSERT OR IGNORE INTO settings(key, value)
+        SELECT NEW.daily_key, '0' WHERE NEW.daily_key IS NOT NULL;
+    UPDATE settings
+       SET value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) + 1 AS TEXT),
+           updated_at = datetime('now')
+     WHERE key = NEW.daily_key AND NEW.daily_key IS NOT NULL;
+
+    INSERT OR IGNORE INTO settings(key, value)
+        SELECT NEW.monthly_key, '0' WHERE NEW.monthly_key IS NOT NULL;
+    UPDATE settings
+       SET value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) + 1 AS TEXT),
+           updated_at = datetime('now')
+     WHERE key = NEW.monthly_key AND NEW.monthly_key IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_release
+AFTER UPDATE OF status ON send_mail_limit_reservations
+WHEN OLD.status = 'active' AND NEW.status = 'released' AND OLD.dispatch_state = 'pending'
+BEGIN
+    UPDATE settings
+       SET value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) - 1 AS TEXT),
+           updated_at = datetime('now')
+     WHERE key = OLD.daily_key
+       AND OLD.daily_key IS NOT NULL
+       AND MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) > 0;
+    UPDATE settings
+       SET value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) - 1 AS TEXT),
+           updated_at = datetime('now')
+     WHERE key = OLD.monthly_key
+       AND OLD.monthly_key IS NOT NULL
+       AND MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) > 0;
+END;

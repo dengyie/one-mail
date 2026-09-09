@@ -106,7 +106,7 @@ onMounted(async () => {
     </div>
 
     <!-- 2. 未登录访客密码弹窗 -->
-    <div v-else-if="!userJwt && !adminAuth" class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 max-w-md mx-auto my-12 shadow-sm text-center">
+    <div v-else-if="!adminAuth" class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 max-w-md mx-auto my-12 shadow-sm text-center">
       <div class="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto mb-4 text-2xl">
         🔑
       </div>

@@ -84,7 +84,7 @@ test.describe('User address pagination browser flow', () => {
       }, user.jwt);
       await page.goto(`${FRONTEND_URL}/en/user`);
 
-      await expect(page.getByText(user.email)).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole('complementary').getByText(user.email)).toBeVisible({ timeout: 15_000 });
       const pagination = page.locator('.n-pagination').first();
       const addressRows = page.locator('.n-data-table-tbody .n-data-table-tr');
       await expect(pagination).toContainText(/Total:\s*21/);
@@ -93,25 +93,31 @@ test.describe('User address pagination browser flow', () => {
       await pagination.locator('.n-pagination-item').filter({ hasText: /^2$/ }).click();
       await expect(addressRows).toHaveCount(1);
 
-      const selectedAddress = createdAddresses[20];
+      // The mailbox auto-selects the newest bound address (createdAddresses[20]).
+      // Naive UI virtualizes the menu, so choose a different address in the
+      // initially rendered window to exercise the reload path reliably.
+      const selectedAddress = createdAddresses[19];
 
       const initialMailboxAddressesResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
         return url.pathname === '/user_api/bind_address'
           && url.searchParams.get('limit') === '100';
       });
-      await page.getByText('Mail Box', { exact: true }).click();
+      await page.getByRole('button', { name: /即时收件箱|Mail Box/ }).click();
       const initialMailboxResponse = await initialMailboxAddressesResponse;
       expect(initialMailboxResponse.ok()).toBe(true);
-      const mailboxAddressSelect = page.locator('.n-input-group .n-select').first();
+      const mailboxAddressSelect = page.locator('.address-select').first();
       await mailboxAddressSelect.click();
 
       const mailboxOptions = page.locator('.n-base-select-menu:visible');
       await expect(mailboxOptions).toContainText(selectedAddress.address);
+      // Selecting a bound address reloads the mailbox with the address JWT;
+      // the mailbox API is address-scoped and therefore has no address query.
       const filteredMailResponse = page.waitForResponse((response) => {
         const url = new URL(response.url());
-        return url.pathname === '/user_api/mails'
-          && url.searchParams.get('address') === selectedAddress.address;
+        return url.pathname === '/api/mails'
+          && url.searchParams.get('limit') === '20'
+          && url.searchParams.get('offset') === '0';
       });
       await mailboxOptions.getByText(selectedAddress.address, { exact: true }).click();
       expect((await filteredMailResponse).ok()).toBe(true);

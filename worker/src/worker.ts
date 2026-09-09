@@ -2,7 +2,8 @@ import { Context, Hono } from 'hono'
 import { cors } from 'hono/cors';
 import { jwt } from 'hono/jwt'
 import { Jwt } from 'hono/utils/jwt'
-import { verifyAddressJwt } from './core/auth'
+import { verifyActiveAddressJwt } from './core/auth'
+import { isActiveUser } from './core/user_identity'
 
 import { api as commonApi } from './commom_api';
 import { api as openAuthApi } from './open_api/auth';
@@ -38,7 +39,7 @@ app.use('/*', cors({
 	origin: (origin, c) => resolveCorsOrigin(origin, c.env.FRONTEND_URL),
 	allowHeaders: [
 		'Content-Type', 'Authorization', 'x-user-token', 'x-user-access-token',
-		'x-custom-auth', 'x-admin-auth', 'x-lang', 'x-fingerprint',
+		'x-custom-auth', 'x-admin-auth', 'x-lang', 'x-fingerprint', 'x-idempotency-key',
 	],
 	allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));
@@ -124,11 +125,16 @@ const checkUserPayload = async (
 	try {
 		const token = c.req.raw.headers.get("x-user-token");
 		if (!token) return;
-		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256") as Partial<UserPayload>;
 		// check expired
 		if (!payload.exp) return;
 		// exp is in seconds
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
+			return;
+		}
+		// Bind the token to both immutable identity attributes. Checking only the
+		// numeric id would let a deleted user's token follow a reused row id.
+		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
 			return;
 		}
 		c.set("userPayload", payload as UserPayload);
@@ -143,7 +149,7 @@ const checkoutUserRolePayload = async (
 	try {
 		const token = c.req.raw.headers.get("x-user-access-token");
 		if (!token) return;
-		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256") as Partial<UserPayload> & { user_role?: unknown };
 		// check expired
 		if (!payload.exp) return;
 		// exp is in seconds
@@ -151,6 +157,9 @@ const checkoutUserRolePayload = async (
 			return;
 		}
 		if (typeof payload?.user_role !== "string") return;
+		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
+			return;
+		}
 		c.set("userRolePayload", payload.user_role);
 	} catch (e) {
 		console.error(e);
@@ -182,8 +191,7 @@ app.use('/api/*', async (c, next) => {
 		return;
 	}
 
-	// 地址 JWT 校验（Phase 7 / I7a / 架构重构 P2）。统一走 core/auth verifyAddressJwt
-	// （内部 try/catch，失效返回 null；REJECT_EXPLESS_JWT 语义已内聚其中）。
+	// 地址 JWT 校验（签名、过期时间和当前地址绑定）。删除或替换地址后，旧凭据立即失效。
 	// 抽取逻辑与 hono jwt() 中间件一致：Authorization: Bearer <token>，失败 401。
 	const token = c.req.raw.headers.get("Authorization");
 	if (!token) {
@@ -197,7 +205,7 @@ app.use('/api/*', async (c, next) => {
 		const msgs = i18n.getMessages(lang);
 		return c.text(msgs.InvalidAddressCredentialMsg, 401);
 	}
-	const payload = await verifyAddressJwt(c, parts[1]);
+	const payload = await verifyActiveAddressJwt(c, parts[1]);
 	if (!payload) {
 		const lang = c.get("lang") || c.env.DEFAULT_LANG;
 		const msgs = i18n.getMessages(lang);
@@ -227,11 +235,14 @@ app.use('/user_api/*', async (c, next) => {
 	try {
 		const token = c.req.raw.headers.get("x-user-token");
 		if (!token) return c.text(msgs.UserTokenExpiredMsg, 401)
-		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256") as Partial<UserPayload>;
 		// check expired
 		if (!payload.exp) return c.text(msgs.UserTokenExpiredMsg, 401);
 		// exp is in seconds
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
+			return c.text(msgs.UserTokenExpiredMsg, 401)
+		}
+		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
 		c.set("userPayload", payload as UserPayload);
@@ -257,11 +268,19 @@ app.use('/admin/*', async (c, next) => {
 	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
 
 	// 解析 x-user-access-token（verify 抛错 -> null，decideAdminAuth 按 R2 处理）
-	let accessTokenPayload: { exp?: number; user_role?: unknown } | null = null;
+	let accessTokenPayload: { exp?: number; user_role?: unknown; user_id?: unknown; user_email?: unknown } | null = null;
 	if (hasAccessToken) {
 		try {
 			const raw = c.req.raw.headers.get("x-user-access-token") as string;
-			accessTokenPayload = await Jwt.verify(raw, c.env.JWT_SECRET, "HS256") as { exp?: number; user_role?: unknown };
+			const verifiedPayload = await Jwt.verify(raw, c.env.JWT_SECRET, "HS256") as {
+				exp?: number; user_role?: unknown; user_id?: unknown; user_email?: unknown;
+			};
+			// A signed token must still reference a live user. Use an expired
+			// sentinel instead of null so decideAdminAuth cannot fall through to
+			// the operator bypass when a revoked role token is presented.
+			accessTokenPayload = await isActiveUser(c.env.DB, verifiedPayload.user_id, verifiedPayload.user_email)
+				? verifiedPayload
+				: { exp: 0, user_role: verifiedPayload.user_role };
 		} catch { /* verify 抛错 -> null */ }
 	}
 

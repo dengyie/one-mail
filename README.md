@@ -122,6 +122,15 @@ pnpm install && pnpm dev     # dev 代理到 127.0.0.1:8787
 
 详见 `worker/wrangler.toml.template`、`aggregator/config.example.json`（当前妥善管理）。
 
+### 发信幂等与未知投递状态
+
+`POST /api/send_mail`、`POST /external/api/send_mail` 和 `POST /admin/send_mail` 支持 `x-idempotency-key`。如果请求返回 503（外部服务可能已接受邮件但 Worker 超时），客户端必须使用同一个 key 重试；复用相同请求会得到已发送结果，使用不同请求会返回 409。未知状态不会自动释放额度或发信余额，需要管理员确认：
+
+- 查询：`GET /admin/send_mail/unknown`
+- 确认：`POST /admin/send_mail/unknown/:id/resolve`，body 为 `{"outcome":"sent"}` 或 `{"outcome":"rejected"}`
+
+升级已有 D1 数据库前先备份，然后只执行一次 `db/2026-09-09-send-mail-delivery-state.sql`（例如 `cd worker && wrangler d1 execute <database> --remote --file=../db/2026-09-09-send-mail-delivery-state.sql`）。
+
 ---
 
 ## 文档 & 变更

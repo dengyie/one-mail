@@ -8,6 +8,24 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| Persist provider delivery as `unknown`/`sent` after dispatch; `x-idempotency-key` replays are safe, uncertain outcomes return 503 without releasing quota/balance, and duplicate retries cannot bypass limits. Added migration `db/2026-09-09-send-mail-delivery-state.sql`.
+
+- fix: |Worker/Auth| Bind user and role JWTs to both user_id and user_email; the unified inbox reuses the already verified identity so a deleted user's token cannot follow a reused row ID.
+
+- fix: |Unified Inbox| Reject external-mail bindings that would reuse a non-external local address, and return cross-user address binding conflicts as 400 instead of a generic server error.
+
+- fix: |OAuth| Store state in D1 and consume it with one atomic DELETE, with opportunistic expiry cleanup, so concurrent callbacks cannot consume the same state twice.
+
+- fix: |Worker| Delete imported mail for a user in the same D1 transaction, preventing a later same-name mailbox from seeing deleted history; administrator role tokens no longer bypass the x-admin-auth password gate.
+
+- fix: |OAuth| Generate and return a random state from the Worker login-link endpoint, fixing the frontend path that otherwise always failed state validation and preventing callers from predicting or reusing state.
+
+- fix: |Worker| Make user deletion and address transfer atomic in D1: deletion removes roles, passkeys, external-mail credentials, and ownership links together, revoked user JWTs stop working immediately, and transfer no longer has a delete-then-recreate data-loss window.
+
+- fix: |Worker| Store user and address passwords as salted server-side PBKDF2 verifiers: browser login/registration/password changes now send the raw password over HTTPS, while legacy SHA-256 clients remain accepted and migrate after successful authentication; the reusable client digest is no longer used as the database password.
+
+- fix: |Worker| Make send-mail quota reservations durable in D1: slot allocation and the send attempt are persisted atomically, while failed or abandoned reservations are recoverable by the request path and scheduled reconciler instead of permanently exhausting the daily counter.
+
 - feat: |Aggregator| Add OAuth2/XOAUTH2 onboarding for **personal Hotmail / Outlook.com (MSA)** accounts: since Microsoft has disabled IMAP Basic authentication in all tenants (App Passwords also unavailable for many accounts), `aggregator/oauth.py` adds `msa_access_token` using the `/consumers` tenant with a public client (no `client_secret` required, scope `IMAP.AccessAsUser.All offline_access`) while reusing the existing `oauth2_login` XOAUTH2 channel; `normalize_provider` maps `hotmail`/`outlook_personal` to `msa` so all three `provider` spellings work in `config.json`; the Worker `user_api/mail_accounts.ts` `OAUTH_PROVIDERS` whitelist now accepts `msa`/`hotmail`/`outlook_personal`; added `aggregator/scripts/msa_authorize.py` (Device Code Flow) to obtain a long-lived `refresh_token` in one run; `config.example.json` and the deploy README document personal-account onboarding; organizational accounts still use `outlook` + secret, unchanged. Tests: 10 new MSA cases (no-secret public client / optional secret / 400 rejection / provider normalization / factory routing / aliases) — aggregator 126 pass, worker 127 pass, vitepress build green.
 
 - feat: |Worker| Phase 0 external-mail connection test and immediate-sync contracts: added user-ownership-checked `test-connection` / `sync` routes; because the Worker has no VPS/queue dispatch binding yet, they explicitly return `501 unsupported` and never fake connection success or queued state.

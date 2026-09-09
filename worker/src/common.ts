@@ -1,8 +1,9 @@
 import { Context } from 'hono';
 import { WorkerMailerOptions } from 'worker-mailer';
 
-import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, hashPassword, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
+import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
 import { unbindTelegramByAddress } from './telegram_api/common';
+import { hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
 import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
 import { signAddressJwt } from './core/auth';
@@ -301,7 +302,7 @@ const generatePasswordForAddress = async (
     }
 
     const plainPassword = generateRandomPassword();
-    const hashedPassword = await hashPassword(plainPassword);
+    const hashedPassword = await hashPasswordForStorage(plainPassword);
     const { success } = await c.env.DB.prepare(
         `UPDATE address SET password = ?, updated_at = datetime('now') WHERE name = ?`
     ).bind(hashedPassword, address).run();
@@ -492,7 +493,7 @@ export const cleanup = async (
     cleanDays: number | undefined | null
 ): Promise<boolean> => {
     const msgs = i18n.getMessagesbyContext(c);
-    if (!cleanType || typeof cleanDays !== 'number' || cleanDays < 0 || cleanDays > 1000) {
+    if (!cleanType || typeof cleanDays !== 'number' || !Number.isFinite(cleanDays) || cleanDays < 0 || cleanDays > 1000) {
         throw new Error(msgs.InvalidCleanupConfigMsg)
     }
     let cleanupBatchSize = getIntValue(c.env.CLEANUP_BATCH_SIZE, 3000);
@@ -520,7 +521,14 @@ export const cleanup = async (
         case "unboundAddress":
             await batchDeleteAddressWithData(
                 c,
-                `id NOT IN (SELECT address_id FROM users_address) AND created_at < datetime('now', '-${cleanDays} day')`
+                `id IN (
+                    SELECT id FROM address
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM users_address ua WHERE ua.address_id = address.id
+                    )
+                      AND created_at < datetime('now', '-${cleanDays} day')
+                    ORDER BY created_at, id
+                    LIMIT ${cleanupBatchSize})`
             )
             break;
         case "mails":
@@ -535,9 +543,14 @@ export const cleanup = async (
             break;
         case "mails_unknow":
             await c.env.DB.prepare(`
-                DELETE FROM raw_mails WHERE address NOT IN
-                (select name from address) AND created_at < datetime('now', '-${cleanDays} day')`
-            ).run();
+                DELETE FROM raw_mails WHERE id IN (
+                    SELECT id FROM raw_mails
+                    WHERE address NOT IN (SELECT name FROM address)
+                      AND created_at < datetime('now', ?)
+                    ORDER BY created_at, id
+                    LIMIT ?
+                )`
+            ).bind(`-${cleanDays} day`, cleanupBatchSize).run();
             break;
         case "sendbox":
             await c.env.DB.prepare(`
@@ -553,7 +566,12 @@ export const cleanup = async (
             // Delete addresses that have no emails and were created more than N days ago
             await batchDeleteAddressWithData(
                 c,
-                `name NOT IN (SELECT DISTINCT address FROM raw_mails WHERE address IS NOT NULL) AND created_at < datetime('now', '-${cleanDays} day')`
+                `id IN (
+                    SELECT id FROM address
+                    WHERE name NOT IN (SELECT DISTINCT address FROM raw_mails WHERE address IS NOT NULL)
+                      AND created_at < datetime('now', '-${cleanDays} day')
+                    ORDER BY created_at, id
+                    LIMIT ${cleanupBatchSize})`
             )
             break;
         default:
@@ -568,6 +586,12 @@ const batchDeleteAddressWithData = async (
 ): Promise<boolean> => {
     await c.env.DB.prepare(
         `DELETE FROM raw_mails WHERE address IN ( ` +
+        `SELECT name FROM address WHERE ${addressQueryCondition})`
+    ).run();
+    // Unified inbox rows use to_addr for ownership checks. Remove them with the
+    // address so a later owner cannot inherit the previous owner's history.
+    await c.env.DB.prepare(
+        `DELETE FROM emails WHERE to_addr IN ( ` +
         `SELECT name FROM address WHERE ${addressQueryCondition})`
     ).run();
     await c.env.DB.prepare(
@@ -626,6 +650,9 @@ export const deleteAddressWithData = async (
     const { success: mailSuccess } = await c.env.DB.prepare(
         `DELETE FROM raw_mails WHERE address = ? `
     ).bind(address).run();
+    const { success: unifiedMailSuccess } = await c.env.DB.prepare(
+        `DELETE FROM emails WHERE to_addr = ? `
+    ).bind(address).run();
     const { success: sendAccess } = await c.env.DB.prepare(
         `DELETE FROM address_sender WHERE address = ? `
     ).bind(address).run();
@@ -641,7 +668,7 @@ export const deleteAddressWithData = async (
     const { success } = await c.env.DB.prepare(
         `DELETE FROM address WHERE name = ? `
     ).bind(address).run();
-    if (!success || !mailSuccess || !sendboxSuccess || !addressSuccess || !sendAccess || !autoReplySuccess) {
+    if (!success || !mailSuccess || !unifiedMailSuccess || !sendboxSuccess || !addressSuccess || !sendAccess || !autoReplySuccess) {
         throw new Error(msgs.OperationFailedMsg)
     }
     return true;

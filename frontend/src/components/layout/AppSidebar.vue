@@ -17,6 +17,7 @@ import { GithubAlt } from '@vicons/fa'
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import { getRouterPathWithLang } from '../../utils'
+import { clearLocalAddressCache } from '../../utils/address-cache'
 import StatusIndicator from '../ai/StatusIndicator.vue'
 
 const props = defineProps({
@@ -34,20 +35,53 @@ const { t, locale } = useScopedI18n('views.Header')
 
 const {
   settings, userSettings, openSettings, showAdminPage,
-  userJwt, jwt, adminAuth, preferredLocale, indexTab, userTab, adminTab
+  userJwt, jwt, auth, adminAuth, addressPassword,
+  userOauth2SessionState, userOauth2SessionClientID, unifiedApiKey,
+  preferredLocale, userTab, adminTab
 } = useGlobalState()
 
-const isLoggedIn = computed(() => Boolean(userJwt.value))
+const hasUserSession = computed(() => Boolean(userJwt.value))
+const hasAddressSession = computed(() => Boolean(jwt.value))
+const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value)
 
 const handleNavigate = (path) => {
   router.push(getRouterPathWithLang(path, locale.value))
   emit('navigate')
 }
 
-const handleLogout = () => {
+const showLogout = ref(false)
+
+const requestLogout = () => {
+  showLogout.value = true
+}
+
+const handleLogout = async () => {
+  // Clear every credential channel, including cached address JWTs, before
+  // navigating so a shared browser cannot keep using the previous session.
   userJwt.value = ''
-  userSettings.value = { fetched: true, user_email: '', user_id: 0, is_admin: false, access_token: null, user_role: null }
-  router.push(getRouterPathWithLang('/', locale.value))
+  jwt.value = ''
+  auth.value = ''
+  adminAuth.value = ''
+  addressPassword.value = ''
+  userOauth2SessionState.value = ''
+  userOauth2SessionClientID.value = ''
+  unifiedApiKey.value = ''
+  settings.value = {
+    fetched: true,
+    send_balance: 0,
+    address: '',
+    auto_reply: {
+      subject: '',
+      message: '',
+      enabled: false,
+      source_prefix: '',
+      name: '',
+    },
+  }
+  userSettings.value = { fetched: true, user_email: '', user_id: 0, is_admin: false, access_token: null, new_user_token: null, user_role: null }
+  clearLocalAddressCache()
+  showLogout.value = false
+  await router.push(getRouterPathWithLang('/', locale.value))
   emit('navigate')
 }
 
@@ -65,6 +99,7 @@ const activeRoute = computed(() => {
   if (p.includes('/unified')) return 'unified'
   if (p.includes('/sendmail')) return 'sendmail'
   if (p.includes('/sendbox')) return 'sendbox'
+  if (p.includes('/webhook')) return 'webhook'
   
   if (p.includes('/user/addresses')) return 'user_addresses'
   if (p.includes('/user/external-accounts')) return 'user_external'
@@ -111,7 +146,7 @@ const activeRoute = computed(() => {
       <div v-else class="space-y-5">
         
         <!-- 模块一：邮箱工作台 -->
-        <div class="space-y-1">
+        <div v-if="hasAddressSession || hasUserSession" class="space-y-1">
           <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
             邮箱工作台
           </div>
@@ -126,7 +161,7 @@ const activeRoute = computed(() => {
           </button>
 
           <button
-            v-if="openSettings.enableSendMail"
+            v-if="hasAddressSession && openSettings.enableSendMail"
             @click="handleNavigate('/sendmail')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'sendmail' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
@@ -136,7 +171,7 @@ const activeRoute = computed(() => {
           </button>
 
           <button
-            v-if="openSettings.enableSendMail"
+            v-if="hasAddressSession && openSettings.enableSendMail"
             @click="handleNavigate('/sendbox')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'sendbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
@@ -146,6 +181,17 @@ const activeRoute = computed(() => {
           </button>
 
           <button
+            v-if="hasAddressSession && openSettings.enableWebhook"
+            @click="handleNavigate('/webhook')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeRoute === 'webhook' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="HubFilled" class="shrink-0" />
+            <span v-if="!collapsed" class="truncate">{{ t('webhookSettings') || 'Webhook Settings' }}</span>
+          </button>
+
+          <button
+            v-if="hasUserSession"
             @click="handleNavigate('/unified')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'unified' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
@@ -159,7 +205,7 @@ const activeRoute = computed(() => {
         </div>
 
         <!-- 模块二：私人邮箱与安全 -->
-        <div class="space-y-1">
+        <div v-if="hasUserSession" class="space-y-1">
           <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
             私人邮箱管理
           </div>
@@ -188,7 +234,7 @@ const activeRoute = computed(() => {
             :class="activeRoute === 'user_settings' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="SettingsFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">个人偏好与安全</span>
+            <span v-if="!collapsed" class="truncate">{{ t('user_settings') || 'User Settings' }}</span>
           </button>
 
           <button
@@ -290,9 +336,10 @@ const activeRoute = computed(() => {
         </div>
 
         <button
-          @click="handleLogout"
+          @click="requestLogout"
           class="p-1.5 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-          title="退出登录"
+          :aria-label="t('logout') || 'Logout'"
+          :title="t('logout') || 'Logout'"
         >
           <n-icon size="18" :component="PowerSettingsNewFilled" />
         </button>
@@ -302,5 +349,14 @@ const activeRoute = computed(() => {
         <span v-if="!collapsed" class="text-[11px] text-slate-400">请登录使用全功能收件箱</span>
       </div>
     </div>
+
+    <n-modal v-model:show="showLogout" preset="dialog" :title="t('logout') || 'Logout'">
+      <p>{{ t('logoutConfirm') || 'Are you sure you want to logout?' }}</p>
+      <template #action>
+        <n-button @click="handleLogout" size="small" tertiary type="warning">
+          {{ t('logout') || 'Logout' }}
+        </n-button>
+      </template>
+    </n-modal>
   </aside>
 </template>

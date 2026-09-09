@@ -6,6 +6,7 @@ import utils, { checkCfTurnstile, getJsonSetting, checkUserPassword, getUserRole
 import { CONSTANTS } from "../constants";
 import { GeoData, UserInfo, UserSettings } from "../models";
 import { sendMail } from "../mails_api/send_mail_api";
+import { hashPasswordForStorage, verifyPassword } from "../core/password.ts";
 
 export default {
     verifyCode: async (c: Context<HonoCustomType>) => {
@@ -128,6 +129,7 @@ export default {
                 return c.text(msgs.InvalidVerifyCodeMsg, 400)
             }
         }
+        const storedPassword = await hashPasswordForStorage(password);
         // geo data
         const reqIp = c.req.raw.headers.get("cf-connecting-ip")
         const geoData = new GeoData(reqIp, c.req.raw.cf as any);
@@ -139,7 +141,7 @@ export default {
                     `INSERT INTO users (user_email, password, user_info)`
                     + ` VALUES (?, ?, ?)`
                 ).bind(
-                    email, password, JSON.stringify(userInfo)
+                    email, storedPassword, JSON.stringify(userInfo)
                 ).run();
                 if (!success) {
                     return c.text(msgs.FailedToRegisterMsg, 500)
@@ -159,8 +161,8 @@ export default {
             + ` VALUES (?, ?, ?)`
             + ` ON CONFLICT(user_email) DO UPDATE SET password = ?, user_info = ?, updated_at = datetime('now')`
         ).bind(
-            email, password, JSON.stringify(userInfo),
-            password, JSON.stringify(userInfo)
+            email, storedPassword, JSON.stringify(userInfo),
+            storedPassword, JSON.stringify(userInfo)
         ).run();
         if (!success) {
             return c.text(msgs.FailedToRegisterMsg, 400);
@@ -201,15 +203,27 @@ export default {
                 return c.text(msgs.TurnstileCheckFailedMsg, 400)
             }
         }
-        const { id: user_id, password: dbPassword } = await c.env.DB.prepare(
+        const record = await c.env.DB.prepare(
             `SELECT id, password FROM users where user_email = ?`
-        ).bind(email).first() || {};
-        if (!dbPassword) {
+        ).bind(email).first<{ id: number; password: string }>();
+        const user_id = record?.id;
+        const dbPassword = record?.password;
+        if (typeof dbPassword !== "string") {
             return c.text(msgs.UserNotFoundMsg, 400)
         }
-        // TODO: need check password use random salt
-        if (dbPassword != password) {
+        const verification = await verifyPassword(password, dbPassword);
+        if (!verification.valid) {
             return c.text(msgs.InvalidEmailOrPasswordMsg, 400)
+        }
+        if (verification.needsRehash && user_id !== undefined) {
+            try {
+                const upgradedPassword = await hashPasswordForStorage(password);
+                await c.env.DB.prepare(
+                    `UPDATE users SET password = ? WHERE id = ? AND password = ?`
+                ).bind(upgradedPassword, user_id, dbPassword).run();
+            } catch (error) {
+                console.warn("[user-login] password upgrade failed:", error);
+            }
         }
         // create jwt
         const jwt = await Jwt.sign({

@@ -1,5 +1,5 @@
 import { Context } from "hono";
-import { verifyAddressJwt } from "../core/auth";
+import { verifyActiveAddressJwt } from "../core/auth";
 import { CONSTANTS } from "../constants";
 import { bindTelegramAddress, jwtListToAddressData, tgUserNewAddress, unbindTelegramAddress } from "./common";
 import { checkIsAdmin, getBooleanValue } from "../utils";
@@ -69,7 +69,7 @@ async function getTelegramBindAddress(c: Context<HonoCustomType>): Promise<Respo
         const res = [];
         for (const jwt of jwtList) {
             try {
-                const payload = await verifyAddressJwt(c, jwt);
+                const payload = await verifyActiveAddressJwt(c, jwt);
                 if (!payload) continue;
                 res.push({ address: payload.address, jwt });
             } catch (e) {

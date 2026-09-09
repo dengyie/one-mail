@@ -8,6 +8,24 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| 外部邮件服务超时后的 reservation 进入 unknown/sent 状态；支持 `x-idempotency-key` 重放，未知结果返回 503 且不释放额度/余额，避免重试重复发送和额度绕过。新增迁移 `db/2026-09-09-send-mail-delivery-state.sql`。
+
+- fix: |Worker/Auth| 用户 JWT 与角色令牌现在同时校验 user_id + user_email；统一收件箱复用同一份已验证身份，防止删除最高用户 ID 后旧令牌在新用户复用 ID 时越权。
+
+- fix: |统一收件箱| 外部邮箱绑定拒绝复用非 external 的本地地址记录，并把跨用户地址绑定冲突返回为 400，避免同名地址历史邮件串入错误用户。
+
+- fix: |OAuth| OAuth state 改用 D1 单语句原子消费与过期清理，避免 KV GET+DELETE 在并发 callback 下被重复消费。
+
+- fix: |Worker| 删除用户时在同一 D1 事务清理外部账号关联的邮件，避免同名邮箱被重新接入后看到已删除用户的历史；管理员角色令牌不再绕过 x-admin-auth 口令门。
+
+- fix: |OAuth| 登录链接改由 Worker 生成并返回随机 state，修复前端未传 state 导致 OAuth 登录始终失败，并避免调用方预测或复用状态。
+
+- fix: |Worker| 用户删除与地址转移改为 D1 原子生命周期：删除会同时清理角色、passkey、外部邮箱凭据和绑定关系，已删除用户的 JWT 立即失效；地址转移不再存在中途删除导致邮箱丢失的窗口。
+
+- fix: |Worker| 用户与地址密码改为服务端加盐 PBKDF2 存储：前端登录/注册/改密改为通过 HTTPS 发送原始密码，旧 SHA-256 客户端仍可登录并在成功认证后迁移；不再把可重放的客户端摘要直接当作数据库密码。
+
+- fix: |Worker| 发送配额改为 D1 持久化 reservation：配额槽位与发送尝试绑定在同一条原子写入中，失败请求与 Worker 崩溃留下的活动 reservation 由请求路径/定时任务可恢复释放，避免短时间失败重试把每日计数永久耗尽。
+
 - feat: |聚合器| 新增 Hotmail / Outlook.com **个人号（MSA）** OAuth2/XOAUTH2 接入：微软已对所有租户禁用 IMAP 基础认证（含 App Password 部分账号不可用），`aggregator/oauth.py` 新增 `msa_access_token`（走 `/consumers` 租户 + 公开客户端，无需 client_secret，scope `IMAP.AccessAsUser.All offline_access`），复用既有 `oauth2_login` XOAUTH2 通道收信；`normalize_provider` 把 `hotmail`/`outlook_personal` 归一化为 `msa`，`provider` 三写法都可用；worker `user_api/mail_accounts.ts` 的 `OAUTH_PROVIDERS` 加入 `msa`/`hotmail`/`outlook_personal`；新增 `aggregator/scripts/msa_authorize.py`（Device Code Flow）一次性产出 `refresh_token` 引导脚本；`config.example.json` 与部署 `README` 补充个人号接入；组织号仍走 `outlook`+secret 不破坏。测试新增 MSA 分支 10 项，聚合器 126 通过 / worker 127 通过 / vitepress 构建通过。
 
 - feat: |Worker| Phase 0 外部邮箱连接测试与立即同步接口：新增按用户归属校验的 `test-connection` / `sync` 路由；当前 Worker 无 VPS/队列派发能力时明确返回 `501 unsupported`，绝不伪造连接成功或 queued。

@@ -1,8 +1,7 @@
 import { Context } from "hono";
 import { createMimeMessage } from "mimetext";
-import { UserSettings, RoleAddressConfig } from "./models";
-import { CONSTANTS } from "./constants";
-import { compressText } from "./gzip";
+import { CONSTANTS } from "./constants.ts";
+import { compressText } from "./gzip.ts";
 import { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
 // settings 表读写唯一实现已迁至 core/settings.ts。此处既以 named re-export 保持
 // `import { getSetting, ... } from '../utils'` 调用方不变，又在 default 对象里引用同名
@@ -415,7 +414,7 @@ export const checkCfTurnstile = async (
 }
 
 export const checkUserPassword = (password: string) => {
-    if (!password || password.length < 1 || password.length > 100) {
+    if (typeof password !== "string" || password.length < 1 || password.length > 100) {
         throw new Error("Invalid password")
     }
     return true;
@@ -437,7 +436,16 @@ export const checkRegistrationRateLimit = async (
     c: Context<HonoCustomType>, action: string, limit = 5, windowSec = 60
 ): Promise<boolean> => {
     if (!c.env.KV) return true;
-    const ip = c.req.raw.headers.get("cf-connecting-ip") || "unknown";
+    // E2E uses an isolated local KV namespace and deliberately creates more
+    // than five users in one run. Keep this test-only mode from exercising
+    // the production abuse limiter; the flag is already required for the
+    // local-only admin test endpoints.
+    if (getBooleanValue(c.env.E2E_TEST_MODE)) return true;
+    const ip = c.req.raw.headers.get("cf-connecting-ip");
+    // Cloudflare supplies this header at the edge. When it is absent (local
+    // development, health checks, or a direct test harness), there is no safe
+    // client key to rate-limit; do not put every caller in one shared bucket.
+    if (!ip) return true;
     const key = `reglimit|${action}|${ip}|${Math.floor(Date.now() / (windowSec * 1000))}`;
     try {
         const raw = await c.env.KV.get(key);
@@ -460,7 +468,7 @@ export const checkRegistrationRateLimit = async (
 // （utils.ts 经 gzip.ts → ./models 的 type-only 值 import 在 strip-types 下会 SyntaxError，
 // quota.ts 只引纯值/类/import type，零脏依赖）。这里 re-export 保持调用方仍从 "../utils"
 // 导入，无破坏。
-export { getMaxAddressCount, getMaxMailAccountCount, isAddressCountLimitReached } from "./quota";
+export { getMaxAddressCount, getMaxMailAccountCount, isAddressCountLimitReached } from "./quota.ts";
 
 export default {
     getJsonObjectValue,

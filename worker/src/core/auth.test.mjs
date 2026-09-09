@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Jwt } from "hono/utils/jwt";
-import { addressJwtExpSeconds, signAddressJwt, verifyAddressJwt } from "./auth.ts";
+import { addressJwtExpSeconds, signAddressJwt, verifyActiveAddressJwt, verifyAddressJwt } from "./auth.ts";
 
 const daySec = 86400;
 
@@ -83,4 +83,45 @@ test("verifyAddressJwt: expired token always rejected", async () => {
   );
   const c = { env: { JWT_SECRET: "test-secret" } };
   assert.equal(await verifyAddressJwt(c, token), null);
+});
+
+
+const dbWithAddress = (row) => ({
+  prepare() {
+    return {
+      bind() { return this; },
+      first: async () => row,
+    };
+  },
+});
+
+test("verifyActiveAddressJwt: existing id/name pair succeeds", async () => {
+  const c = {
+    env: {
+      JWT_SECRET: "test-secret",
+      DB: dbWithAddress({ name: "test@example.com" }),
+    },
+  };
+  const token = await signAddressJwt(c, { address: "test@example.com", address_id: 7 });
+  const payload = await verifyActiveAddressJwt(c, token);
+  assert.equal(payload.address, "test@example.com");
+  assert.equal(payload.address_id, 7);
+});
+
+test("verifyActiveAddressJwt: deleted or replaced address is rejected", async () => {
+  const token = await signAddressJwt(
+    { env: { JWT_SECRET: "test-secret" } },
+    { address: "test@example.com", address_id: 7 },
+  );
+  const deleted = await verifyActiveAddressJwt(
+    { env: { JWT_SECRET: "test-secret", DB: dbWithAddress(null) } },
+    token,
+  );
+  assert.equal(deleted, null);
+
+  const replaced = await verifyActiveAddressJwt(
+    { env: { JWT_SECRET: "test-secret", DB: dbWithAddress({ name: "other@example.com" }) } },
+    token,
+  );
+  assert.equal(replaced, null);
 });

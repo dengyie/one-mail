@@ -7,6 +7,7 @@ import { handleListQuery } from '../common'
 import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
 import { mergeRoleAddressConfigs } from "../unified/rbac_config";
+import { hashPasswordForStorage } from "../core/password.ts";
 
 export default {
     getSetting: async (c: Context<HonoCustomType>) => {
@@ -79,11 +80,12 @@ export default {
         const userInfo = new UserInfo(geoData, email);
         try {
             checkUserPassword(password);
+            const storedPassword = await hashPasswordForStorage(password);
             const { success } = await c.env.DB.prepare(
                 `INSERT INTO users (user_email, password, user_info)`
                 + ` VALUES (?, ?, ?)`
             ).bind(
-                email, password, JSON.stringify(userInfo)
+                email, storedPassword, JSON.stringify(userInfo)
             ).run();
             if (!success) {
                 return c.text(msgs.FailedToRegisterMsg, 500)
@@ -101,14 +103,49 @@ export default {
         const { user_id } = c.req.param();
         const msgs = i18n.getMessagesbyContext(c);
         if (!user_id) return c.text(msgs.UserNotFoundMsg, 400);
-        const { success } = await c.env.DB.prepare(
-            `DELETE FROM users WHERE id = ?`
-        ).bind(user_id).run();
-        const { success: addressSuccess } = await c.env.DB.prepare(
-            `DELETE FROM users_address WHERE user_id = ?`
-        ).bind(user_id).run();
-        if (!success || !addressSuccess) {
-            return c.text(msgs.FailedDeleteUserMsg, 500)
+        const existing = await c.env.DB.prepare(
+            `SELECT id FROM users WHERE id = ?`
+        ).bind(user_id).first("id");
+        if (existing === undefined || existing === null) {
+            return c.text(msgs.UserNotFoundMsg, 404);
+        }
+        // All user-owned rows are removed in one D1 transaction. The address
+        // rows themselves are intentionally retained: they are global mailbox
+        // records and may contain mail history; users_address is the ownership
+        // link that must be removed before the user row.
+        try {
+            const results = await c.env.DB.batch([
+                c.env.DB.prepare(
+                    `DELETE FROM user_passkeys WHERE user_id = ?`
+                ).bind(user_id),
+                // Imported mail is scoped by to_addr at read time. Remove it before
+                // dropping the account rows so a later user cannot reclaim the same
+                // external username and see the deleted user's history.
+                c.env.DB.prepare(
+                    `DELETE FROM emails
+                     WHERE account_id IN (
+                         SELECT id FROM user_mail_accounts WHERE user_id = ?
+                     )`
+                ).bind(user_id),
+                c.env.DB.prepare(
+                    `DELETE FROM user_mail_accounts WHERE user_id = ?`
+                ).bind(user_id),
+                c.env.DB.prepare(
+                    `DELETE FROM user_roles WHERE user_id = ?`
+                ).bind(user_id),
+                c.env.DB.prepare(
+                    `DELETE FROM users_address WHERE user_id = ?`
+                ).bind(user_id),
+                c.env.DB.prepare(
+                    `DELETE FROM users WHERE id = ?`
+                ).bind(user_id),
+            ]);
+            if (!results.every((result) => result.success)) {
+                return c.text(msgs.FailedDeleteUserMsg, 500);
+            }
+        } catch (error) {
+            console.error("[admin-delete-user] transaction failed:", error);
+            return c.text(msgs.FailedDeleteUserMsg, 500);
         }
         return c.json({ success: true })
     },
@@ -119,9 +156,10 @@ export default {
         if (!user_id) return c.text(msgs.UserNotFoundMsg, 400);
         try {
             checkUserPassword(password);
+            const storedPassword = await hashPasswordForStorage(password);
             const { success } = await c.env.DB.prepare(
                 `UPDATE users SET password = ? WHERE id = ?`
-            ).bind(password, user_id).run();
+            ).bind(storedPassword, user_id).run();
             if (!success) {
                 return c.text(msgs.FailedUpdatePasswordMsg, 500)
             }

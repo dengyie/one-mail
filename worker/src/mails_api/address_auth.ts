@@ -1,6 +1,7 @@
 import { Context } from 'hono';
 import i18n from '../i18n';
-import utils, { getBooleanValue, hashPassword, checkCfTurnstile } from '../utils';
+import utils, { getBooleanValue, checkCfTurnstile } from '../utils';
+import { hashPasswordForStorage, verifyPassword } from '../core/password.ts';
 import { signAddressJwt } from '../core/auth';
 
 export default {
@@ -15,7 +16,7 @@ export default {
             return c.text(msgs.PasswordChangeDisabledMsg, 403);
         }
 
-        if (!new_password) {
+        if (typeof new_password !== "string" || new_password.length < 1 || new_password.length > 100) {
             return c.text(msgs.NewPasswordRequiredMsg, 400);
         }
 
@@ -23,10 +24,10 @@ export default {
             return c.text(msgs.InvalidAddressTokenMsg, 400);
         }
 
-        // NOTE: new_password is the frontend SHA-256 hash, stored directly in address.password.
+        const storedPassword = await hashPasswordForStorage(new_password);
         const { success } = await c.env.DB.prepare(
             `UPDATE address SET password = ?, updated_at = datetime('now') WHERE id = ?`
-        ).bind(new_password, address_id).run();
+        ).bind(storedPassword, address_id).run();
 
         if (!success) {
             return c.text(msgs.FailedUpdatePasswordMsg, 500);
@@ -67,9 +68,19 @@ export default {
             return c.text(msgs.AddressNotFoundMsg, 404);
         }
 
-        // NOTE: password is the frontend SHA-256 hash, compared directly with address.password.
-        if (address.password !== password) {
+        const verification = await verifyPassword(password, String(address.password ?? ""));
+        if (!verification.valid) {
             return c.text(msgs.InvalidEmailOrPasswordMsg, 401);
+        }
+        if (verification.needsRehash) {
+            try {
+                const upgradedPassword = await hashPasswordForStorage(password);
+                await c.env.DB.prepare(
+                    `UPDATE address SET password = ? WHERE id = ? AND password = ?`
+                ).bind(upgradedPassword, address.id, address.password).run();
+            } catch (error) {
+                console.warn("[address-login] password upgrade failed:", error);
+            }
         }
 
         // 创建JWT

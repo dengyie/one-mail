@@ -7,11 +7,23 @@ import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { useSessionStorage } from '@vueuse/core'
 import { api } from '../../api'
 import { sanitizeHtml } from '../../utils/sanitize-html'
+import { getSendMailIdempotencyKey, clearSendMailIdempotencyKey } from '../../utils/idempotency'
 
 const message = useMessage()
 const isPreview = ref(false)
 const editorRef = shallowRef()
 const sending = ref(false)
+let activeSendMailIdempotencyKey = ''
+
+const currentSendMailIdempotencyKey = () => {
+    if (!activeSendMailIdempotencyKey) activeSendMailIdempotencyKey = getSendMailIdempotencyKey('admin')
+    return activeSendMailIdempotencyKey
+}
+
+const resetSendMailIdempotencyKey = () => {
+    activeSendMailIdempotencyKey = ''
+    clearSendMailIdempotencyKey('admin')
+}
 
 // 富文本/HTML 预览先消毒再 v-html（自伤防护），与 index/SendMail 同一
 // `sanitizeHtml` 策略：javascript:/data:text/html/form-action 与事件属性剥除。
@@ -105,7 +117,8 @@ const send = async () => {
         await api.fetch(`/admin/send_mail`,
             {
                 method: 'POST',
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                headers: { 'x-idempotency-key': currentSendMailIdempotencyKey() },
             })
         sendMailModel.value = {
             fromName: "",
@@ -116,9 +129,11 @@ const send = async () => {
             contentType: 'text',
             content: "",
         }
+        resetSendMailIdempotencyKey()
         message.success(t("successSend"));
     } catch (error) {
-        message.error(error.message || "error");
+        if (error?.status !== 503) resetSendMailIdempotencyKey()
+        message.error(error?.status === 503 ? t('deliveryUnknown') : (error.message || "error"));
     } finally {
         sending.value = false
     }

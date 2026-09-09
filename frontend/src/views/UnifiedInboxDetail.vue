@@ -157,7 +157,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowBackRound, RefreshRound } from '@vicons/material'
 import { sanitizeHtmlMail } from '../utils/sanitize-html-mail'
@@ -180,13 +180,29 @@ const loading = ref(true)
 const error = ref('')
 const marking = ref(false)
 const starring = ref(false)
-const hasAccess = computed(() => !!userJwt.value?.trim() || !!unifiedApiKey.value?.trim())
+const authIdentity = computed(() => {
+  const jwt = userJwt.value?.trim()
+  if (jwt) return `user:${jwt}`
+  const key = unifiedApiKey.value?.trim()
+  return key ? `key:${key}` : ''
+})
+const hasAccess = computed(() => !!authIdentity.value)
 
 // AI assistant state
 const showAiPanel = ref(false)
 const aiThinking = ref(false)
 const aiDuration = ref(0)
 const aiAnalysisText = ref('')
+let aiTimer = null
+
+watch(() => email.value?.id, () => {
+  if (aiTimer) {
+    clearTimeout(aiTimer)
+    aiTimer = null
+  }
+  aiThinking.value = false
+  aiAnalysisText.value = ''
+})
 
 const generateAiAnalysis = () => {
   if (!email.value) return
@@ -200,7 +216,11 @@ const generateAiAnalysis = () => {
   const codeMatches = body.match(/\b([0-9]{4,8}|[A-Z0-9]{5,8})\b/g) || []
   const validCodes = codeMatches.filter(c => !/^(19|20)\d\d$/.test(c) && !/^\d{4}-\d{2}/.test(c))
 
-  setTimeout(() => {
+  if (aiTimer) clearTimeout(aiTimer)
+  const analysisMailId = email.value.id
+  aiTimer = setTimeout(() => {
+    if (email.value?.id !== analysisMailId) return
+    aiTimer = null
     aiThinking.value = false
     aiDuration.value = Number(((Date.now() - start) / 1000).toFixed(1))
     const codeLine = validCodes.length ? `- **提取验证码**：\`${validCodes.slice(0, 3).join(', ')}\`` : '- 未检测到明显验证码'
@@ -208,23 +228,55 @@ const generateAiAnalysis = () => {
   }, 400)
 }
 
+let loadRequestSeq = 0
 const load = async () => {
+  const requestId = ++loadRequestSeq
+  const requestedId = String(route.params.id || '')
+  const isCurrent = () =>
+    requestId === loadRequestSeq
+    && hasAccess.value
+    && String(route.params.id || '') === requestedId
   if (!hasAccess.value) {
+    email.value = null
     loading.value = false
     return
   }
   loading.value = true
   error.value = ''
+  marking.value = false
+  starring.value = false
   email.value = null
   try {
-    email.value = await api.unified.getEmail(route.params.id)
+    const nextEmail = await api.unified.getEmail(requestedId)
+    if (!isCurrent()) return
+    email.value = nextEmail
   } catch (e) {
+    if (!isCurrent()) return
     error.value = e.message || 'error'
   } finally {
-    loading.value = false
+    if (isCurrent()) {
+      loading.value = false
+    }
   }
 }
+watch([() => route.params.id, authIdentity], ([id, identity], [oldId, oldIdentity]) => {
+  if (!identity) {
+    loadRequestSeq += 1
+    email.value = null
+    loading.value = false
+    error.value = ''
+    return
+  }
+  if (id !== oldId || identity !== oldIdentity) {
+    void load()
+  }
+})
 onMounted(load)
+
+onBeforeUnmount(() => {
+  loadRequestSeq += 1
+  if (aiTimer) clearTimeout(aiTimer)
+})
 
 const stripHtml = (html) =>
   String(html || '')
@@ -285,34 +337,64 @@ const attachments = computed(() => {
 })
 
 const markRead = async () => {
-  if (email.value.is_read) return
+  const target = email.value
+  if (!target || target.is_read) return
+  const targetId = String(target.id)
+  const targetIdentity = authIdentity.value
   marking.value = true
   try {
-    await api.unified.markRead(email.value.id)
-    email.value.is_read = 1
+    await api.unified.markRead(target.id)
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
+    target.is_read = 1
     message.success(t('detail.markRead'))
   } catch (e) {
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
     message.error(e.message || 'error')
   } finally {
-    marking.value = false
+    if (email.value === target) {
+      marking.value = false
+    }
   }
 }
 
 const toggleStar = async () => {
-  if (!email.value) return
+  const target = email.value
+  if (!target) return
+  const targetId = String(target.id)
+  const targetIdentity = authIdentity.value
   starring.value = true
   try {
-    const res = await api.unified.toggleStar(email.value.id)
-    email.value.is_starred = res.is_starred
+    const res = await api.unified.toggleStar(target.id)
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
+    target.is_starred = res.is_starred
     if (res.is_starred) {
       message.success('已标为星标邮件（正文永久保留）')
     } else {
       message.info('已取消星标')
     }
   } catch (e) {
+    if (
+      email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
     message.error(e.message || '操作失败')
   } finally {
-    starring.value = false
+    if (email.value === target) {
+      starring.value = false
+    }
   }
 }
 

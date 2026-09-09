@@ -242,7 +242,9 @@ watch([page, pageSize], async () => {
             <div class="space-y-4">
                 <div class="flex items-center justify-between text-xs text-slate-500">
                     <span>共绑定 {{ count }} 个专属邮箱地址</span>
-                    <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count" :page-sizes="[20, 50, 100]" size="small" />
+                    <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count" :page-sizes="[20, 50, 100]" size="small">
+                        <template #prefix>{{ t('itemCount') }}: {{ count }}</template>
+                    </n-pagination>
                 </div>
                 <n-data-table :columns="columns" :data="data" :bordered="false" class="rounded-2xl overflow-hidden" />
             </div>

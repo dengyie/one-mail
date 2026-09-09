@@ -13,7 +13,7 @@ import mail_webhook_settings from './mail_webhook_settings'
 import oauth2_settings from './oauth2_settings'
 import worker_config from './worker_config'
 import admin_mail_api from './admin_mail_api'
-import { sendMailbyAdmin, sendMailByBindingAdmin } from './send_mail'
+import { sendMailbyAdmin, sendMailByBindingAdmin, listUnknownSendMail, resolveUnknownSendMail } from './send_mail'
 import db_api from './db_api'
 import ip_blacklist_settings from './ip_blacklist_settings'
 import ai_extract_settings from './ai_extract_settings'
@@ -90,6 +90,8 @@ api.get('/admin/worker/configs', worker_config.getConfig)
 // send mail by admin
 api.post('/admin/send_mail', sendMailbyAdmin)
 api.post('/admin/send_mail_by_binding', sendMailByBindingAdmin)
+api.get('/admin/send_mail/unknown', listUnknownSendMail)
+api.post('/admin/send_mail/unknown/:id/resolve', resolveUnknownSendMail)
 
 // db api
 api.get('admin/db_version', db_api.getVersion)

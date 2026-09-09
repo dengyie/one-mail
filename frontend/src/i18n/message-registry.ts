@@ -482,9 +482,17 @@ export const MESSAGE_REGISTRY = {
       "en": "Created At",
       "zh": "创建时间"
     },
+    "success": {
+      "en": "Success",
+      "zh": "成功"
+    },
     "deletePasskey": {
       "en": "Delete Passkey",
       "zh": "删除 Passkey"
+    },
+    "deletePasskeyTip": {
+      "en": "Are you sure you want to delete this passkey?",
+      "zh": "确定要删除此 Passkey 吗？"
     },
     "logout": {
       "en": "Logout",
@@ -552,6 +560,18 @@ export const MESSAGE_REGISTRY = {
       "en": "Menu",
       "zh": "菜单"
     },
+    "switchLanguage": {
+      "en": "Change language",
+      "zh": "切换语言"
+    },
+    "logout": {
+      "en": "Logout",
+      "zh": "退出登录"
+    },
+    "logoutConfirm": {
+      "en": "Are you sure you want to logout?",
+      "zh": "确定要退出登录吗？"
+    },
     "ok": {
       "en": "OK",
       "zh": "确定"
@@ -571,6 +591,14 @@ export const MESSAGE_REGISTRY = {
     "user": {
       "en": "User",
       "zh": "用户"
+    },
+    "user_settings": {
+      "en": "User Settings",
+      "zh": "用户设置"
+    },
+    "webhookSettings": {
+      "en": "Webhook Settings",
+      "zh": "Webhook 设置"
     }
   },
   "views.user.BindAddress": {
@@ -1235,6 +1263,10 @@ export const MESSAGE_REGISTRY = {
     "contentEmpty": {
       "en": "Content is empty",
       "zh": "内容不能为空"
+    },
+    "deliveryUnknown": {
+      "en": "The provider has not confirmed delivery. Retry with the same request, or ask an administrator to verify delivery before trying again.",
+      "zh": "邮件服务商尚未确认是否送达。请使用相同请求重试，或先联系管理员确认后再发送。"
     },
     "edit": {
       "en": "Edit",

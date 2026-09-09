@@ -81,6 +81,7 @@ const navTo = (path) => {
       <!-- Mobile hamburger -->
       <button
         @click="emit('open-mobile-menu')"
+        :aria-label="t('menu') || 'Menu'"
         class="md:hidden flex items-center justify-center w-9 h-9 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors"
       >
         <n-icon size="20" :component="MenuFilled" />
@@ -112,7 +113,11 @@ const navTo = (path) => {
 
       <!-- Language Selector -->
       <n-dropdown :options="languageOptions" @select="changeLocale" trigger="click">
-        <button class="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="切换语言">
+        <button
+          :aria-label="t('switchLanguage') || 'Change language'"
+          class="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          title="切换语言"
+        >
           <n-icon size="18" :component="LanguageFilled" />
         </button>
       </n-dropdown>

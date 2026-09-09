@@ -140,9 +140,11 @@ export const decideAdminAuth = (input: AdminAuthCheckInput): AdminAuthDecision =
       if (payload.user_role !== input.adminUserRole) {
         return { relay: false, status: 401, recordFailure: true, kind: "role_not_admin" };
       }
-      // user_role 确为 ADMIN_USER_ROLE（管理员账户已通过 user_token / access_token 登录认证），
-      // 直接免密放行，允许通过账户角色直接进入管理员后台管理。
-      return { relay: true, status: 0 };
+      // A matching user_role proves only that the signed user token belongs to an
+      // administrator. It is not the admin credential required by this surface.
+      // Count the missing credential as a failure, then let the explicit operator
+      // bypass (when configured) or the password response below decide.
+      recordFailure = true;
     }
   }
 
