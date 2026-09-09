@@ -210,7 +210,7 @@ export const sendMail = async (
                 throw new Error(msgs.NoBalanceMsg);
             }
             if (sendMailLimitReservation) {
-                await sendMailLimitReservation.markBalanceReserved(address);
+                await sendMailLimitReservation.markBalanceReserved(address, options?.addressId ?? "");
             }
         }
 
