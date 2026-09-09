@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
 import { sendMail } from "../mails_api/send_mail_api";
-import { reserveSendMailLimit, type SendMailLimitReservation } from "../mails_api/send_mail_limit_utils";
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError } from "../mails_api/send_mail_limit_utils";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -38,7 +38,8 @@ export const sendMailbyAdmin = async (c: Context<HonoCustomType>) => {
             content: content,
             is_html: is_html,
         }, {
-            isAdmin: true
+            isAdmin: true,
+            idempotencyKey: c.req.raw.headers.get("x-idempotency-key") ?? undefined
         })
     } catch (e) {
         console.error("Admin send_mail failed", e);
@@ -77,9 +78,17 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
         return c.text(msgs.EnableSendMailForDomainMsg, 400)
     }
     let sendMailLimitReservation: SendMailLimitReservation | null = null;
-    let providerDispatchSucceeded = false;
+    let providerDispatchStarted = false;
     try {
-        sendMailLimitReservation = await reserveSendMailLimit(c);
+        const idempotencyKey = c.req.raw.headers.get("x-idempotency-key") ?? undefined;
+        const requestHash = idempotencyKey ? await hashSendMailRequest({ from, to, subject, html, text, cc, bcc, replyTo, attachments, headers }) : undefined;
+        sendMailLimitReservation = await reserveSendMailLimit(c, { idempotencyKey, requestHash });
+        if (sendMailLimitReservation?.replay === "sent") return c.json({ status: "ok" });
+        if (sendMailLimitReservation?.replay === "unknown") throw new SendMailDeliveryUnknownError();
+        if (sendMailLimitReservation) {
+            await sendMailLimitReservation.markDispatchStarted();
+            providerDispatchStarted = true;
+        }
         await c.env.SEND_MAIL.send({
             from,
             to,
@@ -92,19 +101,24 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
             ...(attachments && attachments.length ? { attachments } : {}),
             ...(headers ? { headers } : {}),
         });
-        providerDispatchSucceeded = true;
+        if (sendMailLimitReservation) await sendMailLimitReservation.markDispatchSucceeded();
     } catch (e) {
-        if (!providerDispatchSucceeded && sendMailLimitReservation) {
+        if (providerDispatchStarted) {
+            console.error("Admin provider dispatch outcome is unknown", e);
+            return c.text(new SendMailDeliveryUnknownError().message, 503)
+        }
+        if (sendMailLimitReservation) {
             try { await sendMailLimitReservation.release(); }
             catch (releaseError) { console.error("Failed to release send mail limit reservation", releaseError); }
         }
         console.error("Admin raw send_mail failed", e);
-        return c.text(getAdminSendMailErrorMessage(msgs, e), 400)
+        const status = e instanceof SendMailIdempotencyConflictError ? 409 : 400;
+        return c.text(getAdminSendMailErrorMessage(msgs, e), status as 400 | 409)
     }
     if (sendMailLimitReservation) {
         try { await sendMailLimitReservation.commit(); }
         catch (commitError) {
-            console.error("Failed to commit send mail limit reservation; reconciliation will expire it", commitError);
+            console.error("Failed to commit send mail limit reservation; reconciliation will promote sent state", commitError);
         }
     }
     return c.json({ status: "ok" });
