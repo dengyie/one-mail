@@ -246,7 +246,7 @@ export const reconcileSendMailLimitReservations = async (
     env: Pick<Bindings, "DB">,
     now: number = Date.now(),
     batchLimit: number = RESERVATION_RECONCILE_BATCH_SIZE
-): Promise<{ committed: number; released: number; purged: number }> => {
+): Promise<{ released: number; purged: number }> => {
     await ensureSendMailLimitReservationSchema(env.DB);
     let committed = 0;
     try {
@@ -269,7 +269,7 @@ export const reconcileSendMailLimitReservations = async (
             "ORDER BY updated_at, id LIMIT ?" +
         ")"
     ).bind(purgeBefore, batchLimit).run();
-    return { committed, released, purged: resultChanges(purgedResult) };
+    return { released, purged: resultChanges(purgedResult) };
 };
 
 export class SendMailDeliveryUnknownError extends Error {
