@@ -5,7 +5,7 @@ import { getJsonSetting } from './utils';
 import { CleanupSettings } from './models';
 import { executeCustomSqlCleanup } from './admin_api/cleanup_api';
 import { cleanupReadEmails, purgeOldEmailBodies } from './unified/retention';
-import { reconcileSendMailLimitReservations } from './mails_api/send_mail_limit_utils';
+import { reconcileSendMailLimitReservations, countUnknownSendMailReservations } from './mails_api/send_mail_limit_utils';
 
 const RETENTION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const RETENTION_KEY = "one-mail:retention:last-success";
@@ -56,8 +56,12 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
     try {
         try {
             const quota = await reconcileSendMailLimitReservations(env);
-            if (quota.released > 0 || quota.purged > 0) {
-                console.log("one-mail send quota reconciliation:", JSON.stringify(quota));
+            const unknown = await countUnknownSendMailReservations(env.DB);
+            if (quota.released > 0 || quota.purged > 0 || unknown > 0) {
+                console.log("one-mail send quota reconciliation:", JSON.stringify({ ...quota, unknown }));
+            }
+            if (unknown > 0) {
+                console.warn("one-mail has provider delivery outcomes requiring confirmation", { unknown });
             }
         } catch (error) {
             console.error("one-mail send quota reconciliation failed", error);
