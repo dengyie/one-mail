@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
 import { sendMail } from "../mails_api/send_mail_api";
-import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, listUnknownSendMailReservations, resolveUnknownSendMailReservation } from "../mails_api/send_mail_limit_utils";
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, listUnknownSendMailReservations, resolveUnknownSendMailReservation, refundResolvedSendMailBalance } from "../mails_api/send_mail_limit_utils";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -154,8 +154,11 @@ export const resolveUnknownSendMail = async (c: Context<HonoCustomType>) => {
         if (result.status === "already_resolved") return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 409);
         if (result.refundAddress) {
             try {
-                const { refundSendBalance } = await import("../mails_api/send_balance");
-                await refundSendBalance(c, result.refundAddress);
+                const refunded = await refundResolvedSendMailBalance(c, id, result.refundAddress);
+                if (!refunded) {
+                    console.error("Unknown delivery was released but balance refund was not applied");
+                    return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 500);
+                }
             } catch (error) {
                 console.error("Unknown delivery was released but balance refund failed", error);
                 return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 500);
