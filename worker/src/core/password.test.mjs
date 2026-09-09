@@ -39,7 +39,11 @@ test("keeps the old SHA-256 client protocol working in both directions", async (
     valid: true,
     needsRehash: true,
   });
-  assert.deepEqual(await verifyPassword(hashed, raw), {
+  assert.deepEqual(await verifyPassword(raw, raw), {
+    valid: true,
+    needsRehash: true,
+  });
+  assert.deepEqual(await verifyPassword(hashed, hashed), {
     valid: true,
     needsRehash: true,
   });
