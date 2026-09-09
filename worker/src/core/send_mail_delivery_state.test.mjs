@@ -4,6 +4,7 @@ import {
   hashSendMailRequest,
   reserveSendMailLimit,
   resolveUnknownSendMailReservation,
+  SendMailIdempotencyConflictError,
 } from "../mails_api/send_mail_limit_utils.ts";
 
 const CONFIG_KEY = "send_mail_limit_config";
@@ -232,4 +233,15 @@ test("operator can resolve rejected unknown delivery and recover the quota slot"
   const result = await resolveUnknownSendMailReservation(context(db), row.id, "rejected");
   assert.deepEqual(result, { status: "released", refundAddress: "a@example.com", refundAddressId: "address-1" });
   assert.equal(db.settings.get(row.dailyKey), "0");
+});
+
+
+test("idempotency key rejects a different request hash", async () => {
+  const db = new DeliveryStateD1();
+  await reserveSendMailLimit(context(db), { idempotencyKey: "key-conflict", requestHash: "hash-a" });
+  await assert.rejects(
+    () => reserveSendMailLimit(context(db), { idempotencyKey: "key-conflict", requestHash: "hash-b" }),
+    (error) => error instanceof SendMailIdempotencyConflictError,
+  );
+  assert.equal(db.reservations.size, 1);
 });
