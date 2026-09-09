@@ -56,6 +56,7 @@ class DeliveryStateD1 {
         dispatch_state: row.dispatchState,
         sender_address: row.senderAddress,
         balance_reserved: row.balanceReserved,
+        balance_refunded: row.balanceRefunded,
       } : null;
     }
     return null;
@@ -113,7 +114,7 @@ class DeliveryStateD1 {
       this.reservations.set(id, {
         id, dailyKey, monthlyKey, idempotencyKey, requestHash,
         status: "active", dispatchState: "pending",
-        senderAddress: null, balanceReserved: 0,
+        senderAddress: null, balanceReserved: 0, balanceRefunded: 0,
         createdAt, updatedAt, expiresAt,
       });
       this.increment(dailyKey);
