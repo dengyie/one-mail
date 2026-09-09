@@ -509,7 +509,7 @@ export const reserveSendMailLimit = async (
         return {
             markDispatchStarted: async () => { await updateDispatchState(c, id, "unknown", "pending"); },
             markDispatchSucceeded: async () => { await updateDispatchState(c, id, "sent", "unknown"); },
-            markBalanceReserved: async (address: string) => { await markBalanceReserved(c, id, address); },
+            markBalanceReserved: async (address: string, addressId: string | number) => { await markBalanceReserved(c, id, address, addressId); },
             commit: async () => {
                 if (settled) return;
                 await updateReservationStatus(c, id, "committed");
