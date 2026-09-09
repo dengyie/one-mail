@@ -214,6 +214,11 @@ export const sendMail = async (
             }
         }
 
+        // Validate that a provider is configured before marking the attempt
+        // unknown; a configuration error never touched an external service.
+        if (!sendByVerifiedAddressList && !resendEnabled && !smtpConfig && !sendMailBindingEnabled) {
+            throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");
+        }
         if (sendMailLimitReservation) {
             await sendMailLimitReservation.markDispatchStarted();
             providerDispatchStarted = true;
