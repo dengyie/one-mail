@@ -469,7 +469,7 @@ export const checkRegistrationRateLimit = async (
 // （utils.ts 经 gzip.ts → ./models 的 type-only 值 import 在 strip-types 下会 SyntaxError，
 // quota.ts 只引纯值/类/import type，零脏依赖）。这里 re-export 保持调用方仍从 "../utils"
 // 导入，无破坏。
-export { getMaxAddressCount, getMaxMailAccountCount, isAddressCountLimitReached } from "./quota";
+export { getMaxAddressCount, getMaxMailAccountCount, isAddressCountLimitReached } from "./quota.ts";
 
 export default {
     getJsonObjectValue,

@@ -313,7 +313,7 @@ export const reserveSendMailLimit = async (
             monthlyKey, monthlyKey, monthlyLimit
         ).run();
 
-        if (resultChanges(result) !== 1) {
+        if (resultChanges(result) <= 0) {
             if (dailyLimit !== null && await readCounter(c, dailyKey!) >= dailyLimit) {
                 throw new SendMailLimitError(msgs.ServerSendMailDailyLimitMsg);
             }
