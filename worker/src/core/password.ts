@@ -140,8 +140,17 @@ export const verifyPassword = async (
             derive(password, record.salt, record.iterations),
             derive(legacyInput, record.salt, record.iterations),
         ]);
-        const valid = constantTimeEqual(direct, record.direct)
-            || constantTimeEqual(hashed, record.hashed);
+        // Match both representations in both directions. This keeps a record
+        // created by a legacy SHA-256 client usable after the browser switches
+        // to raw passwords, and vice versa.
+        const directRecordMatch = constantTimeEqual(direct, record.direct);
+        const directHashedMatch = constantTimeEqual(direct, record.hashed);
+        const hashedRecordMatch = constantTimeEqual(hashed, record.direct);
+        const hashedHashedMatch = constantTimeEqual(hashed, record.hashed);
+        const valid = directRecordMatch
+            || directHashedMatch
+            || hashedRecordMatch
+            || hashedHashedMatch;
         return {
             valid,
             needsRehash: valid && record.iterations < CURRENT_ITERATIONS,
