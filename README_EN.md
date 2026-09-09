@@ -87,6 +87,15 @@ pnpm install && pnpm dev
 
 See `worker/wrangler.toml.template` and `aggregator/config.example.json` for all vars.
 
+### Send-mail idempotency and unknown delivery state
+
+`POST /api/send_mail`, `POST /external/api/send_mail`, and `POST /admin/send_mail` accept `x-idempotency-key`. When a request returns 503 (the provider may have accepted the message before the Worker timed out), retry with the same key. The same request is replay-safe; a different request with that key returns 409. Unknown deliveries keep quota and sender balance reserved until an administrator resolves them:
+
+- List: `GET /admin/send_mail/unknown`
+- Resolve: `POST /admin/send_mail/unknown/:id/resolve` with body `{"outcome":"sent"}` or `{"outcome":"rejected"}`
+
+Back up an existing D1 database before upgrading, then run `db/2026-09-09-send-mail-delivery-state.sql` once (for example, `cd worker && wrangler d1 execute <database> --remote --file=../db/2026-09-09-send-mail-delivery-state.sql`).
+
 ## What's in this repo
 
 A fork of [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) with the one-mail unified inbox layered on top. The temp-mail base (Email Routing receive, Rust-WASM parsing, SMTP proxy) is preserved; the unified inbox (D1 schema, Worker API, VPS aggregator) is this repo's addition.
