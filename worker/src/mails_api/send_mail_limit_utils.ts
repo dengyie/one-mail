@@ -370,9 +370,10 @@ export const refundResolvedSendMailBalance = async (
         c.env.DB.prepare(
             "UPDATE send_mail_limit_reservations SET balance_refunded = 1, updated_at = ? " +
             "WHERE id = ? AND status = 'released' AND balance_reserved = 1 AND balance_refunded = 0 " +
+            "AND sender_address = ? AND sender_address_id = ? " +
             "AND EXISTS (SELECT 1 FROM address_sender WHERE address = ?) " +
             "AND EXISTS (SELECT 1 FROM address a WHERE a.id = ? AND a.name = ?)"
-        ).bind(Date.now(), id, address, addressId),
+        ).bind(Date.now(), id, address, addressId, address, addressId, addressId),
     ]);
     return resultChanges(results[1]) === 1;
 };
