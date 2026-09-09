@@ -39,7 +39,7 @@ app.use('/*', cors({
 	origin: (origin, c) => resolveCorsOrigin(origin, c.env.FRONTEND_URL),
 	allowHeaders: [
 		'Content-Type', 'Authorization', 'x-user-token', 'x-user-access-token',
-		'x-custom-auth', 'x-admin-auth', 'x-lang', 'x-fingerprint',
+		'x-custom-auth', 'x-admin-auth', 'x-lang', 'x-fingerprint', 'x-idempotency-key',
 	],
 	allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));

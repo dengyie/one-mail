@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| 外部邮件服务超时后的 reservation 进入 unknown/sent 状态；支持 `x-idempotency-key` 重放，未知结果返回 503 且不释放额度/余额，避免重试重复发送和额度绕过。新增迁移 `db/2026-09-09-send-mail-delivery-state.sql`。
+
 - fix: |Worker/Auth| 用户 JWT 与角色令牌现在同时校验 user_id + user_email；统一收件箱复用同一份已验证身份，防止删除最高用户 ID 后旧令牌在新用户复用 ID 时越权。
 
 - fix: |统一收件箱| 外部邮箱绑定拒绝复用非 external 的本地地址记录，并把跨用户地址绑定冲突返回为 400，避免同名地址历史邮件串入错误用户。

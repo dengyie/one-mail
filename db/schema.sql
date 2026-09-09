@@ -222,11 +222,17 @@ CREATE TABLE IF NOT EXISTS send_mail_limit_reservations (
     status TEXT NOT NULL CHECK (status IN ('active', 'committed', 'released')),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    dispatch_state TEXT NOT NULL DEFAULT 'pending' CHECK (dispatch_state IN ('pending', 'unknown', 'sent')),
+    idempotency_key TEXT,
+    request_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry
-    ON send_mail_limit_reservations(status, expires_at);
+    ON send_mail_limit_reservations(status, dispatch_state, expires_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_idempotency
+    ON send_mail_limit_reservations(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_terminal
     ON send_mail_limit_reservations(status, updated_at);
@@ -252,7 +258,7 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_release
 AFTER UPDATE OF status ON send_mail_limit_reservations
-WHEN OLD.status = 'active' AND NEW.status = 'released'
+WHEN OLD.status = 'active' AND NEW.status = 'released' AND OLD.dispatch_state = 'pending'
 BEGIN
     UPDATE settings
        SET value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) - 1 AS TEXT),

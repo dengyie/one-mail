@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| Persist provider delivery as `unknown`/`sent` after dispatch; `x-idempotency-key` replays are safe, uncertain outcomes return 503 without releasing quota/balance, and duplicate retries cannot bypass limits. Added migration `db/2026-09-09-send-mail-delivery-state.sql`.
+
 - fix: |Worker/Auth| Bind user and role JWTs to both user_id and user_email; the unified inbox reuses the already verified identity so a deleted user's token cannot follow a reused row ID.
 
 - fix: |Unified Inbox| Reject external-mail bindings that would reuse a non-external local address, and return cross-user address binding conflicts as 400 instead of a generic server error.
