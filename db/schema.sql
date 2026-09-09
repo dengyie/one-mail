@@ -227,7 +227,8 @@ CREATE TABLE IF NOT EXISTS send_mail_limit_reservations (
     idempotency_key TEXT,
     request_hash TEXT,
     sender_address TEXT,
-    balance_reserved INTEGER NOT NULL DEFAULT 0
+    balance_reserved INTEGER NOT NULL DEFAULT 0,
+    balance_refunded INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry
