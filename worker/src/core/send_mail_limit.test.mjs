@@ -16,6 +16,7 @@ class MemoryD1 {
 
   prepare(sql) {
     return {
+      run: async () => this.run(sql, []),
       bind: (...args) => ({
         first: async (column) => this.first(sql, args, column),
         run: async () => this.run(sql, args),
