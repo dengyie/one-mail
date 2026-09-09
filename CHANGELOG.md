@@ -8,6 +8,12 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker/Auth| 用户 JWT 与角色令牌现在同时校验 user_id + user_email；统一收件箱复用同一份已验证身份，防止删除最高用户 ID 后旧令牌在新用户复用 ID 时越权。
+
+- fix: |统一收件箱| 外部邮箱绑定拒绝复用非 external 的本地地址记录，并把跨用户地址绑定冲突返回为 400，避免同名地址历史邮件串入错误用户。
+
+- fix: |OAuth| OAuth state 改用 D1 单语句原子消费与过期清理，避免 KV GET+DELETE 在并发 callback 下被重复消费。
+
 - fix: |Worker| 删除用户时在同一 D1 事务清理外部账号关联的邮件，避免同名邮箱被重新接入后看到已删除用户的历史；管理员角色令牌不再绕过 x-admin-auth 口令门。
 
 - fix: |OAuth| 登录链接改由 Worker 生成并返回随机 state，修复前端未传 state 导致 OAuth 登录始终失败，并避免调用方预测或复用状态。

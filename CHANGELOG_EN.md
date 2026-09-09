@@ -8,6 +8,12 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker/Auth| Bind user and role JWTs to both user_id and user_email; the unified inbox reuses the already verified identity so a deleted user's token cannot follow a reused row ID.
+
+- fix: |Unified Inbox| Reject external-mail bindings that would reuse a non-external local address, and return cross-user address binding conflicts as 400 instead of a generic server error.
+
+- fix: |OAuth| Store state in D1 and consume it with one atomic DELETE, with opportunistic expiry cleanup, so concurrent callbacks cannot consume the same state twice.
+
 - fix: |Worker| Delete imported mail for a user in the same D1 transaction, preventing a later same-name mailbox from seeing deleted history; administrator role tokens no longer bypass the x-admin-auth password gate.
 
 - fix: |OAuth| Generate and return a random state from the Worker login-link endpoint, fixing the frontend path that otherwise always failed state validation and preventing callers from predicting or reusing state.

@@ -51,6 +51,7 @@ test('deleting a user removes imported mail before the username is rebound', asy
   let originalUserSettings: Record<string, unknown> | undefined;
   let userA: TestUser | undefined;
   let userB: TestUser | undefined;
+  let localAddress: { jwt: string; address: string } | undefined;
 
   try {
     const settingsRes = await request.get(WORKER_URL + '/admin/user_settings');
@@ -68,6 +69,34 @@ test('deleting a user removes imported mail before the username is rebound', asy
     expect(enableRes.ok()).toBe(true);
 
     userA = await createUser(request, 'lifecycle-a');
+
+    // A local address row must never be reused as an external mailbox scope.
+    const localAddressRes = await request.post(WORKER_URL + '/api/new_address', {
+      data: { name: 'collision-' + Date.now(), domain: 'test.example.com' },
+    });
+    expect(localAddressRes.ok()).toBe(true);
+    const localAddressBody = await localAddressRes.json() as { jwt: string; address: string };
+    localAddress = localAddressBody;
+    const collisionRes = await request.post(WORKER_URL + '/user_api/mail_accounts', {
+      headers: { 'x-user-token': userA.jwt },
+      data: {
+        source: 'imap_custom',
+        host: 'mail.example.test',
+        port: 993,
+        username: localAddress.address,
+        cred: 'test-app-password',
+        protocol: 'imap',
+        folders: ['INBOX'],
+        use_ssl: true,
+      },
+    });
+    expect(collisionRes.status()).toBe(400);
+    const collisionAccounts = await request.get(WORKER_URL + '/user_api/mail_accounts', {
+      headers: { 'x-user-token': userA.jwt },
+    });
+    expect(collisionAccounts.ok()).toBe(true);
+    expect((await collisionAccounts.json()).results).toHaveLength(0);
+
     const accountId = await createExternalAccount(request, userA, username);
 
     const ingestRes = await request.post(WORKER_URL + '/admin/unified/ingest', {
@@ -96,8 +125,15 @@ test('deleting a user removes imported mail before the username is rebound', asy
     expect(Number(beforeBody.count)).toBe(1);
     expect(beforeBody.results).toHaveLength(1);
 
+    const revokedUserJwt = userA.jwt;
     const deleteARes = await request.delete(WORKER_URL + '/admin/users/' + userA.userId);
     expect(deleteARes.ok()).toBe(true);
+
+    const revokedRes = await request.get(
+      WORKER_URL + '/api/unified/emails?limit=20&offset=0',
+      { headers: { 'x-user-token': revokedUserJwt } },
+    );
+    expect(revokedRes.status()).toBe(401);
     userA = undefined;
 
     userB = await createUser(request, 'lifecycle-b');
@@ -111,6 +147,12 @@ test('deleting a user removes imported mail before the username is rebound', asy
     expect(Number(afterBody.count)).toBe(0);
     expect(afterBody.results).toHaveLength(0);
   } finally {
+    if (localAddress) {
+      const cleanupAddressRes = await request.delete(WORKER_URL + '/api/delete_address', {
+        headers: { Authorization: 'Bearer ' + localAddress.jwt },
+      });
+      expect([200, 404]).toContain(cleanupAddressRes.status());
+    }
     for (const user of [userA, userB]) {
       if (!user) continue;
       const cleanupRes = await request.delete(WORKER_URL + '/admin/users/' + user.userId);

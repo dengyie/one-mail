@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { jwt } from 'hono/jwt'
 import { Jwt } from 'hono/utils/jwt'
 import { verifyActiveAddressJwt } from './core/auth'
+import { isActiveUser } from './core/user_identity'
 
 import { api as commonApi } from './commom_api';
 import { api as openAuthApi } from './open_api/auth';
@@ -118,31 +119,22 @@ app.use('/*', async (c, next) => {
 	await next()
 });
 
-const isActiveUser = async (
-	c: Context<HonoCustomType>,
-	userId: unknown
-): Promise<boolean> => {
-	if (typeof userId !== "number" && typeof userId !== "string") return false;
-	const row = await c.env.DB.prepare(
-		`SELECT id FROM users WHERE id = ?`
-	).bind(userId).first("id");
-	return row !== undefined && row !== null;
-}
-
 const checkUserPayload = async (
 	c: Context<HonoCustomType>
 ): Promise<void> => {
 	try {
 		const token = c.req.raw.headers.get("x-user-token");
 		if (!token) return;
-		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256") as Partial<UserPayload>;
 		// check expired
 		if (!payload.exp) return;
 		// exp is in seconds
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
 			return;
 		}
-		if (!(await isActiveUser(c, payload.user_id))) {
+		// Bind the token to both immutable identity attributes. Checking only the
+		// numeric id would let a deleted user's token follow a reused row id.
+		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
 			return;
 		}
 		c.set("userPayload", payload as UserPayload);
@@ -157,7 +149,7 @@ const checkoutUserRolePayload = async (
 	try {
 		const token = c.req.raw.headers.get("x-user-access-token");
 		if (!token) return;
-		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256") as Partial<UserPayload> & { user_role?: unknown };
 		// check expired
 		if (!payload.exp) return;
 		// exp is in seconds
@@ -165,7 +157,7 @@ const checkoutUserRolePayload = async (
 			return;
 		}
 		if (typeof payload?.user_role !== "string") return;
-		if (!(await isActiveUser(c, payload.user_id))) {
+		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
 			return;
 		}
 		c.set("userRolePayload", payload.user_role);
@@ -243,14 +235,14 @@ app.use('/user_api/*', async (c, next) => {
 	try {
 		const token = c.req.raw.headers.get("x-user-token");
 		if (!token) return c.text(msgs.UserTokenExpiredMsg, 401)
-		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
+		const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256") as Partial<UserPayload>;
 		// check expired
 		if (!payload.exp) return c.text(msgs.UserTokenExpiredMsg, 401);
 		// exp is in seconds
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
-		if (!(await isActiveUser(c, payload.user_id))) {
+		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
 		c.set("userPayload", payload as UserPayload);
@@ -276,17 +268,17 @@ app.use('/admin/*', async (c, next) => {
 	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
 
 	// 解析 x-user-access-token（verify 抛错 -> null，decideAdminAuth 按 R2 处理）
-	let accessTokenPayload: { exp?: number; user_role?: unknown; user_id?: unknown } | null = null;
+	let accessTokenPayload: { exp?: number; user_role?: unknown; user_id?: unknown; user_email?: unknown } | null = null;
 	if (hasAccessToken) {
 		try {
 			const raw = c.req.raw.headers.get("x-user-access-token") as string;
 			const verifiedPayload = await Jwt.verify(raw, c.env.JWT_SECRET, "HS256") as {
-				exp?: number; user_role?: unknown; user_id?: unknown;
+				exp?: number; user_role?: unknown; user_id?: unknown; user_email?: unknown;
 			};
 			// A signed token must still reference a live user. Use an expired
 			// sentinel instead of null so decideAdminAuth cannot fall through to
 			// the operator bypass when a revoked role token is presented.
-			accessTokenPayload = await isActiveUser(c, verifiedPayload.user_id)
+			accessTokenPayload = await isActiveUser(c.env.DB, verifiedPayload.user_id, verifiedPayload.user_email)
 				? verifiedPayload
 				: { exp: 0, user_role: verifiedPayload.user_role };
 		} catch { /* verify 抛错 -> null */ }

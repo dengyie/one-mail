@@ -113,16 +113,19 @@ const safeRow = (r: MailAccountRow) => ({
     created_at: r.created_at,
 });
 
+class ExternalBindingConflictError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ExternalBindingConflictError";
+    }
+}
+
 /**
  * 创建外部邮箱账号时，在 address 表写入一条「外部引用」记录并绑定到用户。
  * address.name = username（归集后邮件的 to_addr），source_meta='external'，
  * password=NULL（不参与本站建址/收信，仅作 users_address join 用）。
- * 这样 userAddressScope 自动纳入该 to_addr，resolveScope 立即隔离生效。
- * 复用 common.ts 既有的 source_meta 列（db/2025-12-27-source-meta.sql），零 schema 改动。
- * 一址一户（C1）：同一外部地址只能被一个用户接入——create 前置跨用户查重拒绝 + DB
- * 部分唯一索引兜底，跨用户共享同名 address 行的场景已不可能出现。这里 address.name
- * 仍需 INSERT OR IGNORE，因为 address.name UNIQUE 是表级全局唯一（与 user_mail_accounts
- * 的 enabled=1 行一一对应，同一用户名只会有本条外部引用行）。
+ * 本站地址记录绝不复用：若同名 address 已由本站建址，直接拒绝，避免
+ * 外部归集邮件串入本站地址的用户作用域。跨用户绑定也在插入前后 fail-closed。
  */
 const ensureExternalBinding = async (c: Context<HonoCustomType>, userId: number, username: string) => {
     const msgs = i18n.getMessagesbyContext(c);
@@ -130,38 +133,64 @@ const ensureExternalBinding = async (c: Context<HonoCustomType>, userId: number,
     let addressCreated = false;
     let bindingCreated = false;
     try {
-        const existingAddress = await c.env.DB.prepare(`SELECT id FROM address WHERE name = ?`)
-            .bind(username).first<number>("id");
-        // address.name UNIQUE：已存在则忽略，避免重复接入同一邮箱时报错
+        const existingAddress = await c.env.DB.prepare(
+            "SELECT id, source_meta FROM address WHERE name = ?"
+        ).bind(username).first<{ id: number; source_meta: string | null }>();
+        if (existingAddress && existingAddress.source_meta !== "external") {
+            throw new ExternalBindingConflictError(msgs.AddressAlreadyExistsMsg);
+        }
+
+        // address.name is globally unique. INSERT OR IGNORE keeps reconnecting
+        // the same external account idempotent, while the final read closes the
+        // race where a local address appears after the first SELECT.
         const insertedAddress = await c.env.DB.prepare(
-            `INSERT OR IGNORE INTO address(name, source_meta) VALUES(?, 'external')`
+            "INSERT OR IGNORE INTO address(name, source_meta) VALUES(?, 'external')"
         ).bind(username).run();
-        addrId = existingAddress ?? await c.env.DB.prepare(`SELECT id FROM address WHERE name = ?`)
-            .bind(username).first<number>("id");
-        addressCreated = !existingAddress && ((insertedAddress.meta as { changes?: number })?.changes ?? 0) > 0;
-        if (!addrId) throw new Error(msgs.FailedCreateAddressMsg);
+        const addressRow = await c.env.DB.prepare(
+            "SELECT id, source_meta FROM address WHERE name = ?"
+        ).bind(username).first<{ id: number; source_meta: string | null }>();
+        if (!addressRow) throw new Error(msgs.FailedCreateAddressMsg);
+        if (addressRow.source_meta !== "external") {
+            throw new ExternalBindingConflictError(msgs.AddressAlreadyExistsMsg);
+        }
+        addrId = addressRow.id;
+        addressCreated = !existingAddress
+            && ((insertedAddress.meta as { changes?: number })?.changes ?? 0) > 0;
+
         const existingBinding = await c.env.DB.prepare(
-            `SELECT 1 FROM users_address WHERE user_id = ? AND address_id = ?`
+            "SELECT 1 FROM users_address WHERE user_id = ? AND address_id = ?"
         ).bind(userId, addrId).first();
+        const conflictingBinding = await c.env.DB.prepare(
+            "SELECT 1 FROM users_address WHERE address_id = ? AND user_id != ?"
+        ).bind(addrId, userId).first();
+        if (conflictingBinding) {
+            throw new ExternalBindingConflictError(msgs.AddressAlreadyExistsMsg);
+        }
+
         const bindingResult = await c.env.DB.prepare(
-            `INSERT OR IGNORE INTO users_address(user_id, address_id) VALUES(?, ?)`
+            "INSERT OR IGNORE INTO users_address(user_id, address_id) VALUES(?, ?)"
         ).bind(userId, addrId).run();
-        bindingCreated = !existingBinding && ((bindingResult.meta as { changes?: number })?.changes ?? 0) > 0;
+        const bindingChanges = ((bindingResult.meta as { changes?: number })?.changes ?? 0);
+        if (!existingBinding && bindingChanges === 0) {
+            // A concurrent owner won the address_id UNIQUE constraint between
+            // the check and INSERT. Treat it as a client conflict, not a 500.
+            throw new ExternalBindingConflictError(msgs.AddressAlreadyExistsMsg);
+        }
+        bindingCreated = !existingBinding && bindingChanges > 0;
         return { addrId, bindingCreated, addressCreated };
     } catch (error) {
         // Binding is a multi-statement operation; undo partial ownership changes
         // here, while the caller removes the account row itself.
         if (bindingCreated && addrId != null) {
-            await c.env.DB.prepare(`DELETE FROM users_address WHERE user_id = ? AND address_id = ?`)
+            await c.env.DB.prepare("DELETE FROM users_address WHERE user_id = ? AND address_id = ?")
                 .bind(userId, addrId).run();
         }
         if (addressCreated && addrId != null) {
-            await c.env.DB.prepare(`DELETE FROM address WHERE id = ? AND name = ? AND source_meta = 'external'`)
+            await c.env.DB.prepare("DELETE FROM address WHERE id = ? AND name = ? AND source_meta = 'external'")
                 .bind(addrId, username).run();
         }
         throw error;
     }
-};
 
 const UserMailAccountsModule = {
     list: async (c: Context<HonoCustomType>) => {
@@ -325,6 +354,9 @@ const UserMailAccountsModule = {
                     .bind(id, user_id).run();
             } catch (cleanupError) {
                 console.error(`failed to compensate mail account ${id}`, cleanupError);
+            }
+            if (error instanceof ExternalBindingConflictError) {
+                return c.text(error.message, 400);
             }
             throw error;
         }
