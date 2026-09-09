@@ -45,6 +45,7 @@ class DeliveryStateD1 {
         status: row.status,
         dispatch_state: row.dispatchState,
         sender_address: row.senderAddress,
+        sender_address_id: row.senderAddressId,
         balance_reserved: row.balanceReserved,
         balance_refunded: row.balanceRefunded,
       } : null;
@@ -114,7 +115,7 @@ class DeliveryStateD1 {
       this.reservations.set(id, {
         id, dailyKey, monthlyKey, idempotencyKey, requestHash,
         status: "active", dispatchState: "pending",
-        senderAddress: null, balanceReserved: 0, balanceRefunded: 0,
+        senderAddress: null, senderAddressId: null, balanceReserved: 0, balanceRefunded: 0,
         createdAt, updatedAt, expiresAt,
       });
       this.increment(dailyKey);
@@ -129,10 +130,11 @@ class DeliveryStateD1 {
       return { meta: { changes: 1 } };
     }
     if (sql.includes("SET sender_address = ?")) {
-      const [address, updatedAt, id] = args;
+      const [address, addressId, updatedAt, id] = args;
       const row = this.reservations.get(id);
       if (!row || row.status !== "active" || row.balanceReserved) return { meta: { changes: 0 } };
       row.senderAddress = address;
+      row.senderAddressId = addressId;
       row.balanceReserved = 1;
       row.balanceRefunded = 0;
       row.updatedAt = updatedAt;
@@ -223,10 +225,10 @@ test("operator can resolve rejected unknown delivery and recover the quota slot"
     requestHash: "hash-2",
   });
   assert.ok(reservation);
-  await reservation.markBalanceReserved("a@example.com");
+  await reservation.markBalanceReserved("a@example.com", "address-1");
   await reservation.markDispatchStarted();
   const row = [...db.reservations.values()][0];
   const result = await resolveUnknownSendMailReservation(context(db), row.id, "rejected");
-  assert.deepEqual(result, { status: "released", refundAddress: "a@example.com" });
+  assert.deepEqual(result, { status: "released", refundAddress: "a@example.com", refundAddressId: "address-1" });
   assert.equal(db.settings.get(row.dailyKey), "0");
 });
