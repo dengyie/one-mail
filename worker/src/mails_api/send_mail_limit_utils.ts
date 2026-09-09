@@ -140,7 +140,9 @@ const RESERVATION_SCHEMA_STATEMENTS = [
         "expires_at INTEGER NOT NULL, " +
         "dispatch_state TEXT NOT NULL DEFAULT 'pending' CHECK (dispatch_state IN ('pending', 'unknown', 'sent')), " +
         "idempotency_key TEXT, " +
-        "request_hash TEXT" +
+        "request_hash TEXT, " +
+        "sender_address TEXT, " +
+        "balance_reserved INTEGER NOT NULL DEFAULT 0" +
     ")",
     "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry " +
         "ON send_mail_limit_reservations(status, dispatch_state, expires_at)",
@@ -185,6 +187,8 @@ type ExistingReservation = {
     request_hash: string | null;
     status: "active" | "committed" | "released";
     dispatch_state: "pending" | "unknown" | "sent";
+    sender_address?: string | null;
+    balance_reserved?: number;
 };
 
 const schemaReady = new WeakMap<object, Promise<void>>();
@@ -300,6 +304,7 @@ export type SendMailLimitReservation = {
     replay?: "sent" | "unknown";
     markDispatchStarted: () => Promise<void>;
     markDispatchSucceeded: () => Promise<void>;
+    markBalanceReserved: (address: string) => Promise<void>;
     commit: () => Promise<void>;
     release: () => Promise<void>;
 };
@@ -322,6 +327,12 @@ const updateDispatchState = async (c: Context<HonoCustomType>, id: string, state
     ).bind(state, Date.now(), id, expected).run();
 };
 
+const markBalanceReserved = async (c: Context<HonoCustomType>, id: string, address: string) => {
+    await c.env.DB.prepare(
+        "UPDATE send_mail_limit_reservations SET sender_address = ?, balance_reserved = 1, updated_at = ? WHERE id = ? AND status = 'active' AND balance_reserved = 0"
+    ).bind(address, Date.now(), id).run();
+};
+
 /**
  * Atomically reserve the daily/monthly quota slots and persist the reservation
  * before a provider call. The INSERT ... SELECT guard and its triggers execute
@@ -334,18 +345,18 @@ export const reserveSendMailLimit = async (
     options: { idempotencyKey?: string; requestHash?: string } = {}
 ): Promise<SendMailLimitReservation | null> => {
     const msgs = i18n.getMessagesbyContext(c);
+    const config = await getStrictSendMailLimitConfig(c);
     const idempotencyKey = options.idempotencyKey?.trim() || null;
     const requestHash = options.requestHash || null;
     if (idempotencyKey && !requestHash) throw new SendMailIdempotencyConflictError();
-    const config = await getStrictSendMailLimitConfig(c);
     if (!config || (!config.dailyEnabled && !config.monthlyEnabled)) {
-        return null;
+        if (!idempotencyKey) return null;
     }
 
-    const dailyLimit = config.dailyEnabled &&
+    const dailyLimit = config?.dailyEnabled &&
         config.dailyLimit !== null && config.dailyLimit !== -1
         ? config.dailyLimit : null;
-    const monthlyLimit = config.monthlyEnabled &&
+    const monthlyLimit = config?.monthlyEnabled &&
         config.monthlyLimit !== null && config.monthlyLimit !== -1
         ? config.monthlyLimit : null;
     const dailyKey = dailyLimit === null ? null : getDailyCountKey();
@@ -360,11 +371,11 @@ export const reserveSendMailLimit = async (
         const id = crypto.randomUUID();
         const now = Date.now();
         if (idempotencyKey) {
-            const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
+            const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state, sender_address, balance_reserved FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
             if (existing) {
                 if (existing.request_hash !== requestHash) throw new SendMailIdempotencyConflictError();
-                if (existing.status === "committed" || existing.dispatch_state === "sent") return { replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, commit: async()=>{}, release: async()=>{} };
-                if (existing.dispatch_state === "unknown") return { replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                if (existing.status === "committed" || existing.dispatch_state === "sent") return { replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                if (existing.dispatch_state === "unknown" || existing.status === "active") return { replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
                 await c.env.DB.prepare("DELETE FROM send_mail_limit_reservations WHERE id = ? AND status = 'released'").bind(existing.id).run();
             }
         }
@@ -397,6 +408,7 @@ export const reserveSendMailLimit = async (
         return {
             markDispatchStarted: async () => { await updateDispatchState(c, id, "unknown", "pending"); },
             markDispatchSucceeded: async () => { await updateDispatchState(c, id, "sent", "unknown"); },
+            markBalanceReserved: async (address: string) => { await markBalanceReserved(c, id, address); },
             commit: async () => {
                 if (settled) return;
                 await updateReservationStatus(c, id, "committed");
@@ -409,8 +421,16 @@ export const reserveSendMailLimit = async (
             },
         };
     } catch (error) {
-        if (error instanceof SendMailLimitError) {
+        if (error instanceof SendMailLimitError || error instanceof SendMailIdempotencyConflictError) {
             throw error;
+        }
+        if (idempotencyKey && error instanceof Error && /unique|constraint/i.test(error.message)) {
+            const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
+            if (existing) {
+                if (existing.request_hash !== requestHash) throw new SendMailIdempotencyConflictError();
+                if (existing.status === "committed" || existing.dispatch_state === "sent") return { replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                return { replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
+            }
         }
         console.error("Failed to reserve send mail limit", error);
         // Fail closed when the quota reservation cannot be evaluated.
