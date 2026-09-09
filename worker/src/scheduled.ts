@@ -64,7 +64,7 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
         }
 
         // Without a durable success marker, fail closed instead of running an
-          // expensive retention scan on every ten-minute cron invocation.
+        // expensive retention scan on every ten-minute cron invocation.
         if (!env.KV) {
             console.error("one-mail retention skipped (KV binding is required)");
             return;

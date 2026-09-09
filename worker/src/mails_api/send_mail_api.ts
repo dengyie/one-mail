@@ -183,7 +183,7 @@ export const sendMail = async (
     }
     // Resolve the dispatch path before taking any reservations. The actual provider
     // call stays inside one try/catch so every failed attempt releases both quotas.
-    const resendTokenKey = "RESEND_TOKEN_" + mailDomain.replace(/\\./g, "_").toUpperCase();
+    const resendTokenKey = "RESEND_TOKEN_" + mailDomain.replace(/\./g, "_").toUpperCase();
     const resendEnabled = c.env.RESEND_TOKEN || c.env[resendTokenKey];
     const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
     const smtpConfig = getDomainMapValue(smtpConfigMap, mailDomain);
