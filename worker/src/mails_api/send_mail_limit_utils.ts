@@ -142,7 +142,8 @@ const RESERVATION_SCHEMA_STATEMENTS = [
         "idempotency_key TEXT, " +
         "request_hash TEXT, " +
         "sender_address TEXT, " +
-        "balance_reserved INTEGER NOT NULL DEFAULT 0" +
+        "balance_reserved INTEGER NOT NULL DEFAULT 0, " +
+        "balance_refunded INTEGER NOT NULL DEFAULT 0" +
     ")",
     "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry " +
         "ON send_mail_limit_reservations(status, dispatch_state, expires_at)",
@@ -189,6 +190,7 @@ type ExistingReservation = {
     dispatch_state: "pending" | "unknown" | "sent";
     sender_address?: string | null;
     balance_reserved?: number;
+    balance_refunded?: number;
 };
 
 const schemaReady = new WeakMap<object, Promise<void>>();
@@ -280,6 +282,7 @@ export type UnknownSendMailReservation = {
     id: string;
     sender_address: string | null;
     balance_reserved: number;
+    balance_refunded: number;
     idempotency_key: string | null;
     created_at: number;
     updated_at: number;
@@ -293,7 +296,7 @@ export const listUnknownSendMailReservations = async (
     await ensureSendMailLimitReservationSchema(db);
     const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 100);
     const result = await db.prepare(
-        "SELECT id, sender_address, balance_reserved, idempotency_key, created_at, updated_at, expires_at " +
+        "SELECT id, sender_address, balance_reserved, balance_refunded, idempotency_key, created_at, updated_at, expires_at " +
         "FROM send_mail_limit_reservations WHERE status = 'active' AND dispatch_state = 'unknown' " +
         "ORDER BY updated_at ASC, id ASC LIMIT ?"
     ).bind(safeLimit).all<UnknownSendMailReservation>();
@@ -315,9 +318,12 @@ export const resolveUnknownSendMailReservation = async (
 ): Promise<{ status: "sent" | "released" | "already_resolved" | "not_found"; refundAddress?: string }> => {
     await ensureSendMailLimitReservationSchema(c.env.DB);
     const row = await c.env.DB.prepare(
-        "SELECT status, dispatch_state, sender_address, balance_reserved FROM send_mail_limit_reservations WHERE id = ?"
-    ).bind(id).first<{ status: string; dispatch_state: string; sender_address: string | null; balance_reserved: number }>();
+        "SELECT status, dispatch_state, sender_address, balance_reserved, balance_refunded FROM send_mail_limit_reservations WHERE id = ?"
+    ).bind(id).first<{ status: string; dispatch_state: string; sender_address: string | null; balance_reserved: number; balance_refunded: number }>();
     if (!row) return { status: "not_found" };
+    if (row.status === "released" && row.balance_reserved === 1 && row.balance_refunded === 0 && outcome === "rejected") {
+        return { status: "released", refundAddress: row.sender_address ?? undefined };
+    }
     if (row.status !== "active" || row.dispatch_state !== "unknown") return { status: "already_resolved" };
     if (outcome === "sent") {
         const result = await c.env.DB.prepare(
@@ -341,8 +347,28 @@ export const resolveUnknownSendMailReservation = async (
     ]);
     const released = resultChanges(results[1]);
     return released === 1
-        ? { status: "released", refundAddress: row.balance_reserved === 1 ? (row.sender_address ?? undefined) : undefined }
+        ? { status: "released", refundAddress: row.balance_reserved === 1 && row.balance_refunded === 0 ? (row.sender_address ?? undefined) : undefined }
         : { status: "already_resolved" };
+};
+
+export const refundResolvedSendMailBalance = async (
+    c: Context<HonoCustomType>,
+    id: string,
+    address: string,
+): Promise<boolean> => {
+    await ensureSendMailLimitReservationSchema(c.env.DB);
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+            "UPDATE address_sender SET balance = balance + 1 WHERE address = ? AND EXISTS (" +
+            "SELECT 1 FROM send_mail_limit_reservations WHERE id = ? AND status = 'released' AND balance_reserved = 1 AND balance_refunded = 0)"
+        ).bind(address, id),
+        c.env.DB.prepare(
+            "UPDATE send_mail_limit_reservations SET balance_refunded = 1, updated_at = ? " +
+            "WHERE id = ? AND status = 'released' AND balance_reserved = 1 AND balance_refunded = 0 " +
+            "AND EXISTS (SELECT 1 FROM address_sender WHERE address = ?)"
+        ).bind(Date.now(), id, address),
+    ]);
+    return resultChanges(results[1]) === 1;
 };
 
 export class SendMailDeliveryUnknownError extends Error {
@@ -398,7 +424,7 @@ const updateDispatchState = async (c: Context<HonoCustomType>, id: string, state
 
 const markBalanceReserved = async (c: Context<HonoCustomType>, id: string, address: string) => {
     await c.env.DB.prepare(
-        "UPDATE send_mail_limit_reservations SET sender_address = ?, balance_reserved = 1, updated_at = ? WHERE id = ? AND status = 'active' AND balance_reserved = 0"
+        "UPDATE send_mail_limit_reservations SET sender_address = ?, balance_reserved = 1, balance_refunded = 0, updated_at = ? WHERE id = ? AND status = 'active' AND balance_reserved = 0"
     ).bind(address, Date.now(), id).run();
 };
 
@@ -440,7 +466,7 @@ export const reserveSendMailLimit = async (
         const id = crypto.randomUUID();
         const now = Date.now();
         if (idempotencyKey) {
-            const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state, sender_address, balance_reserved FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
+            const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state, sender_address, balance_reserved, balance_refunded FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
             if (existing) {
                 if (existing.request_hash !== requestHash) throw new SendMailIdempotencyConflictError();
                 if (existing.status === "committed" || existing.dispatch_state === "sent") return { replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
