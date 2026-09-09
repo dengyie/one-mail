@@ -248,11 +248,17 @@ export const reconcileSendMailLimitReservations = async (
     batchLimit: number = RESERVATION_RECONCILE_BATCH_SIZE
 ): Promise<{ committed: number; released: number; purged: number }> => {
     await ensureSendMailLimitReservationSchema(env.DB);
-    const committedResult = await env.DB.prepare(
-        "UPDATE send_mail_limit_reservations SET status = 'committed', updated_at = ? " +
-        "WHERE status = 'active' AND dispatch_state = 'sent'"
-    ).bind(now).run();
-    const committed = resultChanges(committedResult);
+    let committed = 0;
+    try {
+        const committedResult = await env.DB.prepare(
+            "UPDATE send_mail_limit_reservations SET status = 'committed', updated_at = ? " +
+            "WHERE status = 'active' AND dispatch_state = 'sent'"
+        ).bind(now).run();
+        committed = resultChanges(committedResult);
+    } catch (error) {
+        // Promotion is safe to retry; retaining an active sent row preserves quota.
+        console.error("Failed to promote sent reservation", error);
+    }
     const released = await releaseExpiredReservations(env.DB, now, batchLimit);
     const purgeBefore = now - RESERVATION_TERMINAL_RETENTION_MS;
     const purgedResult = await env.DB.prepare(
