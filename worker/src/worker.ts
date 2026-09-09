@@ -276,11 +276,19 @@ app.use('/admin/*', async (c, next) => {
 	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
 
 	// 解析 x-user-access-token（verify 抛错 -> null，decideAdminAuth 按 R2 处理）
-	let accessTokenPayload: { exp?: number; user_role?: unknown } | null = null;
+	let accessTokenPayload: { exp?: number; user_role?: unknown; user_id?: unknown } | null = null;
 	if (hasAccessToken) {
 		try {
 			const raw = c.req.raw.headers.get("x-user-access-token") as string;
-			accessTokenPayload = await Jwt.verify(raw, c.env.JWT_SECRET, "HS256") as { exp?: number; user_role?: unknown };
+			const verifiedPayload = await Jwt.verify(raw, c.env.JWT_SECRET, "HS256") as {
+				exp?: number; user_role?: unknown; user_id?: unknown;
+			};
+			// A signed token must still reference a live user. Use an expired
+			// sentinel instead of null so decideAdminAuth cannot fall through to
+			// the operator bypass when a revoked role token is presented.
+			accessTokenPayload = await isActiveUser(c, verifiedPayload.user_id)
+				? verifiedPayload
+				: { exp: 0, user_role: verifiedPayload.user_role };
 		} catch { /* verify 抛错 -> null */ }
 	}
 
