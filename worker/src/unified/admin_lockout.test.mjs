@@ -173,7 +173,7 @@ test("R2: user token without admin role in payload → /admin/* rejected (401)",
   assert.equal(d.recordFailure, true);
 });
 
-test("R2: valid user access token with user_role=admin → allowed directly without admin password", async () => {
+test("R2: valid user access token with user_role=admin still requires admin password", () => {
   const d = decideAdminAuth({
     hasAdminAuth: false,
     hasAccessToken: true,
@@ -183,13 +183,15 @@ test("R2: valid user access token with user_role=admin → allowed directly with
     disableAdminPasswordCheck: false,
     accessTokenPayload: payloadFactory({ user_role: "admin" }),
   });
-  assert.equal(d.relay, true);
-  assert.equal(d.status, 0);
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 401);
+  assert.equal(d.kind, "need_admin_password");
+  assert.equal(d.recordFailure, true);
 });
 
-test("R2: forged user_role=admin WITH admin credentials → allowed (clears failures)", () => {
+test("R2: valid admin credentials allow the request", () => {
   const d = decideAdminAuth({
-    hasAdminAuth: false,
+    hasAdminAuth: true,
     hasAccessToken: true,
     adminAuthValid: true,
     adminFailCount: 0,

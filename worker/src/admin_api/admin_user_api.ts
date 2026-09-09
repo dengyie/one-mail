@@ -118,6 +118,15 @@ export default {
                 c.env.DB.prepare(
                     `DELETE FROM user_passkeys WHERE user_id = ?`
                 ).bind(user_id),
+                // Imported mail is scoped by to_addr at read time. Remove it before
+                // dropping the account rows so a later user cannot reclaim the same
+                // external username and see the deleted user's history.
+                c.env.DB.prepare(
+                    `DELETE FROM emails
+                     WHERE account_id IN (
+                         SELECT id FROM user_mail_accounts WHERE user_id = ?
+                     )`
+                ).bind(user_id),
                 c.env.DB.prepare(
                     `DELETE FROM user_mail_accounts WHERE user_id = ?`
                 ).bind(user_id),

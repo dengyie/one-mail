@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| Delete imported mail for a user in the same D1 transaction, preventing a later same-name mailbox from seeing deleted history; administrator role tokens no longer bypass the x-admin-auth password gate.
+
 - fix: |OAuth| Generate and return a random state from the Worker login-link endpoint, fixing the frontend path that otherwise always failed state validation and preventing callers from predicting or reusing state.
 
 - fix: |Worker| Make user deletion and address transfer atomic in D1: deletion removes roles, passkeys, external-mail credentials, and ownership links together, revoked user JWTs stop working immediately, and transfer no longer has a delete-then-recreate data-loss window.
