@@ -209,6 +209,9 @@ export const sendMail = async (
             if (!balanceReserved) {
                 throw new Error(msgs.NoBalanceMsg);
             }
+            if (sendMailLimitReservation) {
+                await sendMailLimitReservation.markBalanceReserved(address);
+            }
         }
 
         if (sendMailLimitReservation) {
