@@ -1,8 +1,8 @@
 import { Context } from "hono";
 import { createMimeMessage } from "mimetext";
-import { UserSettings, RoleAddressConfig } from "./models";
-import { CONSTANTS } from "./constants";
-import { compressText } from "./gzip";
+import { UserSettings, RoleAddressConfig } from "./models/index.ts";
+import { CONSTANTS } from "./constants.ts";
+import { compressText } from "./gzip.ts";
 import { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
 // settings 表读写唯一实现已迁至 core/settings.ts。此处既以 named re-export 保持
 // `import { getSetting, ... } from '../utils'` 调用方不变，又在 default 对象里引用同名

@@ -3,7 +3,7 @@
  * Uses Web Standard CompressionStream/DecompressionStream (native in CF Workers).
  */
 
-import { RawMailRow } from "./models";
+import { RawMailRow } from "./models/index.ts";
 
 export async function compressText(text: string): Promise<ArrayBuffer> {
     const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
