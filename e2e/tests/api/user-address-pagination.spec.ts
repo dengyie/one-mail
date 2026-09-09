@@ -31,6 +31,7 @@ test.describe('User address pagination', () => {
     let outsider: Awaited<ReturnType<typeof createTestAddress>> | undefined;
     let originalUserSettings: Record<string, unknown> | undefined;
     let userId: number | undefined;
+    let revokedUserJwt: string | undefined;
 
     try {
       const settingsRes = await request.get(`${WORKER_URL}/admin/user_settings`);
@@ -48,6 +49,7 @@ test.describe('User address pagination', () => {
 
       const user = await createUser(request);
       const userJwt = user.jwt;
+      revokedUserJwt = userJwt;
       userId = user.userId;
       addresses.push(...await Promise.all([
         createTestAddress(request, 'user-page-a'),
@@ -153,11 +155,11 @@ test.describe('User address pagination', () => {
           [...addresses, outsider].filter((item) => item !== undefined)
             .map((item) => deleteAddress(request, item.jwt)),
         );
-        if (userId !== undefined) {
+        if (userId !== undefined && revokedUserJwt) {
           const deleteUserRes = await request.delete(`${WORKER_URL}/admin/users/${userId}`);
           expect(deleteUserRes.ok()).toBe(true);
           const revokedUserTokenRes = await request.get(`${WORKER_URL}/user_api/bind_address`, {
-            headers: { 'x-user-token': userJwt },
+            headers: { 'x-user-token': revokedUserJwt },
           });
           expect(revokedUserTokenRes.status()).toBe(401);
         }
