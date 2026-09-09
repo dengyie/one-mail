@@ -227,6 +227,7 @@ CREATE TABLE IF NOT EXISTS send_mail_limit_reservations (
     idempotency_key TEXT,
     request_hash TEXT,
     sender_address TEXT,
+    sender_address_id TEXT,
     balance_reserved INTEGER NOT NULL DEFAULT 0,
     balance_refunded INTEGER NOT NULL DEFAULT 0
 );

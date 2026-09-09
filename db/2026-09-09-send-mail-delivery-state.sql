@@ -4,6 +4,7 @@ ALTER TABLE send_mail_limit_reservations ADD COLUMN dispatch_state TEXT NOT NULL
 ALTER TABLE send_mail_limit_reservations ADD COLUMN idempotency_key TEXT;
 ALTER TABLE send_mail_limit_reservations ADD COLUMN request_hash TEXT;
 ALTER TABLE send_mail_limit_reservations ADD COLUMN sender_address TEXT;
+ALTER TABLE send_mail_limit_reservations ADD COLUMN sender_address_id TEXT;
 ALTER TABLE send_mail_limit_reservations ADD COLUMN balance_reserved INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE send_mail_limit_reservations ADD COLUMN balance_refunded INTEGER NOT NULL DEFAULT 0;
 DROP TRIGGER IF EXISTS one_mail_send_limit_reservation_release;
