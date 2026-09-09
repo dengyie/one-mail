@@ -1,6 +1,5 @@
 import { Context } from "hono";
 import { createMimeMessage } from "mimetext";
-import { UserSettings, RoleAddressConfig } from "./models/index.ts";
 import { CONSTANTS } from "./constants.ts";
 import { compressText } from "./gzip.ts";
 import { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';

@@ -1,4 +1,4 @@
-import { Context } from "hono";
+import type { Context } from "hono";
 import { getJsonSetting } from './core/settings.ts';
 import { SETTINGS_KEYS } from '@one-mail/shared';
 

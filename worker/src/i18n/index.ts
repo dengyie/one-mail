@@ -1,4 +1,4 @@
-import { LocaleMessages } from "./type.ts";
+import type { LocaleMessages } from "./type.ts";
 import zh from "./zh.ts";
 import en from "./en.ts";
 import { Context } from "hono";

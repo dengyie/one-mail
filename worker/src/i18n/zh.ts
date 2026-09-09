@@ -1,4 +1,4 @@
-import { LocaleMessages } from "./type.ts";
+import type { LocaleMessages } from "./type.ts";
 
 const messages: LocaleMessages = {
     CustomAuthPasswordMsg: "你已启用私有站点密码,请提供密码",

@@ -1,4 +1,4 @@
-import { Context } from "hono";
+import type { Context } from "hono";
 import i18n from "../i18n/index.ts";
 import type { SendMailLimitConfig } from "../models/index.ts";
 import { CONSTANTS } from "../constants.ts";
