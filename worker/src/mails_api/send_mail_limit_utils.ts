@@ -276,6 +276,75 @@ export const reconcileSendMailLimitReservations = async (
     return { released, purged: resultChanges(purgedResult) };
 };
 
+export type UnknownSendMailReservation = {
+    id: string;
+    sender_address: string | null;
+    balance_reserved: number;
+    idempotency_key: string | null;
+    created_at: number;
+    updated_at: number;
+    expires_at: number;
+};
+
+export const listUnknownSendMailReservations = async (
+    db: D1Database,
+    limit = 100,
+): Promise<UnknownSendMailReservation[]> => {
+    await ensureSendMailLimitReservationSchema(db);
+    const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 100);
+    const result = await db.prepare(
+        "SELECT id, sender_address, balance_reserved, idempotency_key, created_at, updated_at, expires_at " +
+        "FROM send_mail_limit_reservations WHERE status = 'active' AND dispatch_state = 'unknown' " +
+        "ORDER BY updated_at ASC, id ASC LIMIT ?"
+    ).bind(safeLimit).all<UnknownSendMailReservation>();
+    return result.results ?? [];
+};
+
+export const countUnknownSendMailReservations = async (db: D1Database): Promise<number> => {
+    await ensureSendMailLimitReservationSchema(db);
+    const row = await db.prepare(
+        "SELECT COUNT(*) AS count FROM send_mail_limit_reservations WHERE status = 'active' AND dispatch_state = 'unknown'"
+    ).first<{ count: number }>();
+    return Number(row?.count ?? 0);
+};
+
+export const resolveUnknownSendMailReservation = async (
+    c: Context<HonoCustomType>,
+    id: string,
+    outcome: "sent" | "rejected",
+): Promise<{ status: "sent" | "released" | "already_resolved" | "not_found"; refundAddress?: string }> => {
+    await ensureSendMailLimitReservationSchema(c.env.DB);
+    const row = await c.env.DB.prepare(
+        "SELECT status, dispatch_state, sender_address, balance_reserved FROM send_mail_limit_reservations WHERE id = ?"
+    ).bind(id).first<{ status: string; dispatch_state: string; sender_address: string | null; balance_reserved: number }>();
+    if (!row) return { status: "not_found" };
+    if (row.status !== "active" || row.dispatch_state !== "unknown") return { status: "already_resolved" };
+    if (outcome === "sent") {
+        const result = await c.env.DB.prepare(
+            "UPDATE send_mail_limit_reservations SET dispatch_state = 'sent', status = 'committed', updated_at = ? " +
+            "WHERE id = ? AND status = 'active' AND dispatch_state = 'unknown'"
+        ).bind(Date.now(), id).run();
+        return resultChanges(result) === 1 ? { status: "sent" } : { status: "already_resolved" };
+    }
+    // The release trigger only decrements counters for pending rows. Reset the
+    // state and release in one D1 batch so an unknown delivery is refunded only
+    // after an operator explicitly confirms that it was rejected.
+    const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+            "UPDATE send_mail_limit_reservations SET dispatch_state = 'pending', updated_at = ? " +
+            "WHERE id = ? AND status = 'active' AND dispatch_state = 'unknown'"
+        ).bind(Date.now(), id),
+        c.env.DB.prepare(
+            "UPDATE send_mail_limit_reservations SET status = 'released', updated_at = ? " +
+            "WHERE id = ? AND status = 'active' AND dispatch_state = 'pending'"
+        ).bind(Date.now(), id),
+    ]);
+    const released = resultChanges(results[1]);
+    return released === 1
+        ? { status: "released", refundAddress: row.balance_reserved === 1 ? (row.sender_address ?? undefined) : undefined }
+        : { status: "already_resolved" };
+};
+
 export class SendMailDeliveryUnknownError extends Error {
     readonly status = 503;
     readonly code = "delivery_unknown";
