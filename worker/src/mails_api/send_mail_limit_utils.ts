@@ -137,10 +137,13 @@ const RESERVATION_SCHEMA_STATEMENTS = [
         "status TEXT NOT NULL CHECK (status IN ('active', 'committed', 'released')), " +
         "created_at INTEGER NOT NULL, " +
         "updated_at INTEGER NOT NULL, " +
-        "expires_at INTEGER NOT NULL" +
+        "expires_at INTEGER NOT NULL, " +
+        "dispatch_state TEXT NOT NULL DEFAULT 'pending' CHECK (dispatch_state IN ('pending', 'unknown', 'sent')), " +
+        "idempotency_key TEXT, " +
+        "request_hash TEXT" +
     ")",
     "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_expiry " +
-        "ON send_mail_limit_reservations(status, expires_at)",
+        "ON send_mail_limit_reservations(status, dispatch_state, expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_send_mail_limit_reservations_terminal " +
         "ON send_mail_limit_reservations(status, updated_at)",
     "CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_increment " +
@@ -161,7 +164,7 @@ const RESERVATION_SCHEMA_STATEMENTS = [
         "END",
     "CREATE TRIGGER IF NOT EXISTS one_mail_send_limit_reservation_release " +
         "AFTER UPDATE OF status ON send_mail_limit_reservations " +
-        "WHEN OLD.status = 'active' AND NEW.status = 'released' BEGIN " +
+        "WHEN OLD.status = 'active' AND NEW.status = 'released' AND OLD.dispatch_state = 'pending' BEGIN " +
         "UPDATE settings SET " +
             "value = CAST(MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) - 1 AS TEXT), " +
             "updated_at = datetime('now') " +
@@ -223,7 +226,7 @@ const releaseExpiredReservations = async (
         "UPDATE send_mail_limit_reservations SET status = 'released', updated_at = ? " +
         "WHERE id IN (" +
             "SELECT id FROM send_mail_limit_reservations " +
-            "WHERE status = 'active' AND expires_at <= ? " +
+            "WHERE status = 'active' AND dispatch_state = 'pending' AND expires_at <= ? " +
             "ORDER BY expires_at, id LIMIT ?" +
         ")"
     ).bind(now, now, batchLimit).run();
@@ -234,8 +237,13 @@ export const reconcileSendMailLimitReservations = async (
     env: Pick<Bindings, "DB">,
     now: number = Date.now(),
     batchLimit: number = RESERVATION_RECONCILE_BATCH_SIZE
-): Promise<{ released: number; purged: number }> => {
+): Promise<{ committed: number; released: number; purged: number }> => {
     await ensureSendMailLimitReservationSchema(env.DB);
+    const committedResult = await env.DB.prepare(
+        "UPDATE send_mail_limit_reservations SET status = 'committed', updated_at = ? " +
+        "WHERE status = 'active' AND dispatch_state = 'sent'"
+    ).bind(now).run();
+    const committed = resultChanges(committedResult);
     const released = await releaseExpiredReservations(env.DB, now, batchLimit);
     const purgeBefore = now - RESERVATION_TERMINAL_RETENTION_MS;
     const purgedResult = await env.DB.prepare(
@@ -246,10 +254,37 @@ export const reconcileSendMailLimitReservations = async (
             "ORDER BY updated_at, id LIMIT ?" +
         ")"
     ).bind(purgeBefore, batchLimit).run();
-    return { released, purged: resultChanges(purgedResult) };
+    return { committed, released, purged: resultChanges(purgedResult) };
+};
+
+export class SendMailDeliveryUnknownError extends Error {
+    readonly status = 503;
+    readonly code = "delivery_unknown";
+    constructor() {
+        super("Mail delivery status is unknown; reuse the same idempotency key to query the result.");
+        this.name = "SendMailDeliveryUnknownError";
+    }
+}
+
+export class SendMailIdempotencyConflictError extends Error {
+    readonly status = 409;
+    readonly code = "idempotency_conflict";
+    constructor() {
+        super("The idempotency key was already used for a different request.");
+        this.name = "SendMailIdempotencyConflictError";
+    }
+}
+
+export const hashSendMailRequest = async (value: unknown): Promise<string> => {
+    const encoded = new TextEncoder().encode(JSON.stringify(value) ?? "");
+    const digest = await crypto.subtle.digest("SHA-256", encoded);
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
 export type SendMailLimitReservation = {
+    replay?: "sent" | "unknown";
+    markDispatchStarted: () => Promise<void>;
+    markDispatchSucceeded: () => Promise<void>;
     commit: () => Promise<void>;
     release: () => Promise<void>;
 };
@@ -261,8 +296,14 @@ const updateReservationStatus = async (
 ): Promise<void> => {
     await c.env.DB.prepare(
         "UPDATE send_mail_limit_reservations SET status = ?, updated_at = ? " +
-        "WHERE id = ? AND status = 'active'"
-    ).bind(status, Date.now(), id).run();
+        "WHERE id = ? AND status = 'active' AND (? = 'committed' OR dispatch_state = 'pending')"
+    ).bind(status, Date.now(), id, status).run();
+};
+
+const updateDispatchState = async (c: Context<HonoCustomType>, id: string, state: "unknown" | "sent", expected: "pending" | "unknown") => {
+    await c.env.DB.prepare(
+        "UPDATE send_mail_limit_reservations SET dispatch_state = ?, updated_at = ? WHERE id = ? AND status = 'active' AND dispatch_state = ?"
+    ).bind(state, Date.now(), id, expected).run();
 };
 
 /**
@@ -273,9 +314,13 @@ const updateReservationStatus = async (
  * released by the request path or by the scheduled reconciler.
  */
 export const reserveSendMailLimit = async (
-    c: Context<HonoCustomType>
+    c: Context<HonoCustomType>,
+    options: { idempotencyKey?: string; requestHash?: string } = {}
 ): Promise<SendMailLimitReservation | null> => {
     const msgs = i18n.getMessagesbyContext(c);
+    const idempotencyKey = options.idempotencyKey?.trim() || null;
+    const requestHash = options.requestHash || null;
+    if (idempotencyKey && !requestHash) throw new SendMailIdempotencyConflictError();
     const config = await getStrictSendMailLimitConfig(c);
     if (!config || (!config.dailyEnabled && !config.monthlyEnabled)) {
         return null;
@@ -298,17 +343,26 @@ export const reserveSendMailLimit = async (
 
         const id = crypto.randomUUID();
         const now = Date.now();
+        if (idempotencyKey) {
+            const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
+            if (existing) {
+                if (existing.request_hash !== requestHash) throw new SendMailIdempotencyConflictError();
+                if (existing.status === "committed" || existing.dispatch_state === "sent") return { replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                if (existing.dispatch_state === "unknown") return { replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                await c.env.DB.prepare("DELETE FROM send_mail_limit_reservations WHERE id = ? AND status = 'released'").bind(existing.id).run();
+            }
+        }
         const result = await c.env.DB.prepare(
             "INSERT INTO send_mail_limit_reservations " +
-            "(id, daily_key, monthly_key, daily_limit, monthly_limit, status, created_at, updated_at, expires_at) " +
-            "SELECT ?, ?, ?, ?, ?, 'active', ?, ?, ? " +
+            "(id, daily_key, monthly_key, daily_limit, monthly_limit, status, created_at, updated_at, expires_at, dispatch_state, idempotency_key, request_hash) " +
+            "SELECT ?, ?, ?, ?, ?, 'active', ?, ?, ?, 'pending', ?, ? " +
             "WHERE (? IS NULL OR CAST(COALESCE((" +
                 "SELECT value FROM settings WHERE key = ?), '0') AS INTEGER) < ?) " +
             "AND (? IS NULL OR CAST(COALESCE((" +
                 "SELECT value FROM settings WHERE key = ?), '0') AS INTEGER) < ?)"
         ).bind(
             id, dailyKey, monthlyKey, dailyLimit, monthlyLimit, now, now,
-            now + RESERVATION_TTL_MS,
+            now + RESERVATION_TTL_MS, idempotencyKey, requestHash,
             dailyKey, dailyKey, dailyLimit,
             monthlyKey, monthlyKey, monthlyLimit
         ).run();
@@ -325,6 +379,8 @@ export const reserveSendMailLimit = async (
 
         let settled = false;
         return {
+            markDispatchStarted: async () => { await updateDispatchState(c, id, "unknown", "pending"); },
+            markDispatchSucceeded: async () => { await updateDispatchState(c, id, "sent", "unknown"); },
             commit: async () => {
                 if (settled) return;
                 await updateReservationStatus(c, id, "committed");
