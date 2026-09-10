@@ -9,9 +9,13 @@ from .sync import sync_account, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .idle_worker import ensure_idle_workers
+from .network_guard import assert_public_user_account, UnsafeMailTargetError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("one-mail-agg")
+
+
+NETWORK_POLICY_ERROR = "mail target rejected by network policy"
 
 
 def get_merged_accounts(config, state):
@@ -24,6 +28,16 @@ def get_merged_accounts(config, state):
     user_account_ids: set[str] = set()
     user_accounts = fetch_user_accounts(config.worker_base_url, config.admin_token)
     for ua in user_accounts:
+        try:
+            # User-managed targets are untrusted.  Validate before adding the
+            # account to the merged list so neither IDLE nor polling workers can
+            # initiate a connection to loopback/private/link-local/reserved IPs.
+            assert_public_user_account(ua)
+        except UnsafeMailTargetError as exc:
+            log.warning("reject unsafe user mail target account=%s host=%r: %s", ua.id, ua.host, exc)
+            report_sync_status(config.worker_base_url, config.admin_token, ua.id, NETWORK_POLICY_ERROR)
+            continue
+
         key = collision_key(ua)
         if key in seen:
             log.info("skip duplicate user account %s (host=%s already in config)", ua.username, ua.host)
@@ -90,7 +104,7 @@ def run_once(config_path: str) -> dict:
 def run_daemon(config_path: str, poll_interval: int = 60) -> int:
     """长期守护进程模式：
 
-    1. 为支持的 IMAP 账号拉起常驻 IDLE 线程，秒级实时监听新邮件推送；
+    1. 为支持的 IMAP 账号拉起常驻 IDLE 监听线程，秒级实时监听新邮件推送；
     2. 主循环每隔 poll_interval（默认 60s）执行常规增量拉取（兜底 POP3 及拉取新增用户账号）。
     """
     log.info("Starting one-mail-agg in continuous daemon mode (poll_interval=%ds)", poll_interval)
@@ -108,7 +122,7 @@ def run_daemon(config_path: str, poll_interval: int = 60) -> int:
 
             # 3. 对非纯 IMAP 或未被 IDLE 托管的账号（如 POP3 163 等）执行轮询同步
             for account in accounts:
-                # 若已有存活的 IDLE 线程正在托管该账号，无需在主循环频繁重复同步，
+                # 若已有存活的 IDLE worker 正在托管该账号，无需在主循环频繁重复同步，
                 # IDLE 线程自会处理实时事件及 4 分钟保底刷新；
                 # 但对于 POP3 或 fallback 到 POP3 的账号，走常规轮询同步。
                 is_user = account.id in user_account_ids
