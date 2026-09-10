@@ -35,6 +35,9 @@ const digestVerificationCode = async (
     ).join("");
 };
 
+export type RegistrationVerifyCodeReserveResult = "reserved" | "active" | "error";
+export type RegistrationVerifyCodeConsumeResult = "consumed" | "invalid" | "error";
+
 /** Generate an unbiased six-digit code using Web Crypto. */
 export const generateRegistrationVerifyCode = (): string => {
     const random = new Uint32Array(1);
@@ -57,13 +60,13 @@ export const reserveRegistrationVerifyCode = async (
     email: string,
     code: string,
     now = Date.now(),
-): Promise<boolean> => {
-    if (!secret || !email || !/^\d{6}$/.test(code)) return false;
+): Promise<RegistrationVerifyCodeReserveResult> => {
+    if (!secret || !email || !/^\d{6}$/.test(code)) return "error";
     const key = verificationKey(email);
-    const digest = await digestVerificationCode(secret, email, code);
-    const expiresAt = now + VERIFY_CODE_TTL_MS;
-    const storedValue = `${expiresAt}:${digest}`;
     try {
+        const digest = await digestVerificationCode(secret, email, code);
+        const expiresAt = now + VERIFY_CODE_TTL_MS;
+        const storedValue = `${expiresAt}:${digest}`;
         await db.prepare(
             "DELETE FROM settings WHERE key = ? " +
             "AND CAST(substr(value, 1, instr(value, ':') - 1) AS INTEGER) <= ?"
@@ -71,9 +74,9 @@ export const reserveRegistrationVerifyCode = async (
         const result = await db.prepare(
             "INSERT OR IGNORE INTO settings(key, value, updated_at) VALUES(?,?,datetime('now'))"
         ).bind(key, storedValue).run();
-        return resultChanges(result) === 1;
+        return resultChanges(result) === 1 ? "reserved" : "active";
     } catch {
-        return false;
+        return "error";
     }
 };
 
@@ -88,31 +91,31 @@ export const consumeRegistrationVerifyCode = async (
     email: string,
     code: string,
     now = Date.now(),
-): Promise<boolean> => {
-    if (!secret || !email || !/^\d{6}$/.test(code)) return false;
+): Promise<RegistrationVerifyCodeConsumeResult> => {
+    if (!secret || !email || !/^\d{6}$/.test(code)) return "invalid";
     const key = verificationKey(email);
     try {
         const storedValue = await db.prepare(
             "SELECT value FROM settings WHERE key = ?"
         ).bind(key).first<string>("value");
-        if (!storedValue) return false;
+        if (!storedValue) return "invalid";
 
         const separator = storedValue.indexOf(":");
-        if (separator <= 0) return false;
+        if (separator <= 0) return "invalid";
         const expiresAt = Number(storedValue.slice(0, separator));
         const expectedDigest = storedValue.slice(separator + 1);
         if (!Number.isFinite(expiresAt) || expiresAt <= now || !expectedDigest) {
-            return false;
+            return "invalid";
         }
 
         const actualDigest = await digestVerificationCode(secret, email, code);
-        if (actualDigest !== expectedDigest) return false;
+        if (actualDigest !== expectedDigest) return "invalid";
 
         const result = await db.prepare(
             "DELETE FROM settings WHERE key = ? AND value = ?"
         ).bind(key, storedValue).run();
-        return resultChanges(result) === 1;
+        return resultChanges(result) === 1 ? "consumed" : "invalid";
     } catch {
-        return false;
+        return "error";
     }
 };
