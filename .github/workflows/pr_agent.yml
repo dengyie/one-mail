@@ -4,19 +4,29 @@ on:
   pull_request:
     types: [opened, reopened, ready_for_review]
   issue_comment:
+    types: [created]
+
 jobs:
   pr_agent_job:
-    if: ${{ github.event.sender.type != 'Bot' }}
+    if: >-
+      github.event.sender.type != 'Bot' &&
+      (
+        github.event_name == 'pull_request' ||
+        (
+          github.event.issue.pull_request &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+        )
+      )
     runs-on: ubuntu-latest
     permissions:
       issues: write
       pull-requests: write
-      contents: write
-    name: Run pr agent on every pull request, respond to user comments
+      contents: read
+    name: Run pr agent on trusted pull request events and comments
     steps:
       - name: PR Agent action step
         id: pragent
-        uses: qodo-ai/pr-agent@main
+        uses: docker://codiumai/pr-agent@sha256:14165e525678ace7d9b51cda8652c2d74abb4e1d76b57c4a6ccaeba84663cc64
         env:
           PR_REVIEWER.REQUIRE_TESTS_REVIEW: "false"
           OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
