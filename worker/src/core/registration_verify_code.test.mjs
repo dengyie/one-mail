@@ -75,14 +75,14 @@ test("reserved verification code is HMACed, single-use, and wrong codes do not c
   const code = "123456";
   const now = 1_000;
 
-  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, code, now), true);
+  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, code, now), "reserved");
   const stored = [...db.settings.values()][0];
   assert.equal(String(stored).includes(code), false);
 
-  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, "654321", now + 1), false);
+  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, "654321", now + 1), "invalid");
   assert.equal(db.settings.size, 1);
-  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, code, now + 2), true);
-  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, code, now + 3), false);
+  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, code, now + 2), "consumed");
+  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, code, now + 3), "invalid");
 });
 
 test("concurrent consumers cannot both use the same verification code", async () => {
@@ -91,12 +91,12 @@ test("concurrent consumers cannot both use the same verification code", async ()
   const email = "race@example.com";
   const code = "234567";
 
-  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, code, 10_000), true);
+  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, code, 10_000), "reserved");
   const results = await Promise.all([
     consumeRegistrationVerifyCode(db, secret, email, code, 10_001),
     consumeRegistrationVerifyCode(db, secret, email, code, 10_001),
   ]);
-  assert.deepEqual(results.sort(), [false, true]);
+  assert.deepEqual(results.sort(), ["consumed", "invalid"]);
 });
 
 test("active code blocks resend but an expired code can be replaced", async () => {
@@ -104,9 +104,9 @@ test("active code blocks resend but an expired code can be replaced", async () =
   const secret = "test-secret";
   const email = "retry@example.com";
 
-  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, "345678", 0), true);
-  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, "456789", 1), false);
-  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, "456789", 5 * 60 * 1000 + 1), true);
-  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, "345678", 5 * 60 * 1000 + 2), false);
-  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, "456789", 5 * 60 * 1000 + 2), true);
+  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, "345678", 0), "reserved");
+  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, "456789", 1), "active");
+  assert.equal(await reserveRegistrationVerifyCode(db, secret, email, "456789", 5 * 60 * 1000 + 1), "reserved");
+  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, "345678", 5 * 60 * 1000 + 2), "invalid");
+  assert.equal(await consumeRegistrationVerifyCode(db, secret, email, "456789", 5 * 60 * 1000 + 2), "consumed");
 });
