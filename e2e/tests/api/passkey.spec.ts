@@ -4,12 +4,12 @@ import { WORKER_URL } from '../../fixtures/test-helpers';
 
 const TEST_USER_EMAIL = `passkey-e2e-${Date.now()}@test.example.com`;
 const TEST_USER_PASSWORD = 'test-password-123';
+const PASSKEY_ORIGIN = 'http://localhost:5173';
 
 /**
  * Enable user registration via admin API, register a user, and login to get JWT.
  */
 async function createTestUser(request: APIRequestContext): Promise<string> {
-  // Enable user registration (KV setting)
   const enableRes = await request.post(`${WORKER_URL}/admin/user_settings`, {
     data: {
       enable: true,
@@ -18,13 +18,11 @@ async function createTestUser(request: APIRequestContext): Promise<string> {
   });
   expect(enableRes.ok()).toBe(true);
 
-  // Register user
   const registerRes = await request.post(`${WORKER_URL}/user_api/register`, {
     data: { email: TEST_USER_EMAIL, password: TEST_USER_PASSWORD },
   });
   expect(registerRes.ok()).toBe(true);
 
-  // Login to get JWT
   const loginRes = await request.post(`${WORKER_URL}/user_api/login`, {
     data: { email: TEST_USER_EMAIL, password: TEST_USER_PASSWORD },
   });
@@ -43,13 +41,15 @@ test.describe('Passkey API', () => {
 
   test('register_request returns valid WebAuthn options', async ({ request }) => {
     const res = await request.post(`${WORKER_URL}/user_api/passkey/register_request`, {
-      headers: { 'x-user-token': userJwt },
-      data: { domain: 'localhost' },
+      headers: {
+        'x-user-token': userJwt,
+        Origin: PASSKEY_ORIGIN,
+      },
+      data: {},
     });
     expect(res.ok()).toBe(true);
     const options = await res.json();
 
-    // Verify WebAuthn registration options structure
     expect(options.rp).toBeDefined();
     expect(options.rp.id).toBe('localhost');
     expect(options.user).toBeDefined();
@@ -61,22 +61,29 @@ test.describe('Passkey API', () => {
 
   test('authenticate_request returns valid WebAuthn options', async ({ request }) => {
     const res = await request.post(`${WORKER_URL}/user_api/passkey/authenticate_request`, {
-      data: { domain: 'localhost' },
+      headers: { Origin: PASSKEY_ORIGIN },
+      data: {},
     });
     expect(res.ok()).toBe(true);
     const options = await res.json();
 
-    // Verify WebAuthn authentication options structure
     expect(options.challenge).toBeTruthy();
     expect(options.rpId).toBe('localhost');
     expect(options.allowCredentials).toBeInstanceOf(Array);
   });
 
+  test('authenticate_request rejects an untrusted origin even if body claims localhost', async ({ request }) => {
+    const res = await request.post(`${WORKER_URL}/user_api/passkey/authenticate_request`, {
+      headers: { Origin: 'https://evil.mangoqwq.com' },
+      data: { domain: 'localhost', origin: PASSKEY_ORIGIN },
+    });
+    expect(res.status()).toBe(400);
+  });
+
   test('authenticate_response with invalid credential returns error', async ({ request }) => {
     const res = await request.post(`${WORKER_URL}/user_api/passkey/authenticate_response`, {
+      headers: { Origin: PASSKEY_ORIGIN },
       data: {
-        domain: 'localhost',
-        origin: 'http://localhost',
         credential: { id: 'nonexistent-passkey-id' },
       },
     });
@@ -106,7 +113,10 @@ test.describe('Passkey API', () => {
 
   test('register_response with invalid credential returns 400', async ({ request }) => {
     const res = await request.post(`${WORKER_URL}/user_api/passkey/register_response`, {
-      headers: { 'x-user-token': userJwt },
+      headers: {
+        'x-user-token': userJwt,
+        Origin: PASSKEY_ORIGIN,
+      },
       data: {
         credential: {
           id: 'fake-id',
@@ -117,12 +127,10 @@ test.describe('Passkey API', () => {
             clientDataJSON: 'invalid-data',
           },
         },
-        origin: 'http://localhost',
         passkey_name: 'test-passkey',
       },
     });
     expect(res.ok()).toBe(false);
-    // Should fail verification
     expect(res.status()).toBeGreaterThanOrEqual(400);
   });
 
@@ -134,7 +142,6 @@ test.describe('Passkey API', () => {
         passkey_name: 'new-name',
       },
     });
-    // The SQL UPDATE just affects 0 rows, still returns success
     expect(res.ok()).toBe(true);
     const body = await res.json();
     expect(body.success).toBe(true);
