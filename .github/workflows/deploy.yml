@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-one-mail
+  group: deploy-one-mail-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -109,26 +109,22 @@ jobs:
           PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
         run: |
           if [ -z "$PXED_SSH_KEY" ] || [ -z "$PXED_SSH_HOST" ]; then
-            echo "::warning::Missing PXED_SSH_KEY or PXED_SSH_HOST, skipping automated SSH deployment."
-            exit 0
+            echo "::error::Missing PXED_SSH_KEY or PXED_SSH_HOST; refusing to report a successful deploy."
+            exit 1
           fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${PXED_SSH_PORT:-22}" "$PXED_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p "${PXED_SSH_PORT:-22}" "$PXED_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           chmod 644 ~/.ssh/known_hosts
 
       - name: Upload & Extract Frontend dist on pxed
         env:
-          PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
           PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
           PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
           PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
         run: |
-          if [ -z "$PXED_SSH_KEY" ] || [ -z "$PXED_SSH_HOST" ]; then
-            exit 0
-          fi
           PORT="${PXED_SSH_PORT:-22}"
           USER="${PXED_SSH_USER:-root}"
           scp -O -P "$PORT" /tmp/one-mail-fe-dist.tgz "$USER@$PXED_SSH_HOST:/tmp/one-mail-fe-dist.tgz"
@@ -145,4 +141,5 @@ jobs:
             echo "Waiting for endpoint (attempt $i, status $code)..."
             sleep 3
           done
-          echo "Health check succeeded or finished."
+          echo "::error::Health check failed after 5 attempts."
+          exit 1
