@@ -7,6 +7,11 @@ import { CONSTANTS } from "../constants";
 import { GeoData, UserInfo, UserSettings } from "../models";
 import { sendMail } from "../mails_api/send_mail_api";
 import { hashPasswordForStorage, verifyPassword } from "../core/password.ts";
+import {
+    consumeRegistrationVerifyCode,
+    generateRegistrationVerifyCode,
+    reserveRegistrationVerifyCode,
+} from "./registration_verify_code";
 
 export default {
     verifyCode: async (c: Context<HonoCustomType>) => {
@@ -46,14 +51,21 @@ export default {
         if (!settings.verifyMailSender) {
             return c.text(msgs.VerifyMailSenderNotSetMsg, 400)
         }
-        // check if code exists in KV
-        const tmpcode = await c.env.KV.get(`temp-mail:${email}`)
-        if (tmpcode) {
+
+        const code = generateRegistrationVerifyCode();
+        const reservation = await reserveRegistrationVerifyCode(
+            c.env.DB,
+            c.env.JWT_SECRET,
+            email as string,
+            code,
+        );
+        if (reservation === "active") {
             return c.text(msgs.CodeAlreadySentMsg, 400)
         }
-        // generate code 6 digits and convert to string
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
-        // send code to email
+        if (reservation === "error") {
+            return c.text(msgs.OperationFailedMsg, 500)
+        }
+
         try {
             await sendMail(c, settings.verifyMailSender, {
                 from_name: "Temp Mail Verify",
@@ -64,10 +76,11 @@ export default {
                 is_html: false,
             })
         } catch (e) {
+            // Keep the reserved code until TTL even on send errors: a provider
+            // timeout can mean the message was accepted but the outcome is
+            // unknown. Deleting here would make a later-delivered code unusable.
             return c.text(`Failed to send verify code: ${(e as Error).message}`, 500)
         }
-        // save to KV
-        await c.env.KV.put(`temp-mail:${email}`, code, { expirationTtl: 300 });
         return c.json({
             success: true,
             expirationTtl: 300
@@ -122,10 +135,18 @@ export default {
                 console.error("Failed to check user email regex", e);
             }
         }
-        // check code
+        // check and consume code exactly once
         if (settings.enableMailVerify) {
-            const verifyCode = await c.env.KV.get(`temp-mail:${email}`)
-            if (verifyCode != code) {
+            const verification = await consumeRegistrationVerifyCode(
+                c.env.DB,
+                c.env.JWT_SECRET,
+                email as string,
+                String(code),
+            );
+            if (verification === "error") {
+                return c.text(msgs.OperationFailedMsg, 500)
+            }
+            if (verification !== "consumed") {
                 return c.text(msgs.InvalidVerifyCodeMsg, 400)
             }
         }
