@@ -41,12 +41,22 @@ const PRESET_TARGETS: Record<string, PresetTarget> = {
     },
 };
 
+const ALLOWED_SOURCES = new Set([...Object.keys(PRESET_TARGETS), "imap_custom"]);
+const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
+
 const normalizeHost = (value: string): string =>
     value.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+
+const parseOptionalPort = (value: unknown): number | null | undefined => {
+    if (value == null || value === "") return null;
+    const port = typeof value === "number" ? value : Number(value);
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
+};
 
 const isNonGlobalIpv4 = (host: string): boolean => {
     const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
     if (!match) return false;
+    if (match.slice(1).some((part) => part.length > 1 && part.startsWith("0"))) return true;
     const octets = match.slice(1).map(Number);
     if (octets.some((part) => part > 255)) return true;
     const [a, b, c] = octets;
@@ -75,10 +85,7 @@ const isNonGlobalIpv6 = (host: string): boolean => {
         || /^fe[89ab][0-9a-f]:/.test(normalized)
         || normalized.startsWith("ff")
         || normalized.startsWith("2001:db8:")
-        || normalized.startsWith("::ffff:127.")
-        || normalized.startsWith("::ffff:10.")
-        || normalized.startsWith("::ffff:192.168.")
-        || normalized.startsWith("::ffff:169.254.");
+        || normalized.startsWith("::ffff:");
 };
 
 /**
@@ -98,6 +105,11 @@ export const isSafeCustomMailHost = (value: string): boolean => {
         return false;
     }
     if (/0x[0-9a-f]+/i.test(host)) return false;
+    if (/^\d+$/.test(host)) return false;
+    if (/^[0-9.]+$/.test(host)
+        && !/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) {
+        return false;
+    }
     if (isNonGlobalIpv4(host) || isNonGlobalIpv6(host)) return false;
 
     const embeddedIpv4 = host.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
@@ -124,9 +136,47 @@ export const validateMailTargetPolicy = (input: MailTargetPolicyInput): boolean 
     if (normalizeHost(input.host) !== preset.imapHost || input.port !== preset.imapPort) {
         return false;
     }
-
-    if (input.protocol === "imap") return true;
     if (input.pop3Host && normalizeHost(input.pop3Host) !== preset.pop3Host) return false;
     if (input.pop3Port != null && input.pop3Port !== preset.pop3Port) return false;
     return true;
+};
+
+/**
+ * Parse the public create-account request using the same compatibility shape as
+ * mail_accounts.create, then apply the target policy without consuming the
+ * original request body. The route calls this against Request.clone().json().
+ */
+export const validateMailAccountCreateTarget = (value: unknown): boolean => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const body = value as Record<string, unknown>;
+    const source = typeof body.source === "string" ? body.source.trim() : "";
+    const protocol = typeof body.protocol === "string" ? body.protocol.trim() : "auto";
+    if (!ALLOWED_SOURCES.has(source) || !ALLOWED_PROTOCOLS.has(protocol)) return false;
+
+    const requestedPop3Host = body.pop3_host == null
+        ? null
+        : typeof body.pop3_host === "string" ? body.pop3_host.trim() : undefined;
+    const requestedPop3Port = parseOptionalPort(body.pop3_port);
+    const requestedPort = parseOptionalPort(body.port);
+    if (requestedPop3Host === undefined
+        || requestedPop3Port === undefined
+        || requestedPort === undefined) {
+        return false;
+    }
+
+    const host = (typeof body.host === "string" ? body.host.trim() : "")
+        || (protocol === "pop3" ? requestedPop3Host || "" : "");
+    const port = requestedPort ?? (protocol === "pop3" ? requestedPop3Port : null);
+    const pop3Host = requestedPop3Host ?? (protocol === "pop3" ? host : null);
+    const pop3Port = requestedPop3Port ?? (protocol === "pop3" ? port : null);
+    if (!host || port == null) return false;
+
+    return validateMailTargetPolicy({
+        source,
+        protocol,
+        host,
+        port,
+        pop3Host,
+        pop3Port,
+    });
 };
