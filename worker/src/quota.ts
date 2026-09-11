@@ -8,8 +8,36 @@ import { SETTINGS_KEYS } from '@one-mail/shared';
  * settings 键值以 `@one-mail/shared` 的 SETTINGS_KEYS 为准。
  * settings 表读写本身委托 core/settings.ts（唯一实现，零 T3 双份 SQL）。
  *
- * utils.ts 从本文件 re-export 三个函数，调用方仍 import from "../utils"，无破坏。
+ * utils.ts 从本文件 re-export，调用方仍可 import from "../utils"，无破坏。
  */
+
+/**
+ * Mail Service 业务配额。
+ *
+ * 普通用户必须有有限额默认值；管理员只绕过「业务数量」限制，但仍受 Worker/D1
+ * 的硬安全边界约束（例如单页查询最大 100），避免一次请求把 Worker 打爆。
+ */
+export const DEFAULT_MAX_MAIL_ACCOUNTS = 5;
+export const DEFAULT_MAX_UNIFIED_PAGE_SIZE = 50;
+export const HARD_MAX_UNIFIED_PAGE_SIZE = 100;
+
+export type MailServiceQuota = {
+    /** 0 = unlimited (admin or role explicitly unlimited). */
+    maxMailAccountCount: number;
+    /** Always 1..HARD_MAX_UNIFIED_PAGE_SIZE. */
+    maxUnifiedPageSize: number;
+};
+
+const isAdminRole = (
+    c: Context<HonoCustomType>,
+    userRole: string | null | undefined,
+): boolean => !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
+
+const readRoleConfigs = async (
+    c: Context<HonoCustomType>,
+): Promise<Record<string, any> | null> => (
+    await getJsonSetting<Record<string, any>>(c, SETTINGS_KEYS.ROLE_ADDRESS_CONFIG)
+) || null;
 
 /**
  * 读 user_settings.maxAddressCount，复制 models/index.ts UserSettings 构造逻辑：
@@ -26,7 +54,7 @@ export const getMaxAddressCount = async (
     maxAddressCountFromSettings: number
 ): Promise<number> => {
     if (!userRole) return maxAddressCountFromSettings;
-    const roleConfigs = await getJsonSetting<Record<string, any>>(c, SETTINGS_KEYS.ROLE_ADDRESS_CONFIG);
+    const roleConfigs = await readRoleConfigs(c);
     if (!roleConfigs) return maxAddressCountFromSettings;
     const roleMaxCount = roleConfigs[userRole]?.maxAddressCount;
     if (typeof roleMaxCount !== 'number') return maxAddressCountFromSettings;
@@ -36,21 +64,56 @@ export const getMaxAddressCount = async (
 
 /**
  * 每用户可接入的外部邮箱上限。与 maxAddressCount 同走 role_address_config，
- * 按角色可配（RoleConfig.maxMailAccountCount）。无 role / 无配置 / 负数 → 全局默认 5。
- * 返回 0 = 不限（与 maxAddressCount 同口径）。
+ * 按角色可配（RoleConfig.maxMailAccountCount）。无 role / 无配置 / 负数 → 默认 5。
+ *
+ * 管理员角色无条件返回 0（不限），避免后台管理员被普通用户资源配额误伤。
+ * 普通角色显式配置 0 仍表示不限，便于后续提供付费/可信角色。
  */
-const DEFAULT_MAX_MAIL_ACCOUNTS = 5;
-
 export const getMaxMailAccountCount = async (
     c: Context<HonoCustomType>,
     userRole: string | null | undefined
 ): Promise<number> => {
+    if (isAdminRole(c, userRole)) return 0;
     if (!userRole) return DEFAULT_MAX_MAIL_ACCOUNTS;
-    const roleConfigs = await getJsonSetting<Record<string, any>>(c, SETTINGS_KEYS.ROLE_ADDRESS_CONFIG);
+    const roleConfigs = await readRoleConfigs(c);
     if (!roleConfigs) return DEFAULT_MAX_MAIL_ACCOUNTS;
     const v = roleConfigs[userRole]?.maxMailAccountCount;
     if (typeof v !== 'number' || v < 0) return DEFAULT_MAX_MAIL_ACCOUNTS;
     return v;
+};
+
+/**
+ * Unified Inbox 单次列表页大小。
+ *
+ * - 普通用户默认 50，可按角色收紧/放宽，但只能在 1..100 内；
+ * - 管理员固定使用 Worker 硬上限 100；
+ * - 0 不表示 unlimited：分页请求必须永远有硬上限，防止大结果集拖垮 Worker/D1。
+ */
+export const getMaxUnifiedPageSize = async (
+    c: Context<HonoCustomType>,
+    userRole: string | null | undefined
+): Promise<number> => {
+    if (isAdminRole(c, userRole)) return HARD_MAX_UNIFIED_PAGE_SIZE;
+    if (!userRole) return DEFAULT_MAX_UNIFIED_PAGE_SIZE;
+    const roleConfigs = await readRoleConfigs(c);
+    const v = roleConfigs?.[userRole]?.maxUnifiedPageSize;
+    if (!Number.isInteger(v) || v < 1 || v > HARD_MAX_UNIFIED_PAGE_SIZE) {
+        return DEFAULT_MAX_UNIFIED_PAGE_SIZE;
+    }
+    return v;
+};
+
+export const getMailServiceQuota = async (
+    c: Context<HonoCustomType>,
+    userRole: string | null | undefined,
+): Promise<MailServiceQuota> => {
+    // Intentionally resolve independently. The settings row is tiny and D1 may cache reads;
+    // keeping the public helpers independent avoids hidden coupling for existing callers.
+    const [maxMailAccountCount, maxUnifiedPageSize] = await Promise.all([
+        getMaxMailAccountCount(c, userRole),
+        getMaxUnifiedPageSize(c, userRole),
+    ]);
+    return { maxMailAccountCount, maxUnifiedPageSize };
 };
 
 /**
