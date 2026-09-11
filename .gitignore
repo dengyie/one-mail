@@ -39,7 +39,7 @@ bower_components
 # node-waf configuration
 .lock-wscript
 
-# Compiled binary addons (https://nodejs.org/api/addons)
+# Compiled binary addons (https://nodejs.org/api/addons.html)
 build/Release
 
 # Dependency directories
@@ -100,6 +100,9 @@ dist
 
 # Gatsby files
 .cache/
+# Comment in the public line in if your project uses Gatsby and not Next.js
+# https://github.com/zeit/next.js/pull/7009#issuecomment-471101572
+# public
 
 # vuepress build output
 .vuepress/dist
