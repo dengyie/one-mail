@@ -78,7 +78,11 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
     ).first();
     if (!folderTable) changes.push("mail_account_folders");
 
+    // Folder names are metadata. Provider folders (Graph today, future Gmail
+    // adapters) key by provider_folder_id so renames do not create a new row.
+    // IMAP/POP3 have no provider folder id and key by canonical mailbox name.
     await db.exec(`CREATE TABLE IF NOT EXISTS mail_account_folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         mail_account_id TEXT NOT NULL,
         provider TEXT NOT NULL,
         provider_folder_id TEXT,
@@ -92,8 +96,7 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
         last_sync_at INTEGER,
         last_error TEXT,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (mail_account_id, canonical_name)
+        updated_at INTEGER NOT NULL
     )`);
 
     const indexStatements = [
@@ -116,8 +119,11 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
             ON emails(account_id, provider_thread_id)
             WHERE provider_thread_id IS NOT NULL`,
         `CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_provider_id_uq
-            ON mail_account_folders(mail_account_id, provider_folder_id)
+            ON mail_account_folders(mail_account_id, provider, provider_folder_id)
             WHERE provider_folder_id IS NOT NULL`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_canonical_uq
+            ON mail_account_folders(mail_account_id, provider, canonical_name)
+            WHERE provider_folder_id IS NULL`,
         `CREATE INDEX IF NOT EXISTS idx_mail_account_folders_account_type
             ON mail_account_folders(mail_account_id, folder_type, canonical_name)`,
     ];
