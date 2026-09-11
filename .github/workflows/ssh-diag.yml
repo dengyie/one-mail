@@ -5,7 +5,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Compare and fingerprint
+      - name: Reproduce deploy SSH flow
         env:
           PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
           PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
@@ -13,15 +13,20 @@ jobs:
           PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
           PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
         run: |
-          for h in pxed1497962.bohrium.tech 39.98.70.173 ssh-pxed.mangoqwq.com ssh-pxed.mangoq.ccwu.cc inbox.mangoqwq.com mail-api.mangoqwq.cc.cd pxed.mangoqwq.com; do
-            if [ "$PXED_SSH_HOST" = "$h" ]; then echo "HOST matches $h"; fi
-          done
-          echo "PORT length: ${#PXED_SSH_PORT}"
-          for p in 22 2222 22022 2200 10022; do
-            if [ "$PXED_SSH_PORT" = "$p" ]; then echo "PORT matches $p"; fi
-          done
           PORT="${PXED_SSH_PORT:-22}"
-          fp=$(ssh-keyscan -T 8 -t ed25519 -p "$PORT" "$PXED_SSH_HOST" 2>/dev/null | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')
-          echo "server presents: $fp"
-          printf '%s\n' "$PXED_SSH_KNOWN_HOSTS" > /tmp/kh.key
-          echo "pinned secret is: $(ssh-keygen -lf /tmp/kh.key 2>/dev/null | awk '{print $2}')"
+          echo "port empty? ${#PXED_SSH_PORT} chars; key empty? ${#PXED_SSH_KEY} chars; kh empty? ${#PXED_SSH_KNOWN_HOSTS} chars"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          {
+            printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "$PORT" "$PXED_SSH_KNOWN_HOSTS"
+            printf '%s %s\n' "$PXED_SSH_HOST" "$PXED_SSH_KNOWN_HOSTS"
+          } > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          echo "--- known_hosts validation (fingerprints per line) ---"
+          ssh-keygen -lf ~/.ssh/known_hosts || true
+          echo "--- line 1 fields (host masked by GitHub if secret) ---"
+          awk '{print "fields=" NF" type="$2}' ~/.ssh/known_hosts
+          USER="${PXED_SSH_USER:-root}"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$PXED_SSH_HOST" hostname && echo SSH-OK || echo SSH-FAIL
