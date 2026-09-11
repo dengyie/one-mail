@@ -8,7 +8,7 @@ import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
 import { mergeRoleAddressConfigs } from "../unified/rbac_config";
 import { hashPasswordForStorage } from "../core/password.ts";
-import { HARD_MAX_UNIFIED_PAGE_SIZE } from "../quota.ts";
+import { DEFAULT_MAX_ADDRESS_COUNT, HARD_MAX_UNIFIED_PAGE_SIZE } from "../quota.ts";
 
 export default {
     getSetting: async (c: Context<HonoCustomType>) => {
@@ -33,8 +33,10 @@ export default {
                 return c.text(`${msgs.VerifyMailDomainInvalidMsg} ${JSON.stringify(domains, null, 2)}`, 400)
             }
         }
-        if (settings.maxAddressCount < 0) {
-            return c.text(msgs.InvalidMaxAddressCountMsg, 400)
+        // Legacy 0 used to mean unlimited. Non-admin users must now always have a
+        // finite quota, so normalize legacy/invalid values to the finite default.
+        if (!Number.isInteger(settings.maxAddressCount) || settings.maxAddressCount < 1) {
+            settings.maxAddressCount = DEFAULT_MAX_ADDRESS_COUNT;
         }
         await saveSetting(c, CONSTANTS.USER_SETTINGS_KEY, JSON.stringify(settings));
         return c.json({ success: true })
@@ -227,11 +229,12 @@ export default {
             return c.text(msgs.InvalidMaxAddressCountMsg, 400);
         }
         for (const config of Object.values(configs)) {
-            if (typeof config?.maxAddressCount === "number" && config.maxAddressCount < 0) {
+            if (config?.maxAddressCount !== undefined
+                && (!Number.isInteger(config.maxAddressCount) || config.maxAddressCount < 1)) {
                 return c.text(msgs.InvalidMaxAddressCountMsg, 400);
             }
-            // 外部邮箱接入上限（角色化配额）。缺失/负数非法，与 maxAddressCount 同口径校验。
-            if (typeof config?.maxMailAccountCount === "number" && config.maxMailAccountCount < 0) {
+            if (config?.maxMailAccountCount !== undefined
+                && (!Number.isInteger(config.maxMailAccountCount) || config.maxMailAccountCount < 1)) {
                 return c.text(msgs.InvalidMaxAddressCountMsg, 400);
             }
             // Unified Inbox 单页配额必须始终保留 Worker 硬上限；0 不能表达 unlimited。
