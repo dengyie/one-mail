@@ -39,7 +39,7 @@ test("normal users receive finite default mail service quotas", async () => {
     });
 });
 
-test("role-specific mail service quotas are applied", async () => {
+test("role-specific finite mail service quotas are applied", async () => {
     const c = makeCtx({
         roleConfig: JSON.stringify({
             pro: { maxMailAccountCount: 20, maxUnifiedPageSize: 80 },
@@ -77,9 +77,15 @@ test("invalid page quota never becomes unlimited", async () => {
     }
 });
 
-test("explicit zero mail-account quota retains existing unlimited role semantics", async () => {
-    const c = makeCtx({
-        roleConfig: JSON.stringify({ user: { maxMailAccountCount: 0 } }),
-    });
-    assert.equal(await getMaxMailAccountCount(c, "user"), 0);
+test("zero or invalid mail-account quota falls back to finite default for non-admin roles", async () => {
+    for (const bad of [0, -1, 2.5, "10"]) {
+        const c = makeCtx({
+            roleConfig: JSON.stringify({ user: { maxMailAccountCount: bad } }),
+        });
+        assert.equal(
+            await getMaxMailAccountCount(c, "user"),
+            DEFAULT_MAX_MAIL_ACCOUNTS,
+            `bad value ${JSON.stringify(bad)} must not create an unlimited non-admin role`,
+        );
+    }
 });
