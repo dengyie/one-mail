@@ -1,0 +1,27 @@
+name: SSH diag
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare and fingerprint
+        env:
+          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
+          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
+          PXED_SSH_KNOWN_HOSTS: ${{ secrets.PXED_SSH_KNOWN_HOSTS }}
+          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
+        run: |
+          for h in pxed1497962.bohrium.tech 39.98.70.173 ssh-pxed.mangoqwq.com ssh-pxed.mangoq.ccwu.cc inbox.mangoqwq.com mail-api.mangoqwq.cc.cd pxed.mangoqwq.com; do
+            if [ "$PXED_SSH_HOST" = "$h" ]; then echo "HOST matches $h"; fi
+          done
+          echo "PORT length: ${#PXED_SSH_PORT}"
+          for p in 22 2222 22022 2200 10022; do
+            if [ "$PXED_SSH_PORT" = "$p" ]; then echo "PORT matches $p"; fi
+          done
+          PORT="${PXED_SSH_PORT:-22}"
+          fp=$(ssh-keyscan -T 8 -t ed25519 -p "$PORT" "$PXED_SSH_HOST" 2>/dev/null | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')
+          echo "server presents: $fp"
+          printf '%s\n' "$PXED_SSH_KNOWN_HOSTS" > /tmp/kh.key
+          echo "pinned secret is: $(ssh-keygen -lf /tmp/kh.key 2>/dev/null | awk '{print $2}')"
