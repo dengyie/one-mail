@@ -4,14 +4,13 @@
 水印通过 Graph 消息 ID 集合（`state.pop3_seen` 相同语义的 seen 集合）推进。
 """
 import logging
-import os
 from datetime import datetime
-import json
 import requests
 from typing import NamedTuple
 
 from .config import AccountConfig, Config
 from .state import SyncState
+from .token_store import make_rotated_callback
 from .normalize import normalize_message
 from .uploader import upload_emails
 from .imap_base import BATCH_SIZE, MAX_SINGLE_BYTES
@@ -27,40 +26,11 @@ class GraphMessageMeta(NamedTuple):
     subject: str | None
 
 
-def _persist_refresh_token(config_path: str, account_id: str, new_refresh_token: str) -> None:
-    """把轮换后的 refresh_token 原子写回 config.json。
-
-    微软个人号（MSA/consumers）的 refresh_token 每次兑换都会轮换：响应里返回新的
-    refresh_token，旧 token 随即失效。不落盘 = 下轮兑换 400 invalid_grant，账号
-    永久失联（2026-09-11 烧卡事故教训）。写回失败只告警不抛错：
-    本轮同步照常进行，但账号已处于倒计时，需要人工介入。
-    """
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        for acc in raw.get("accounts", []):
-            if acc.get("id") == account_id and isinstance(acc.get("oauth"), dict):
-                acc["oauth"]["refresh_token"] = new_refresh_token
-                break
-        else:
-            log.warning("graph persist refresh_token: account %s not found in %s", account_id, config_path)
-            return
-        tmp_path = f"{config_path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(raw, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.replace(tmp_path, config_path)
-        log.info("graph rotated refresh_token persisted for account %s", account_id)
-    except Exception as e:
-        log.error("graph persist refresh_token failed for account %s: %r", account_id, e)
-
-
-def graph_access_token(oauth: dict, config_path: str | None = None,
-                       account_id: str | None = None) -> str:
+def graph_access_token(oauth: dict, on_rotated=None) -> str:
     """获取 Graph API access_token。优先复用 refresh_token 换取 Bearer token。
 
-    MSA/consumers 响应必然携带轮换后的新 refresh_token：传入 config_path +
-    account_id 时自动写回 config.json，避免旧 token 失效后账号失联。
+    MSA/consumers 响应必然携带轮换后的新 refresh_token：经 on_rotated 回调落盘
+    （token_store 统一通道），不落盘 = 旧 token 失效后账号永久失联。
     """
     payload = {
         "client_id": oauth["client_id"],
@@ -83,8 +53,8 @@ def graph_access_token(oauth: dict, config_path: str | None = None,
     new_rt = data.get("refresh_token")
     if new_rt and new_rt != oauth.get("refresh_token"):
         oauth["refresh_token"] = new_rt
-        if config_path and account_id:
-            _persist_refresh_token(config_path, account_id, new_rt)
+        if on_rotated:
+            on_rotated(new_rt)
     return data["access_token"]
 
 
@@ -181,11 +151,18 @@ def fetch_graph_messages(
 
 def sync_graph(account: AccountConfig, config: Config, state: SyncState,
                config_path: str | None = None) -> dict:
-    """Graph API 邮件同步执行入口。config_path 用于轮换 refresh_token 的落盘。"""
+    """Graph API 邮件同步执行入口。
+
+    RT 轮换经 token_store 统一持久化：静态账号写 config.json（兼容旧 config_path
+    参数），用户自助账号回写 Worker（config_path 不参与）。
+    """
     if not account.oauth:
         raise ValueError(f"graph account {account.id} requires oauth configuration")
 
-    access_token = graph_access_token(account.oauth, config_path, account.id)
+    access_token = graph_access_token(
+        account.oauth,
+        make_rotated_callback(config if config.config_path or account.user_managed else None, account),
+    )
     folders = account.folders or ["INBOX"]
     total_synced = 0
     total_dropped = 0

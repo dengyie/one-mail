@@ -70,7 +70,7 @@ def run_once(config_path: str) -> dict:
             continue
         try:
             if account.source == "graph_outlook":
-                results[account.id] = sync_graph(account, config, state, config_path)
+                results[account.id] = sync_graph(account, config, state)
                 r = results[account.id]
                 log.info("synced %s: protocol=%s synced=%d dropped=%d",
                          account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
@@ -153,7 +153,7 @@ def run_daemon(config_path: str, poll_interval: int = 60) -> int:
 
                 try:
                     if account.source == "graph_outlook":
-                        r = sync_graph(account, config, state, config_path)
+                        r = sync_graph(account, config, state)
                     else:
                         factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
                         r = sync_account(factory, config, account, state)
