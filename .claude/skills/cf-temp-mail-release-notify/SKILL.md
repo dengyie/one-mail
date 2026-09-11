@@ -1,6 +1,6 @@
 ---
 name: cf-temp-mail-release-notify
-description: Announce a cloudflare_temp_email GitHub release to the project's Telegram channel topic. Use when the user asks to notify/announce/broadcast a release to Telegram, push release notes to the channel, or send a release to the topic after running cf-temp-mail-release. Posts bilingual (中文 + English) changelog excerpts plus the release URL.
+description: Announce a one-mail GitHub release to the project's Telegram channel topic. Use when the user asks to notify/announce/broadcast a release to Telegram, push release notes to the channel, or send a release to the topic after running cf-temp-mail-release. Posts bilingual (中文 + English) changelog excerpts plus the release URL.
 ---
 
 # Release Notify Workflow

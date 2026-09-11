@@ -29,7 +29,7 @@ wrangler kv:namespace create DEV
 > For more variable configurations, please check [Worker Variables Documentation](/en/guide/worker-vars)
 
 ```toml
-name = "cloudflare_temp_email"
+name = "one-mail"
 main = "src/worker.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = [ "nodejs_compat" ]

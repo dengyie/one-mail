@@ -9,9 +9,9 @@ The `worker.dev` domain is inaccessible in China, please use a custom domain
 
 ## Deployment Steps
 
-### Fork Repository and Enable Actions
+### Deploy the Repository and Enable Actions
 
-- Fork this repository on GitHub
+- Push this repository to a GitHub repository you own (or use the current repository directly)
 - Open the `Actions` page of the repository
 - Find `Deploy Backend` and click `enable workflow` to enable the `workflow`
 - If you need separate frontend and backend deployment that talks to Worker directly, find `Deploy Frontend` and click `enable workflow` to enable the `workflow`
@@ -45,7 +45,7 @@ Then go to the repository page `Settings` -> `Secrets and variables` -> `Actions
    | Name               | Description                                                                                                                                                                      |
    | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | `FRONTEND_ENV`     | Frontend configuration file used by the `Deploy Frontend` workflow. Copy the content from `frontend/.env.example`, [and modify it according to this guide](/en/guide/cli/pages.html). For separate frontend/backend deployment that talks to Worker directly, `VITE_API_BASE` should be the backend Worker API root URL, must start with `https://`, and must not include a trailing `/`. When this address is configured incorrectly, common symptoms are the `map` error or `405` API responses |
-   | `FRONTEND_NAME`    | The project name you created in Cloudflare Pages, can be created via [UI](https://temp-mail-docs.awsl.uk/en/guide/ui/pages.html) or [Command Line](https://temp-mail-docs.awsl.uk/en/guide/cli/pages.html) |
+   | `FRONTEND_NAME`    | The project name you created in Cloudflare Pages, can be created via [UI](https://temp-mail-docs.pages.dev/en/guide/ui/pages.html) or [Command Line](https://temp-mail-docs.pages.dev/en/guide/cli/pages.html) |
    | `FRONTEND_BRANCH`  | (Optional) Branch for pages deployment, can be left unconfigured, defaults to `production`                                                                                      |
    | `PAGE_TOML`        | (Optional) Used only by the `Deploy Frontend with page function` workflow. Required when using page functions to forward backend requests. Please copy the content from `pages/wrangler.toml` and modify the `service` field to your worker backend name according to actual situation. This workflow builds the frontend in Pages mode and uses same-origin requests, so it does not read `FRONTEND_ENV` |
    | `TG_FRONTEND_NAME` | (Optional) The project name you created in Cloudflare Pages, same as `FRONTEND_NAME`. Fill this in if you need Telegram Mini App functionality                                  |
@@ -57,17 +57,11 @@ Then go to the repository page `Settings` -> `Secrets and variables` -> `Actions
 - If you need separate frontend and backend deployment that talks to Worker directly, find `Deploy Frontend` and click `Run workflow` to select a branch and deploy manually
 - If you need Pages deployment with Page Functions forwarding backend requests, find `Deploy Frontend with page function` and click `Run workflow` to deploy manually
 
-### Auto-Update with Page Functions Forwarding
+### Page Functions Forwarding
 
-If you want to use `Upstream Sync` for automatic updates and also let Pages forward backend requests through Page Functions, use the `Deploy Frontend with page function` workflow instead of `Deploy Frontend`.
+If you want to let Pages forward backend requests through Page Functions, use the `Deploy Frontend with page function` workflow instead of `Deploy Frontend`.
 
-- Enable `Upstream Sync`, `Deploy Backend`, and `Deploy Frontend with page function`
+- Enable `Deploy Backend` and `Deploy Frontend with page function`
 - Configure the `PAGE_TOML` repository secret by copying the content of `pages/wrangler.toml`
 - Change the `service` field in `PAGE_TOML` to your Worker backend name
 - This workflow runs `pnpm build:pages`, uses same-origin frontend requests, and does not read `FRONTEND_ENV`
-- After each completed `Upstream Sync`, `Deploy Frontend with page function` deploys the frontend automatically when `PAGE_TOML` is configured
-
-## How to Configure Auto-Update
-
-1. Open the `Actions` page of the repository, find `Upstream Sync`, and click `enable workflow` to enable the `workflow`
-2. If `Upstream Sync` fails, go to the repository homepage and click `Sync` to synchronize manually

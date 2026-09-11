@@ -1,7 +1,5 @@
 # 配置 Telegram Bot
 
-试用地址：[@cf_temp_mail_bot](https://t.me/cf_temp_mail_bot)
-
 ::: warning 注意
 worker 默认的 `worker.dev` 域名的证书是不被 telegram 支持的，配置 Telegram Bot 请使用自定义域名
 :::
@@ -100,7 +98,7 @@ Telegram Bot 支持 **每用户独立推送**，用户绑定地址后，该地�
 其他步骤参考 [UI 部署](/zh/guide/cli/pages) 中的 `前后端分离部署`
 
 > [!NOTE]
-> 从这里下载 zip, [telegram-frontend.zip](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/telegram-frontend.zip)
+> 从这里下载 zip, [telegram-frontend.zip](https://github.com/dengyie/one-mail/releases/latest/download/telegram-frontend.zip)
 >
 > 修改压缩包里面的 index-xxx.js 文件 ，xx 是随机的字符串
 >

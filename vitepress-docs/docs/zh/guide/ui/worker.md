@@ -19,7 +19,7 @@
     > [!IMPORTANT]
     > `nodejs_compat` 必须添加成功后再部署 `worker.js`。如果缺少该兼容标记，常见错误是 `No such module "path"`、`No such module "node:stream"`，前端也可能只显示 `Network Error`。
 
-4. 下载 [worker.js](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/worker.js)
+4. 下载 [worker.js](https://github.com/dengyie/one-mail/releases/latest/download/worker.js)
 
 5. 回到 `Overview`，找到刚刚创建的 worker，点击 `Edit Code`, 删除原来的文件，上传 `worker.js`, 点击 `Deploy`
 
@@ -28,7 +28,7 @@
     > 在文件列表的窗口里点击鼠标右键，在右键菜单里找到 `Upload`,
     > 请参考下面的截图。不要在编辑器中手动创建 `\worker.js` 这类带反斜杠的路径；如果保存时报 `No file system handle registered (\worker.js)`，请回到 Explorer 文件列表右键上传根目录的 `worker.js`，然后再点击 `Deploy`。
     >
-    > 参考: [issues156](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/156#issuecomment-2079453822)
+    > 参考: [issues156](https://github.com/dengyie/one-mail/issues/156#issuecomment-2079453822)
 
     ![worker3](/ui_install/worker-3.png)
 
@@ -43,14 +43,14 @@
     >
     > 注意字符串格式的变量的最外层的引号是不需要的
     >
-    > 对于 `USER_ROLES` 请配置为此格式 `[{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"vip","prefix":"vip"},{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"admin","prefix":""}]`
+    > 对于 `USER_ROLES` 请配置为此格式 `[{"domains":["mangoqwq.cc.cd","mangoqwq.com"],"role":"vip","prefix":"vip"},{"domains":["mangoqwq.cc.cd","mangoqwq.com"],"role":"admin","prefix":""}]`
 
     建议配置的变量列表
 
     | 变量名                     | 类型        | 说明                                       | 示例                                 |
     | -------------------------- | ----------- | ------------------------------------------ | ------------------------------------ |
     | `PREFIX`                   | 文本        | 新建邮箱名称默认前缀，不需要前缀可不配置   | `tmp`                                |
-    | `DOMAINS`                  | JSON        | 用于临时邮箱的所有域名, 支持多个域名       | `["awsl.uk", "dreamhunter2333.xyz"]` |
+    | `DOMAINS`                  | JSON        | 用于临时邮箱的所有域名, 支持多个域名       | `["mangoqwq.cc.cd", "mangoqwq.com"]` |
     | `JWT_SECRET`               | 文本/Secret | 用于生成 jwt 的密钥, jwt 用于登录以及鉴权  | `xxx`                                |
     | `ADMIN_PASSWORDS`          | JSON        | admin 控制台密码, 不配置则不允许访问控制台 | `["123", "456"]`                     |
     | `ENABLE_USER_CREATE_EMAIL` | 文本/JSON   | 是否允许用户创建邮箱, 不配置则不允许       | `true`                               |

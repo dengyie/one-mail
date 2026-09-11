@@ -19,7 +19,7 @@
     > [!IMPORTANT]
     > Add `nodejs_compat` before deploying `worker.js`. Without this compatibility flag, common errors include `No such module "path"` and `No such module "node:stream"`, and the frontend may only show `Network Error`.
 
-4. Download [worker.js](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/worker.js)
+4. Download [worker.js](https://github.com/dengyie/one-mail/releases/latest/download/worker.js)
 
 5. Go back to `Overview`, find the worker you just created, click `Edit Code`, delete the original file, upload `worker.js`, and click `Deploy`
 
@@ -28,7 +28,7 @@
     > then right-click in the file list window and find `Upload` in the context menu,
     > please refer to the screenshots below. Do not manually create a path such as `\worker.js` in the editor. If saving fails with `No file system handle registered (\worker.js)`, go back to the Explorer file list, right-click upload the root `worker.js`, and then click `Deploy`.
     >
-    > Reference: [issues156](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/156#issuecomment-2079453822)
+    > Reference: [issues156](https://github.com/dengyie/one-mail/issues/156#issuecomment-2079453822)
 
     ![worker3](/ui_install/worker-3.png)
 
@@ -43,14 +43,14 @@
     >
     > Note that the outermost quotes are not needed for string format variables
     >
-    > For `USER_ROLES`, please configure in this format: `[{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"vip","prefix":"vip"},{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"admin","prefix":""}]`
+    > For `USER_ROLES`, please configure in this format: `[{"domains":["mangoqwq.cc.cd","mangoqwq.com"],"role":"vip","prefix":"vip"},{"domains":["mangoqwq.cc.cd","mangoqwq.com"],"role":"admin","prefix":""}]`
 
     Recommended variable list
 
     | Variable Name              | Type        | Description                                                            | Example                              |
     | -------------------------- | ----------- | ---------------------------------------------------------------------- | ------------------------------------ |
     | `PREFIX`                   | Text        | Default prefix for new email names, can be omitted if no prefix needed | `tmp`                                |
-    | `DOMAINS`                  | JSON        | All domains for temporary email, supports multiple domains             | `["awsl.uk", "dreamhunter2333.xyz"]` |
+    | `DOMAINS`                  | JSON        | All domains for temporary email, supports multiple domains             | `["mangoqwq.cc.cd", "mangoqwq.com"]` |
     | `JWT_SECRET`               | Text/Secret | Secret for generating JWT, JWT is used for login and authentication    | `xxx`                                |
     | `ADMIN_PASSWORDS`          | JSON        | Admin console password, console access not allowed if not configured   | `["123", "456"]`                     |
     | `ENABLE_USER_CREATE_EMAIL` | Text/JSON   | Whether to allow users to create emails, not allowed if not configured | `true`                               |

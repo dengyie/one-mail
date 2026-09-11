@@ -4,7 +4,7 @@ import i18n from "../i18n";
 import { checkRegistrationRateLimit, getMaxMailAccountCount } from "../utils";
 import { commonGetUserRole } from "../common";
 import { encryptCredCtx as encryptCred, decryptCredCtx as decryptCred } from "./cred_crypto";
-import { unsupportedMailAccountAction } from "../unified/mail_account_actions";
+import { unsupportedMailAccountAction, mergeRotatedRefreshToken } from "../unified/mail_account_actions";
 
 // 每用户最多可接入的外部邮箱数（全局默认）。外部邮箱不消耗 mangoqwq 域名地址配额
 // （maxAddressCount 已在 utils.ts isAddressCountLimitReached 排除 source_meta='external'
@@ -12,19 +12,22 @@ import { unsupportedMailAccountAction } from "../unified/mail_account_actions";
 // 见 utils.ts getMaxMailAccountCount；缺失/负数回退此默认值。
 
 // source 白名单：前端下拉的预设 + 自定义。host/port 由用户填，这里只校验 source 枚举。
+// graph_outlook：Graph-only 卡（RT 只有 Graph Mail.Read scope，无 IMAP scope），
+// 聚合器侧走 graph_source.py（REST 拉信），2026-09-11 新增。
 const ALLOWED_SOURCES = new Set([
-    "imap_gmail", "imap_outlook", "imap_qq", "imap_163", "imap_custom",
+    "imap_gmail", "imap_outlook", "imap_qq", "imap_163", "imap_custom", "graph_outlook",
 ]);
 const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
 
 // OAuth provider 白名单（review W1-3）。唯一依据 = aggregator
 // `aggregator/src/one_mail_agg/oauth.py` 的 `_TOKEN_FN` 支持集：gmail / outlook
 // （组织） / msa（个人 Hotmail/Outlook.com，含别名 hotmail / outlook_personal）。
+// graph：Graph-only 卡走 `graph_source.py`（不进 _TOKEN_FN），2026-09-11 新增。
 // 其它 provider 在 `oauth_client_factory` 里 `_TOKEN_FN[provider]` 会直接 KeyError，
 // 冻结整轮聚合器同步（unknown provider 在 main.py 已做账号级隔离，但落库前仍 400）。
 // config 侧 provider 字符串由聚合器定义，聚合器侧 normalize_provider 会把
 // hotmail / outlook_personal 归一化为 msa；白名单应同时放行三者以免误拒。
-const OAUTH_PROVIDERS = new Set(["gmail", "outlook", "msa", "hotmail", "outlook_personal"]);
+const OAUTH_PROVIDERS = new Set(["gmail", "outlook", "msa", "hotmail", "outlook_personal", "graph"]);
 
 const parseOptionalBoolean = (value: unknown, fallback: boolean | null): boolean | null | undefined => {
     if (value == null || value === "") return fallback;
@@ -537,6 +540,44 @@ const UserMailAccountsModule = {
         ).bind(Date.now(), error, id).run();
         const changes = (meta as { changes?: number })?.changes ?? 0;
         if (changes === 0) return c.json({ error: "not found" }, 404);
+        return c.json({ success: true });
+    },
+
+    /**
+     * 聚合器 RT 轮换回写端点（POST /admin/unified/mail_accounts/:id/refresh_token，
+     * x-admin-auth 保护）。MSA/consumers 的 refresh_token 兑换即轮换：聚合器换到新
+     * RT 后必须回写，否则旧 RT 失效 = 账号永久失联（2026-09-11 烧卡事故根因）。
+     * 解密 oauth_enc → 更新 refresh_token 字段 → 重加密落 D1。非 OAuth 账号 400。
+     */
+    reportRefreshToken: async (c: Context<HonoCustomType>) => {
+        const { id } = c.req.param();
+        const msgs = i18n.getMessagesbyContext(c);
+        const body = await c.req.json().catch(() => ({})) as { refresh_token?: string };
+        const refreshToken = typeof body.refresh_token === "string" ? body.refresh_token.trim() : "";
+        if (!refreshToken || refreshToken.length > 4096) {
+            return c.text(msgs.InvalidInputMsg, 400);
+        }
+        const row = await c.env.DB.prepare(
+            `SELECT oauth_enc FROM user_mail_accounts WHERE id = ?`
+        ).bind(id).first<{ oauth_enc: string | null }>();
+        if (!row) return c.json({ error: "not found" }, 404);
+        let oauthJson: string;
+        try {
+            const decrypted = row.oauth_enc ? await decryptCred(c, row.oauth_enc) : null;
+            const merged = mergeRotatedRefreshToken(decrypted, refreshToken);
+            if (!merged.ok) {
+                console.error(`refresh_token write-back rejected for ${id}: ${merged.reason}`);
+                return c.text(msgs.InvalidInputMsg, 400);
+            }
+            oauthJson = merged.oauthJson;
+        } catch (e) {
+            console.error(`decrypt oauth failed for refresh_token write-back ${id}`, e);
+            return c.text(msgs.InvalidInputMsg, 500);
+        }
+        const oauthEnc = await encryptCred(c, oauthJson);
+        await c.env.DB.prepare(
+            `UPDATE user_mail_accounts SET oauth_enc = ?, last_error = NULL WHERE id = ?`
+        ).bind(oauthEnc, id).run();
         return c.json({ success: true });
     },
 };

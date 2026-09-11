@@ -190,19 +190,19 @@ const parsed = await parseRaw(row.raw);
 
 ```bash
 # 方式 1：npx skills（推荐，自动适配多种 agent）
-npx skills add dreamhunter2333/cloudflare_temp_email --skill cf-temp-mail-agent-mail
+npx skills add dengyie/one-mail --skill cf-temp-mail-agent-mail
 # 加 -g 安装到全局
-npx skills add dreamhunter2333/cloudflare_temp_email --skill cf-temp-mail-agent-mail -g
+npx skills add dengyie/one-mail --skill cf-temp-mail-agent-mail -g
 
 # 方式 2：npx degit 拷贝到你的 agent skills 目录
-npx degit dreamhunter2333/cloudflare_temp_email/skills/cf-temp-mail-agent-mail <your-agent-skills-dir>/cf-temp-mail-agent-mail
+npx degit dengyie/one-mail/skills/cf-temp-mail-agent-mail <your-agent-skills-dir>/cf-temp-mail-agent-mail
 
 # 方式 3：克隆后复制
-git clone --depth 1 https://github.com/dreamhunter2333/cloudflare_temp_email.git /tmp/cf-temp-mail
+git clone --depth 1 https://github.com/dengyie/one-mail.git /tmp/cf-temp-mail
 cp -r /tmp/cf-temp-mail/skills/cf-temp-mail-agent-mail <your-agent-skills-dir>/
 ```
 
-详情见 [SKILL.md](https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/skills/cf-temp-mail-agent-mail/SKILL.md)。
+详情见 [SKILL.md](https://github.com/dengyie/one-mail/blob/main/skills/cf-temp-mail-agent-mail/SKILL.md)。
 
 ## 常见错误
 

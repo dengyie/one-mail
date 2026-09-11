@@ -1,6 +1,6 @@
 ---
 name: cf-temp-mail-agent-mail
-description: Read and send mails from a cloudflare_temp_email mailbox using a user-supplied Address JWT and API base URL. Use when the user (or an agent such as OpenClaw / Codex / Cursor) needs to list the inbox, fetch a specific message, or send an email via the server-parsed /api/parsed_mails, /api/parsed_mail/:id, and /api/send_mail endpoints. Falls back to local parsing of /api/mail/:id raw source with mail-parser-wasm + postal-mime if the parsed endpoints are unavailable. Does NOT handle mailbox creation — the user provides the JWT themselves.
+description: Read and send mails from a one-mail mailbox using a user-supplied Address JWT and API base URL. Use when the user (or an agent such as OpenClaw / Codex / Cursor) needs to list the inbox, fetch a specific message, or send an email via the server-parsed /api/parsed_mails, /api/parsed_mail/:id, and /api/send_mail endpoints. Falls back to local parsing of /api/mail/:id raw source with mail-parser-wasm + postal-mime if the parsed endpoints are unavailable. Does NOT handle mailbox creation — the user provides the JWT themselves.
 ---
 
 # Temp-Mail Agent Usage

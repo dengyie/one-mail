@@ -24,9 +24,24 @@ jobs:
       contents: read
     name: Run pr agent on trusted pull request events and comments
     steps:
+      - name: Check PR Agent credentials
+        id: pragent_config
+        shell: bash
+        env:
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+        run: |
+          if [[ -z "$OPENAI_KEY" || -z "$OPENAI_API_BASE" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR Agent skipped because OPENAI_KEY or OPENAI_API_BASE is not configured for this event."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: PR Agent action step
+        if: steps.pragent_config.outputs.enabled == 'true'
         id: pragent
-        uses: docker://codiumai/pr-agent@sha256:14165e525678ace7d9b51cda8652c2d74abb4e1d76b57c4a6ccaeba84663cc64
+        uses: The-PR-Agent/pr-agent@53072488e4c3b5a6c9ae730fe6fb52fc5f09d06c
         env:
           PR_REVIEWER.REQUIRE_TESTS_REVIEW: "false"
           OPENAI_KEY: ${{ secrets.OPENAI_KEY }}

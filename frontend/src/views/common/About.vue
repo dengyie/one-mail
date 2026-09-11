@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import { GithubAlt, Discord, Telegram } from '@vicons/fa'
+import { GithubAlt } from '@vicons/fa'
 import { useGlobalState } from '../../store'
 import { sanitizeHtml } from '../../utils/sanitize-html'
 const { announcement } = useGlobalState()
@@ -11,23 +11,11 @@ const safeAnnouncement = computed(() => sanitizeHtml(announcement.value))
     <div class="center">
         <n-card :bordered="false" embedded>
             <div v-html="safeAnnouncement"></div>
-            <n-button tag="a" target="_blank" href="https://github.com/dreamhunter2333/cloudflare_temp_email">
+            <n-button tag="a" target="_blank" href="https://github.com/dengyie/one-mail">
                 <template #icon>
                     <n-icon :component="GithubAlt" />
                 </template>
                 Github
-            </n-button>
-            <n-button tag="a" target="_blank" href="https://discord.gg/dQEwTWhA6Q">
-                <template #icon>
-                    <n-icon :component="Discord" />
-                </template>
-                Discord
-            </n-button>
-            <n-button tag="a" target="_blank" href="https://t.me/cloudflare_temp_email">
-                <template #icon>
-                    <n-icon :component="Telegram" />
-                </template>
-                Telegram
             </n-button>
         </n-card>
     </div>

@@ -9,7 +9,7 @@
 
 | 变量名                     | 类型        | 说明                                       | 示例                                 |
 | -------------------------- | ----------- | ------------------------------------------ | ------------------------------------ |
-| `DOMAINS`                  | JSON        | 用于临时邮箱的所有域名, 支持多个域名       | `["awsl.uk", "dreamhunter2333.xyz"]` |
+| `DOMAINS`                  | JSON        | 用于临时邮箱的所有域名, 支持多个域名       | `["mangoqwq.cc.cd", "mangoqwq.com"]` |
 | `JWT_SECRET`               | 文本/Secret | 用于签名 JWT 的密钥，JWT 用于登录鉴权。请使用随机字符串，例如通过 `openssl rand -hex 32` 生成  | `a1b2c3d4...`                        |
 | `ADMIN_PASSWORDS`          | JSON        | admin 控制台密码, 不配置则不允许访问控制台 | `["123", "456"]`                     |
 | `ENABLE_USER_CREATE_EMAIL` | 文本/JSON   | 是否允许用户创建邮箱, 不配置则不允许       | `true`                               |
@@ -36,12 +36,12 @@
 | `DISABLE_CUSTOM_ADDRESS_NAME`         | 文本/JSON | 禁用自定义邮箱地址名称，如果设置为 true，则用户无法输入自定义邮箱名称，将由后台自动生成                                           | `true`                                    |
 | `ADDRESS_CHECK_REGEX`                 | 文本      | `邮箱名称` 的正则表达式, 只用于检查                                                                                               | `^(?!.*admin).*`                          |
 | `ADDRESS_REGEX`                       | 文本      | `邮箱名称` 替换非法符号的正则表达式, 不在其中的符号将被替换，如果不设置，默认为 `[^a-z0-9]`, 需谨慎使用, 有些符号可能导致无法收件 | `[^a-z0-9]`                               |
-| `DEFAULT_DOMAINS`                     | JSON      | 默认用户可用的域名(未登录或未分配角色的用户)                                                                                      | `["awsl.uk", "dreamhunter2333.xyz"]`      |
+| `DEFAULT_DOMAINS`                     | JSON      | 默认用户可用的域名(未登录或未分配角色的用户)                                                                                      | `["mangoqwq.cc.cd", "mangoqwq.com"]`      |
 | `CREATE_ADDRESS_DEFAULT_DOMAIN_FIRST` | 文本/JSON | 创建新地址时是否优先使用默认域名，如果设置为 true，当未指定域名时将使用第一个域名, 主要用于 telegram bot 场景                     | `false`                                   |
 | `ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH` | 文本/JSON | 是否允许创建邮箱 API 使用“基础域名后缀匹配”。开启后，如果允许域名里有 `example.com`，则 `/api/new_address` 与 `/admin/new_address` 可以接受 `foo.example.com`、`a.b.example.com` 这类子域名 | `true` |
 | `RANDOM_SUBDOMAIN_DOMAINS`            | JSON      | 允许启用随机子域名的基础域名列表，启用后可把 `name@abc.com` 创建成 `name@随机串.abc.com`                                         | `["abc.com"]`                             |
 | `RANDOM_SUBDOMAIN_LENGTH`             | 数字      | 随机子域名长度，默认 `8`，范围 `1-63`                                                                                            | `8`                                       |
-| `DOMAIN_LABELS`                       | JSON      | 对于中文域名，可以使用 DOMAIN_LABELS 显示域名的中文展示名称                                                                       | `["中文.awsl.uk", "dreamhunter2333.xyz"]` |
+| `DOMAIN_LABELS`                       | JSON      | 对于中文域名，可以使用 DOMAIN_LABELS 显示域名的中文展示名称                                                                       | `["中文.mangoqwq.cc.cd", "mangoqwq.com"]` |
 | `ENABLE_AUTO_REPLY`                   | 文本/JSON | 允许自动回复邮件。发件人过滤（`source_prefix`）支持三种模式：留空匹配所有发件人、填写前缀进行 `startsWith` 匹配、使用 `/regex/` 语法进行正则匹配（如 `/@example\.com$/`） | `true`                                    |
 | `DEFAULT_SEND_BALANCE`                | 文本/JSON | 默认发送邮件余额；当值大于 `0` 时，用户打开前端设置页或首次发送邮件时会自动初始化该额度。如果不设置，将为 `0`                                                                                              | `1`                                       |
 | `ENABLE_ADDRESS_PASSWORD`             | 文本/JSON | 启用邮箱地址密码功能，启用后创建新地址时会自动生成密码，并支持密码登录和修改                                                      | `true`                                    |
@@ -61,7 +61,7 @@
 > `*` 子域添加通配 MX 记录**：把基础域名上现有的每一条 MX 记录都复制到 `*` 主机名上，
 > 并保留 priority 与 target；Email Routing 子域不继承父域配置，详见 Cloudflare 的
 > [Email Routing — Subdomains](https://developers.cloudflare.com/email-routing/setup/subdomains/)
-> 文档、[#1035](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/1035) 与
+> 文档、[#1035](https://github.com/dengyie/one-mail/issues/1035) 与
 > [配置子域名邮箱](/zh/guide/feature/subdomain)。
 >
 > 子域名地址通常更适合收件；如果要发件，仍建议优先使用主域名。
@@ -143,9 +143,9 @@
 > - 如果 `domains` 为空将使用 `DEFAULT_DOMAINS`；如果 `DEFAULT_DOMAINS` 也为空，则继续回退到 `DOMAINS`
 > - 如果 prefix 为 null 将使用默认前缀, 如果 prefix 为空字符串将不使用前缀
 >
-> 通过用户界面部署时 `USER_ROLES` 请配置为此格式 `[{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"vip","prefix":"vip"},{"domains":["awsl.uk","dreamhunter2333.xyz"],"role":"admin","prefix":""}]`
+> 通过用户界面部署时 `USER_ROLES` 请配置为此格式 `[{"domains":["mangoqwq.cc.cd","mangoqwq.com"],"role":"vip","prefix":"vip"},{"domains":["mangoqwq.cc.cd","mangoqwq.com"],"role":"admin","prefix":""}]`
 >
-> CLI 部署时 `USER_ROLES` 请参考 `worker/wrangler.toml.template` 配置为此格式 `[{ domains = ["awsl.uk", "dreamhunter2333.xyz"], role = "vip", prefix = "vip" }, { domains = ["awsl.uk", "dreamhunter2333.xyz"], role = "admin", prefix = "" }]`
+> CLI 部署时 `USER_ROLES` 请参考 `worker/wrangler.toml.template` 配置为此格式 `[{ domains = ["mangoqwq.cc.cd", "mangoqwq.com"], role = "vip", prefix = "vip" }, { domains = ["mangoqwq.cc.cd", "mangoqwq.com"], role = "admin", prefix = "" }]`
 
 ## 网页相关变量
 

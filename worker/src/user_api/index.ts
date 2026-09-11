@@ -7,6 +7,8 @@ import passkey from './passkey';
 import oauth2 from './oauth2';
 import user_mail_api from './user_mail_api';
 import mail_accounts from './mail_accounts';
+import { validateMailAccountCreateTarget } from './mail_target_policy';
+import i18n from '../i18n';
 
 export const api = new Hono<HonoCustomType>();
 
@@ -36,7 +38,14 @@ api.post('/user_api/transfer_address', bind_address.transferAddress);
 
 // user external mail accounts（自助接入外部邮箱归集）
 api.get('/user_api/mail_accounts', mail_accounts.list);
-api.post('/user_api/mail_accounts', mail_accounts.create);
+api.post('/user_api/mail_accounts', async (c) => {
+    const body = await c.req.raw.clone().json().catch(() => null);
+    if (!validateMailAccountCreateTarget(body)) {
+        const msgs = i18n.getMessagesbyContext(c);
+        return c.text(msgs.InvalidInputMsg, 400);
+    }
+    return mail_accounts.create(c);
+});
 api.delete('/user_api/mail_accounts/:id', mail_accounts.remove);
 api.post('/user_api/mail_accounts/:id/toggle', mail_accounts.toggle);
 api.post('/user_api/mail_accounts/:id/test-connection', mail_accounts.testConnection);

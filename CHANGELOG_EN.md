@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| Complete the remote-content blocking UX: ① the unified-inbox detail view now has a "Load Images" per-mail recovery button (`UnifiedInboxDetail.vue` adds a `showRemoteImages`/`allowRemote` branch and banner), matching the main reader; ② reply/forward quoting now goes through the same `blockRemoteContent` security pipeline (`mail-actions.js`) so remote/external tracking resources no longer ride along into a reply; ③ `send()` sanitizes `html`/`rich` bodies with `sanitizeHtml` right before dispatch (`SendMail.vue`), so `javascript:`/`data:text/html`/event handlers pasted or quoted cannot reach the recipient's client, while `text` is sent verbatim to avoid mangling literal `<`; ④ unified `detail.htmlBlocked`/`remoteImagesBlocked` copy. Added `mail-actions.test.js` (6 tests); all 92 `frontend/src/utils` unit tests pass. Details in `docs/remote-content-blocking-completion.md`.
+
 - fix: |Worker| Persist provider delivery as `unknown`/`sent` after dispatch; `x-idempotency-key` replays are safe, uncertain outcomes return 503 without releasing quota/balance, and duplicate retries cannot bypass limits. Added migration `db/2026-09-09-send-mail-delivery-state.sql`.
 
 - fix: |Worker/Auth| Bind user and role JWTs to both user_id and user_email; the unified inbox reuses the already verified identity so a deleted user's token cannot follow a reused row ID.
@@ -63,7 +65,7 @@
 - fix: |quota| I7e mail-account quota TOCTOU compensation (recounts after INSERT and deletes the row when over the cap); address quota accepted-low (soft cap, race overshoot bounded at 1)
 - fix: |frontend| C3 logout clears all auth credentials (adminAuth/auth/jwt/userJwt/oauth2 session), fixing shared-device residue that allowed continued access
 - fix: |Worker| Scoped readonly key privilege escalation read (C1 [security]): `inWhitelist` previously granted access when a whitelist was configured but the row's `account_id`/`source` was `NULL` (or empty after comma-split), letting a scoped key read rows outside their scope (fail-open). Now fail-closed: NULL/empty row values are always rejected; only `undefined` (the request dimension not supplied) passes through for `scopeQuery` to inject the whitelist. `ingest.ts` now also requires a non-empty `account_id`, so NULL-account rows can't be created (commit `f574b04`)
-- fix: |auth| The three `/open_api/*_login` routes (site/admin/credential) returned 500 on empty or non-JSON bodies (`c.req.json()` throws `Unexpected end of JSON input`). Extracted `parseLoginBody` that catches to `{}`, letting each route's existing `!password`/`!credential` check return 401 — same semantics as a wrong password, so a prober learns nothing about whether the body was missing vs the password wrong. Pre-existing upstream cloudflare_temp_email defect, not introduced by this review.
+- fix: |auth| The three `/open_api/*_login` routes (site/admin/credential) returned 500 on empty or non-JSON bodies (`c.req.json()` throws `Unexpected end of JSON input`). Extracted `parseLoginBody` that catches to `{}`, letting each route's existing `!password`/`!credential` check return 401 — same semantics as a wrong password, so a prober learns nothing about whether the body was missing vs the password wrong. Pre-existing defect, not introduced by this review.
 - fix: |Worker| Dedicated row-level auth entry point (C1 review Important-2): added `canAccessRow(key, source, accountId)` for `getEmail`'s per-row source/account check, which is fail-closed on `undefined` too (a NULL DB row value accidentally coerced to `undefined` can no longer silently reopen C1); `canAccess` keeps its request-layer semantics (middleware passes missing filter params to `scopeQuery` for whitelist injection). Tests cover: row-level `undefined`/NULL/empty/out-of-scope all denied, while an unscoped key keeps the "any row readable" behavior
 - fix: |Aggregator| `normalize._attachments` had no guard around `get_payload(decode=True)`; a single malformed-base64 attachment could crash an entire sync batch, wedge the watermark, and deadlock the account permanently (C3 [reliability]). Now skips corrupt attachments with a `try/except` like `_bodies`, plus regression test (commit `f574b04`)
 - fix: |Aggregator| Per-message guard at the sync boundary (C3 hardening): `sync_imap` and `sync_pop3` now build batches with per-message `try/except` instead of one list comprehension, so a single `normalize_message` crash (bad attachment/header/anything) no longer aborts the whole batch. IMAP skips the bad message and still advances `last_uid` to the window's max UID (including the bad one, so the same window is never re-fetched every round — consistent with the `MAX_SINGLE_BYTES` skip semantics); POP3 skips the bad UIDL without marking it seen, retrying it next round. Covered by edge-case tests: bad single message skipped, the rest upload, and the watermark still advances when the whole window is bad
@@ -186,7 +188,7 @@
 
 - feat: |Frontend| Add six-language frontend support (`zh` / `en` / `es` / `pt-BR` / `ja` / `de`), keep `zh` as the default locale; locale-unprefixed routes (for example `/` and `/user`) render in Chinese by default while still recording browser language as the stored preference. Explicit locale switches are persisted, and the current route, query string, and canonical locale URL stay in sync during switching
 - feat: |API| Add server-side parsed-mail endpoints `/api/parsed_mails` and `/api/parsed_mail/:id` that return `sender` / `subject` / `text` / `html` / `attachments` metadata directly (reuses `commonParseMail`), so AI agents no longer need a client-side MIME parser
-- feat: |Skill| Bundle a read-only skill `cf-temp-mail-agent-mail` (`skills/cf-temp-mail-agent-mail/`) so AI agents like OpenClaw / Codex / Cursor can consume a mailbox with a user-supplied Address JWT + API base URL — list mails, poll verification codes, etc. — sidestepping the Turnstile challenge required to create a mailbox. Install via `npx degit dreamhunter2333/cloudflare_temp_email/skills/cf-temp-mail-agent-mail`
+- feat: |Skill| Bundle a read-only skill `cf-temp-mail-agent-mail` (`skills/cf-temp-mail-agent-mail/`) so AI agents like OpenClaw / Codex / Cursor can consume a mailbox with a user-supplied Address JWT + API base URL — list mails, poll verification codes, etc. — sidestepping the Turnstile challenge required to create a mailbox. Install via `npx degit dengyie/one-mail/skills/cf-temp-mail-agent-mail`
 - docs: |Docs| Add "AI Agent Mailbox Usage" doc (`guide/feature/agent-email`) covering the `parsed_mail` API and a local-parse fallback using `mail-parser-wasm` + `postal-mime` (mirrors the frontend) when parsed endpoints are unavailable
 - docs: |Docs| Make "a domain is a hard prerequisite" explicit at the top of `quick-start`, `worker-vars`, and `email-routing` (zh + en), spelling out that Cloudflare Email Routing must be enabled with email DNS records provisioned before deployment, the Catch-all rule must be bound after the Worker is deployed, and subdomains do not inherit the parent domain's Email Routing — so users no longer start deploying without a usable domain and end up unable to receive mail (issue #1004)
 - docs: |Deployment troubleshooting| Improve docs for recent UI-deployment and upgrade issues: document `nodejs_compat`, the required uppercase `DB` D1 binding, `/open_api/settings` verification, backend API URL entry, Cloudflare security challenges causing `Network Error`, D1 size limits and Cron Trigger cleanup, GitHub OAuth public email requirements, the difference between admin passwords and user accounts, and the `enableRandomSubdomain` API flag; move the Help/FAQ menu directly after Core Configuration so it is easier to find
@@ -532,7 +534,7 @@ UI deployment worker needs to click Settings -> Runtime, modify Compatibility fl
 - feat: Worker adds `ADDRESS_CHECK_REGEX`, address name regex, only for checking, matching will pass check
 - fix: UI fix login page tab active icon misalignment
 - fix: UI fix admin page refresh popup password input issue
-- feat: Support `OAuth2` login, can login via `Github` `Authentik` and other third parties, see details [OAuth2 Third-party Login](https://temp-mail-docs.awsl.uk/en/guide/feature/user-oauth2.html)
+- feat: Support `OAuth2` login, can login via `Github` `Authentik` and other third parties, see details [OAuth2 Third-party Login](https://temp-mail-docs.pages.dev/en/guide/feature/user-oauth2.html)
 
 ## v0.7.2
 
@@ -568,10 +570,10 @@ DB changes: Add user `passkey` table, need to execute `db/2024-08-10-patch.sql` 
 
 ## v0.6.1
 
-- pages github actions && fix cleanup emails days 0 not taking effect by @tqjason (#355)
-- fix: imap proxy server doesn't support password by @dreamhunter2333 (#356)
-- worker adds `ANNOUNCEMENT` configuration, for configuring announcement info by @dreamhunter2333 (#357)
-- fix: telegram bot create new address defaults to first domain by @dreamhunter2333 (#358)
+- pages github actions && fix cleanup emails days 0 not taking effect (#355)
+- fix: imap proxy server doesn't support password (#356)
+- worker adds `ANNOUNCEMENT` configuration, for configuring announcement info (#357)
+- fix: telegram bot create new address defaults to first domain (#358)
 
 ## v0.6.0
 
@@ -581,7 +583,7 @@ DB changes: Add user role table, need to execute `db/2024-07-14-patch.sql` to up
 
 ### Changes
 
-Worker configuration file adds `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, see documentation [worker configuration](https://temp-mail-docs.awsl.uk/en/guide/cli/worker.html)
+Worker configuration file adds `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, see documentation [worker configuration](https://temp-mail-docs.pages.dev/en/guide/cli/worker.html)
 
 - Remove `apiV1` related code and related database tables
 - Update `admin/statistics` api, add user statistics info
@@ -599,13 +601,13 @@ Worker configuration file adds `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_RO
 - Fix some bugs in smtp imap proxy server
 - Improve user/admin delete inbox/outbox functionality
 - Admin can delete send permission records
-- Add Chinese email alias configuration `DOMAIN_LABELS` [documentation](https://temp-mail-docs.awsl.uk/en/guide/cli/worker.html)
+- Add Chinese email alias configuration `DOMAIN_LABELS` [documentation](https://temp-mail-docs.pages.dev/en/guide/cli/worker.html)
 - Remove `mail channels` related code
 - github actions adds `FRONTEND_BRANCH` variable to specify deployment branch (#324)
 
 ## v0.5.1
 
-- Add `mail-parser-wasm-worker` for worker email parsing, [documentation](https://temp-mail-docs.awsl.uk/en/guide/feature/mail_parser_wasm_worker.html)
+- Add `mail-parser-wasm-worker` for worker email parsing, [documentation](https://temp-mail-docs.pages.dev/en/guide/feature/mail_parser_wasm_worker.html)
 - Add user email length validation configuration `MIN_ADDRESS_LEN` and `MAX_ADDRESS_LEN`
 - Fix `pages function` not forwarding `telegram` api issue
 
@@ -627,7 +629,7 @@ Worker configuration file adds `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_RO
 - UI lazy load
 - telegram bot adds user global push feature (admin users)
 - Add support for cloudflare verified user sending emails
-- Add using `resend` to send emails, `resend` provides http and smtp api, easier to use, documentation: https://temp-mail-docs.awsl.uk/en/guide/config-send-mail.html
+- Add using `resend` to send emails, `resend` provides http and smtp api, easier to use, documentation: https://temp-mail-docs.pages.dev/en/guide/config-send-mail.html
 
 ## v0.4.4
 
@@ -650,28 +652,28 @@ Configuration file `main = "src/worker.js"` changed to `main = "src/worker.ts"`
 - UI: outbox also uses split view display (similar to inbox)
 - `SMTP IMAP Proxy` add outbox viewing
 
-* feat: telegram bot TelegramSettings && webhook by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/244
-* fix build by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/245
-* feat: UI changes by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/247
-* feat: SMTP IMAP Proxy: add sendbox && UI: sendbox use split view by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/248
+* feat: telegram bot TelegramSettings && webhook in https://github.com/dengyie/one-mail/pull/244
+* fix build in https://github.com/dengyie/one-mail/pull/245
+* feat: UI changes in https://github.com/dengyie/one-mail/pull/247
+* feat: SMTP IMAP Proxy: add sendbox && UI: sendbox use split view in https://github.com/dengyie/one-mail/pull/248
 
 ## v0.4.2
 
 - Fix some bugs in smtp imap proxy server
 - Fix UI interface text errors, interface adds version number
-- Add telegram bot documentation https://temp-mail-docs.awsl.uk/en/guide/feature/telegram.html
+- Add telegram bot documentation https://temp-mail-docs.pages.dev/en/guide/feature/telegram.html
 
-* fix: imap server by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/227
-* fix: Maintenance wrong label by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/229
-* feat: add version for frontend && backend by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/230
-* feat: add page functions proxy to make response faster by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/234
-* feat: add about page by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/235
-* feat: remove mailV1Alert && fix mobile showSideMargin by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/236
-* feat: telegram bot by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/238
-* fix: remove cleanup address due to many table need to be clean by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/240
-* feat: docs: Telegram Bot by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/241
-* fix: smtp_proxy: cannot decode 8bit && tg bot new random address by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/242
-* fix: smtp_proxy: update raise imap4.NoSuchMailbox by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/243
+* fix: imap server in https://github.com/dengyie/one-mail/pull/227
+* fix: Maintenance wrong label in https://github.com/dengyie/one-mail/pull/229
+* feat: add version for frontend && backend in https://github.com/dengyie/one-mail/pull/230
+* feat: add page functions proxy to make response faster in https://github.com/dengyie/one-mail/pull/234
+* feat: add about page in https://github.com/dengyie/one-mail/pull/235
+* feat: remove mailV1Alert && fix mobile showSideMargin in https://github.com/dengyie/one-mail/pull/236
+* feat: telegram bot in https://github.com/dengyie/one-mail/pull/238
+* fix: remove cleanup address due to many table need to be clean in https://github.com/dengyie/one-mail/pull/240
+* feat: docs: Telegram Bot in https://github.com/dengyie/one-mail/pull/241
+* fix: smtp_proxy: cannot decode 8bit && tg bot new random address in https://github.com/dengyie/one-mail/pull/242
+* fix: smtp_proxy: update raise imap4.NoSuchMailbox in https://github.com/dengyie/one-mail/pull/243
 
 ### v0.4.1
 
@@ -680,16 +682,12 @@ Configuration file `main = "src/worker.js"` changed to `main = "src/worker.ts"`
 - Add `IMAP proxy` service, support `IMAP` viewing emails
 - UI interface adds version number display
 
-* feat: use common function handleListQuery when query by page by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/220
-* fix: typos by @lwd-temp in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/221
-* fix: name max 30 && /external/api/send_mail not return result by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/222
-* fix: smtp_proxy_server support decode from mail charset by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/223
-* feat: add imap proxy server by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/225
-* feat: UI show version by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/226
-
-### New Contributors
-
-* @lwd-temp made their first contribution in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/221
+* feat: use common function handleListQuery when query by page in https://github.com/dengyie/one-mail/pull/220
+* fix: typos in https://github.com/dengyie/one-mail/pull/221
+* fix: name max 30 && /external/api/send_mail not return result in https://github.com/dengyie/one-mail/pull/222
+* fix: smtp_proxy_server support decode from mail charset in https://github.com/dengyie/one-mail/pull/223
+* feat: add imap proxy server in https://github.com/dengyie/one-mail/pull/225
+* feat: UI show version in https://github.com/dengyie/one-mail/pull/226
 
 ## v0.4.0
 
@@ -719,14 +717,14 @@ Enable user registration email verification requires `KV`
 - Fix bug where emails weren't deleted when deleting addresses #213
 - UI adds global tab position configuration, side margin configuration
 
-* feat: update docs by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/204
-* feat: add Deploy to Cloudflare Workers button by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/205
-* feat: add Deploy to Cloudflare Workers docs by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/206
-* feat: add UserLogin by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/209
-* feat: admin search mailbox && fix generateName multi dot && user jwt exp in 30 days && UI globalTabplacement && useSideMargin by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/214
-* feat: UI check openSettings in Login page by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/215
-* feat: UI move AdminContact to common by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/217
-* feat: docs by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/218
+* feat: update docs in https://github.com/dengyie/one-mail/pull/204
+* feat: add Deploy to Cloudflare Workers button in https://github.com/dengyie/one-mail/pull/205
+* feat: add Deploy to Cloudflare Workers docs in https://github.com/dengyie/one-mail/pull/206
+* feat: add UserLogin in https://github.com/dengyie/one-mail/pull/209
+* feat: admin search mailbox && fix generateName multi dot && user jwt exp in 30 days && UI globalTabplacement && useSideMargin in https://github.com/dengyie/one-mail/pull/214
+* feat: UI check openSettings in Login page in https://github.com/dengyie/one-mail/pull/215
+* feat: UI move AdminContact to common in https://github.com/dengyie/one-mail/pull/217
+* feat: docs in https://github.com/dengyie/one-mail/pull/218
 
 ## v0.3.3
 
@@ -744,9 +742,9 @@ Enable user registration email verification requires `KV`
 - Add scheduled cleanup feature, configurable in admin page (need to enable scheduled task in config file)
 - Fix delete account no response issue
 
-* feat: UI: MailBox add reply button by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/187
-* feat: add cron auto clean up by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/189
-* fix: delete account by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/190
+* feat: UI: MailBox add reply button in https://github.com/dengyie/one-mail/pull/187
+* feat: add cron auto clean up in https://github.com/dengyie/one-mail/pull/189
+* fix: delete account in https://github.com/dengyie/one-mail/pull/190
 
 ## v0.3.1
 
@@ -766,15 +764,15 @@ Added `settings` table for storing general configuration information
 - UI allows users to switch email display mode `v-html` / `iframe`
 - Add `admin` account configuration page, support configuring user registration name blacklist
 
-* feat: support admin create address && add ENABLE_USER_CREATE_EMAIL co… by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/175
-* feat: add SMTP proxy server by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/177
-* fix: cf ui var is string by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/178
-* fix: UI mailbox 100vh to 80vh by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/179
-* fix: smtp_proxy_server hostname && add docker image for linux/arm64 by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/180
-* fix: some browser do not support wasm by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/182
-* feat: add COPYRIGHT by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/183
-* feat: UI: add user page: useIframeShowMail && mailboxSplitSize by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/184
-* feat: add address_block_list for new address by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/185
+* feat: support admin create address && add ENABLE_USER_CREATE_EMAIL co… in https://github.com/dengyie/one-mail/pull/175
+* feat: add SMTP proxy server in https://github.com/dengyie/one-mail/pull/177
+* fix: cf ui var is string in https://github.com/dengyie/one-mail/pull/178
+* fix: UI mailbox 100vh to 80vh in https://github.com/dengyie/one-mail/pull/179
+* fix: smtp_proxy_server hostname && add docker image for linux/arm64 in https://github.com/dengyie/one-mail/pull/180
+* fix: some browser do not support wasm in https://github.com/dengyie/one-mail/pull/182
+* feat: add COPYRIGHT in https://github.com/dengyie/one-mail/pull/183
+* feat: UI: add user page: useIframeShowMail && mailboxSplitSize in https://github.com/dengyie/one-mail/pull/184
+* feat: add address_block_list for new address in https://github.com/dengyie/one-mail/pull/185
 
 ## v0.3.0
 
@@ -800,11 +798,11 @@ set
 - `admin` send permission page supports search by address
 - `admin` email page uses split view UI
 
-* feat: remove PREFIX logic in db by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/171
-* feat: admin page add account mail count && sendbox default all && sen… by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/172
-* feat: all mail use MailBox Component by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/173
+* feat: remove PREFIX logic in db in https://github.com/dengyie/one-mail/pull/171
+* feat: admin page add account mail count && sendbox default all && sen… in https://github.com/dengyie/one-mail/pull/172
+* feat: all mail use MailBox Component in https://github.com/dengyie/one-mail/pull/173
 
-**Full Changelog**: https://github.com/dreamhunter2333/cloudflare_temp_email/compare/0.2.10...v0.3.0
+**Full Changelog**: https://github.com/dengyie/one-mail/compare/0.2.10...v0.3.0
 
 ## v0.2.10
 
@@ -813,8 +811,8 @@ set
 - fetchAddressError prompt improvement
 - Auto refresh shows countdown
 
-* feat: docs update by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/165
-* feat: add ENABLE_USER_DELETE_EMAIL && ENABLE_AUTO_REPLY && modify fetchAddressError i18n && UI: show autoRefreshInterval by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/169
+* feat: docs update in https://github.com/dengyie/one-mail/pull/165
+* feat: add ENABLE_USER_DELETE_EMAIL && ENABLE_AUTO_REPLY && modify fetchAddressError i18n && UI: show autoRefreshInterval in https://github.com/dengyie/one-mail/pull/169
 
 ## v0.2.9
 
@@ -830,11 +828,11 @@ set
 - Add RATE_LIMITER rate limiting for sending emails and creating new addresses
 - Some bug fixes
 
-- feat: allow user delete mail && notify when send access changed by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/132
-- feat: request_send_mail_access default 1 balance by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/143
-- fix: RATE_LIMITER not call jwt by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/146
-- fix: delete_address not delete address_sender by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/153
-- fix: send_balance not update when click sendmail by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/155
+- feat: allow user delete mail && notify when send access changed in https://github.com/dengyie/one-mail/pull/132
+- feat: request_send_mail_access default 1 balance in https://github.com/dengyie/one-mail/pull/143
+- fix: RATE_LIMITER not call jwt in https://github.com/dengyie/one-mail/pull/146
+- fix: delete_address not delete address_sender in https://github.com/dengyie/one-mail/pull/153
+- fix: send_balance not update when click sendmail in https://github.com/dengyie/one-mail/pull/155
 
 ## v0.2.7
 

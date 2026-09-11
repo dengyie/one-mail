@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: 立即试用
-      link: https://mail.awsl.uk/
+      link: https://inbox.mangoqwq.com/
     - theme: alt
       text: 命令行部署
       link: /zh/guide/quick-start
