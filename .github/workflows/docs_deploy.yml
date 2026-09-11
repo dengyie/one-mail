@@ -16,6 +16,7 @@ jobs:
        startsWith(github.event.workflow_run.head_branch, 'v'))
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -36,10 +37,26 @@ jobs:
           run_install: false
 
       - name: Install docs dependencies
-        run: pnpm --dir vitepress-docs install --no-frozen-lockfile
+        run: pnpm --dir vitepress-docs install --frozen-lockfile
 
-      - name: Download frontend release artifact
-        run: wget https://github.com/dengyie/one-mail/releases/latest/download/frontend.zip -O vitepress-docs/docs/public/ui_install/frontend.zip
+      - name: Download frontend artifact of the triggering tag build
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Bind the bundled frontend.zip to the exact Tag Build CI run that
+          # triggered this deploy — never to whatever releases/latest points at.
+          gh run download "${{ github.event.workflow_run.id }}" \
+            --name frontend \
+            --dir /tmp/tag-build-frontend
+          mkdir -p vitepress-docs/docs/public/ui_install
+          mv /tmp/tag-build-frontend/frontend.zip vitepress-docs/docs/public/ui_install/frontend.zip
+
+      - name: Download latest release artifact (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          wget https://github.com/dengyie/one-mail/releases/latest/download/frontend.zip \
+            -O vitepress-docs/docs/public/ui_install/frontend.zip
 
       - name: Resolve release tag
         id: release_tag

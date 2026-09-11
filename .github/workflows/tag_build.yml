@@ -24,7 +24,7 @@ jobs:
           run_install: false
 
       - name: Build Frontend
-        run: cd frontend && pnpm install --no-frozen-lockfile && pnpm build:release
+        run: cd frontend && pnpm install --frozen-lockfile && pnpm build:release
 
       - name: Zip Frontend dist
         run: cd frontend/dist/ && zip -r frontend.zip * && mv frontend.zip ../
@@ -53,7 +53,7 @@ jobs:
           run_install: false
 
       - name: Build Telegram Frontend
-        run: cd frontend && pnpm install --no-frozen-lockfile && pnpm build:telegram:release
+        run: cd frontend && pnpm install --frozen-lockfile && pnpm build:telegram:release
 
       - name: Zip Telegram Frontend dist
         run: cd frontend/dist/ && zip -r telegram-frontend.zip * && mv telegram-frontend.zip ../
@@ -85,7 +85,7 @@ jobs:
         run: cd worker && cp wrangler.toml.template wrangler.toml
 
       - name: Build Backend
-        run: cd worker && pnpm install --no-frozen-lockfile && pnpm build
+        run: cd worker && pnpm install --frozen-lockfile && pnpm build
 
       - name: Move worker.js
         run: cd worker/dist && mv worker.js ../

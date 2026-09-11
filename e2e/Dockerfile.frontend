@@ -5,14 +5,15 @@ RUN corepack enable && corepack prepare pnpm@10.10.0 --activate
 
 WORKDIR /app
 
-# Install the frontend through the workspace manifest; the repository does not
-# carry a per-package pnpm lockfile.
-COPY package.json pnpm-workspace.yaml ./
+# Install the frontend through the workspace manifest, using the committed
+# workspace lockfile.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY frontend/package.json frontend/package.json
 COPY packages/shared/package.json packages/shared/package.json
-# The root patch is only for Worker/telegraf; omit it from the frontend-only image.
-RUN sed -i '/^patchedDependencies:/,$d' pnpm-workspace.yaml && \
-    pnpm install --filter @one-mail/frontend... --no-frozen-lockfile
+# The workspace lockfile references the telegraf patch, so the patch file must
+# exist even though the frontend does not depend on telegraf itself.
+COPY worker/patches/ worker/patches/
+RUN pnpm install --filter @one-mail/frontend... --frozen-lockfile
 
 COPY packages/shared/ packages/shared/
 RUN pnpm --filter @one-mail/shared build
