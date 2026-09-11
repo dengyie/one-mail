@@ -128,9 +128,18 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
     # connected mailbox address for compatibility and display, but it is never
     # used to authorize an external mailbox message.
     to_addr = account.username
-    provider_name = provider or _infer_provider(account)
     legacy_uid = imap_uid_override or make_imap_uid(
         account.id, account.host, folder, uidvalidity, uid)
+    if provider is not None:
+        provider_name = provider
+    elif legacy_uid.startswith("pop3:"):
+        # auto protocol accounts can fall back to POP3 even though
+        # account.protocol remains "auto". The stable key is authoritative.
+        provider_name = "pop3"
+    elif legacy_uid.startswith("graph:"):
+        provider_name = "graph"
+    else:
+        provider_name = _infer_provider(account)
     source_key = source_key_override or legacy_uid
     refs = _references(msg)
 
