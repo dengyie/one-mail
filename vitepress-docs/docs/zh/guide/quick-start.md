@@ -21,7 +21,7 @@
 
 ## 升级流程
 
-首先确认当前的版本，然后访问 [Release 页面](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/) 和 [CHANGELOG 页面](https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/CHANGELOG.md) 中找到当前的版本
+首先确认当前的版本，然后访问 [Release 页面](https://github.com/dengyie/one-mail/releases/) 和 [CHANGELOG 页面](https://github.com/dengyie/one-mail/blob/main/CHANGELOG.md) 中找到当前的版本
 
 > [!WARNING] 注意
 > 需要注意 `Breaking Changes` 是必须进行 `数据库 sql 执行` 或者 `变量配置` 的
@@ -33,7 +33,7 @@
 升级不是修改 Cloudflare 控制台里已经运行的旧代码，而是用新版本产物重新覆盖部署：
 
 - 如果使用 UI 部署，请重新下载最新 release 的 `worker.js` 和 `frontend.zip`，按原部署方式覆盖上传。
-- 如果使用 GitHub Actions 部署，请先同步 fork 仓库，再重新运行对应 workflow。
+- 如果使用 GitHub Actions 部署，请先同步你部署用的仓库到最新版本，再重新运行对应 workflow。
 - 如果 changelog 标注了数据库变更，请在 admin 后台的 `快速设置 -> 数据库` 执行升级，或按 D1 文档执行对应 SQL。
 - 升级后如果前端仍显示旧错误，请用无痕窗口测试或清理浏览器缓存，避免继续加载旧前端资源。
 
@@ -51,4 +51,4 @@
 
 ### Github Actions 部署
 
-- [Github Actions 部署如何配置自动更新](/zh/guide/actions/auto-update)
+- [Github Actions 部署](/zh/guide/actions/github-action)

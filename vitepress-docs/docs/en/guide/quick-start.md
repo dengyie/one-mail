@@ -21,7 +21,7 @@ Please choose one of the three deployment methods below:
 
 ## Upgrade Process
 
-First, confirm your current version, then visit the [Release page](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/) and [CHANGELOG page](https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/CHANGELOG.md) to find your current version.
+First, confirm your current version, then visit the [Release page](https://github.com/dengyie/one-mail/releases/) and [CHANGELOG page](https://github.com/dengyie/one-mail/blob/main/CHANGELOG.md) to find your current version.
 
 > [!WARNING] Warning
 > Pay attention to `Breaking Changes` which require `database SQL execution` or `configuration changes`.
@@ -33,7 +33,7 @@ Then refer to the documentation below to use `CLI` or `UI` to redeploy the `work
 Upgrading does not mean editing the old code already running in the Cloudflare console. It means redeploying the new version artifacts over the existing Worker and Pages deployment:
 
 - If you use UI deployment, download the latest release `worker.js` and `frontend.zip`, then upload them again using the same deployment method.
-- If you use GitHub Actions, sync your fork first and rerun the corresponding workflow.
+- If you use GitHub Actions, sync your deployment repository to the latest version first and rerun the corresponding workflow.
 - If the changelog lists database changes, run the upgrade in `Admin -> Quick Setup -> Database`, or execute the corresponding SQL according to the D1 guide.
 - If the frontend still shows an old error after upgrading, test in an incognito window or clear browser cache so it stops loading the old frontend assets.
 
@@ -51,4 +51,4 @@ Upgrading does not mean editing the old code already running in the Cloudflare c
 
 ### Github Actions Deployment
 
-- [How to Configure Auto-Update with Github Actions](/en/guide/actions/auto-update)
+- [Github Actions Deployment](/en/guide/actions/github-action)

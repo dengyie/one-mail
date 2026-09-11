@@ -18,7 +18,7 @@ export const zh = defineConfig({
         },
 
         editLink: {
-            pattern: 'https://github.com/dreamhunter2333/cloudflare_temp_email/edit/main/vitepress-docs/docs/:path',
+            pattern: 'https://github.com/dengyie/one-mail/edit/main/vitepress-docs/docs/:path',
             text: '在 GitHub 上编辑此页面'
         },
 
@@ -78,11 +78,11 @@ function nav(): DefaultTheme.NavItem[] {
             items: [
                 {
                     text: '更新日志',
-                    link: 'https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/CHANGELOG.md'
+                    link: 'https://github.com/dengyie/one-mail/blob/main/CHANGELOG.md'
                 },
                 {
                     text: '参与贡献',
-                    link: 'https://github.com/dreamhunter2333/cloudflare_temp_email'
+                    link: 'https://github.com/dengyie/one-mail'
                 }
             ]
         }
@@ -132,7 +132,6 @@ function sidebarGuide(): DefaultTheme.SidebarItem[] {
                 { text: 'Github Actions 配置', link: 'actions/github-action' },
                 { text: '配置邮件转发', link: 'email-routing.md' },
                 { text: '配置发送邮件', link: 'config-send-mail' },
-                { text: '自动更新配置', link: 'actions/auto-update' },
             ]
         },
         {

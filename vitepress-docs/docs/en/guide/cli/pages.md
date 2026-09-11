@@ -45,7 +45,7 @@ Forwarding requests from page functions to the worker backend can achieve faster
 
 The first deployment will prompt you to create a project. For the `production` branch, enter `production`.
 
-If your worker backend name is not `cloudflare_temp_email`, please modify `pages/wrangler.toml`.
+If your worker backend name is not `one-mail`, please modify `pages/wrangler.toml`.
 
 ```bash
 cd frontend

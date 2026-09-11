@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > This is the Vue 3 frontend for the **one-mail unified inbox**. The `frontend/` directory
-> is forked from the upstream `cloudflare_temp_email` Vue frontend (Vue 3 + Vite + Naive UI),
+> is developed from scratch by our team (Vue 3 + Vite + Naive UI),
 > and since the frontend/backend separation (commit `64f0eda`) the frontend is the **only
 > form that talks directly to the Worker cross-origin** — there is no Pages Functions proxy
 > topology anymore.
@@ -19,7 +19,7 @@ Browser (Vue 3 SPA)
 Cloudflare Worker ──mail-api.mangoqwq.cc.cd
    │  ├─ /api/unified/*       unified inbox queries (API-key auth)
    │  ├─ /admin/unified/*     unified inbox admin (x-admin-auth)
-   │  └─ /api/* · /user_api/* · /admin/*   temp-mail base (upstream capabilities)
+   │  └─ /api/* · /user_api/* · /admin/*   temp-mail base
 ```
 
 The `frontend/` app is a pure static Vue 3 SPA:

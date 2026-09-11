@@ -18,7 +18,7 @@
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | `Uncaught Error: No such module "path". imported from "worker.js"` | [参考](/zh/guide/ui/worker)                                                 |
 | `No such module "node:stream". imported from "worker.js"`          | [参考](/zh/guide/ui/worker)                                                 |
-| `二级域名无法发送邮件`                                             | [参考](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/515) |
+| `二级域名无法发送邮件`                                             | [参考](https://github.com/dengyie/one-mail/issues/515) |
 | `Failed to send verify code: No balance`                           | admin 后台设置无限制邮件或者发件权限页面增加额度                            |
 | `GitHub OAuth 无法获取到邮箱` / `[400]: 从 Oauth2 提供商获取用户邮箱失败` | GitHub 模板会从 `https://api.github.com/user` 的 `email` 字段读取邮箱。GitHub 账号如果隐藏公开邮箱，该字段会是 `null`。可以在 GitHub 个人资料中选择 `Public email`，或把 `User Info URL` 改为 `https://api.github.com/user/emails`、`User Email Key` 改为 `$[?(@.primary==true)].email`、`Scope` 改为 `user:email` |
 | 页面初始化时报 `Cannot read properties of undefined (reading 'map')` | 先看 `/open_api/settings` 返回是否正常。如果是 Worker 直连部署，通常是 worker 变量没有设置成功，请检查 `DOMAINS`、`ADMIN_PASSWORDS` 等 JSON 格式变量是否正确配置；如果是 Pages 前端部署并且请求打到了错误地址，则继续看下方 Pages 相关排障 |

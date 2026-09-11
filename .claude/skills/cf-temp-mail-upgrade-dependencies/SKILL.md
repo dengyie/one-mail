@@ -5,7 +5,7 @@ description: Upgrade npm dependencies across all sub-packages of the project. Us
 
 # Upgrade Dependencies
 
-Upgrade npm dependencies for the cloudflare_temp_email sub-packages.
+Upgrade npm dependencies for the one-mail sub-packages.
 
 ## How to run
 

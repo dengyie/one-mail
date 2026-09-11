@@ -10,7 +10,7 @@
 
 > **统一收件箱**：把分散在多个邮箱（QQ / 163 / Gmail / Outlook…）的邮件，经 **VPS 聚合器** 定时拉取汇聚到 Cloudflare Worker 的统一 API，再在前端集中查看验证码、登录确认等关键邮件。
 
-本项目基于 [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) fork，保留原项目的临时邮箱基座（Cloudflare Email Routing + Worker 收信 + Vue 前端），在这之上新增一套 **one-mail 统一收件箱**能力。
+本项目由团队**从零自主开发**，包含一套完整的临时邮箱基座（Cloudflare Email Routing + Worker 收信 + Vue 前端）与全新的 **one-mail 统一收件箱**能力。
 
 > 当前外部邮箱能力以**单向收件聚合**为主；已读回写、删除/归档/移动、外部账号身份发信、线程和完整附件能力仍在演进中。目标架构、分阶段计划与验收标准见 [统一邮箱开发设计](vitepress-docs/docs/zh/guide/feature/unified-mailbox-development.md)。
 
@@ -30,7 +30,7 @@ VPS Python 聚合器  aggregator/
 Cloudflare Worker ──mail-api.mangoqwq.cc.cd──> API (worker/)
    │  ├─ /api/unified/*       统一收件箱查询（API-key 鉴权）
    │  ├─ /admin/unified/*     统一收件箱管理/ingest（admin 鉴权）
-   │  └─ /api/* ·/user_api/* ·/admin/*  临时邮箱基座（上游能力）
+   │  └─ /api/* ·/user_api/* ·/admin/*  临时邮箱基座
    ▼
 前端（frontend/）  —  VITE_API_BASE 直连 Worker，前后端分离
 ```
@@ -44,8 +44,8 @@ Cloudflare Worker ──mail-api.mangoqwq.cc.cd──> API (worker/)
 | `frontend/` | Vue 3 + Naive UI | 邮箱管理界面，直连 Worker（前后端分离） |
 | `pages/` | 纯静态托管壳 | 可选静态托管模板（无 Functions，代理拓扑已删除） |
 | `db/` | D1 SQLite | unified schema（emails / mail_accounts / api_keys）+ 分片迁移 |
-| `mail-parser-wasm/` | Rust WASM | 邮件解析（上游基座） |
-| `smtp_proxy_server/` | Python | SMTP 发送 / IMAP 查看代理（上游基座，本地开发用） |
+| `mail-parser-wasm/` | Rust WASM | 邮件解析 |
+| `smtp_proxy_server/` | Python | SMTP 发送 / IMAP 查看代理（本地开发用） |
 
 ---
 
@@ -138,10 +138,8 @@ pnpm install && pnpm dev     # dev 代理到 127.0.0.1:8787
 
 - `CHANGELOG.md`（中文） / `CHANGELOG_EN.md`（English） — 版本变更
 - `docs/` — one-mail 专项设计与验收（含前后端分离、聚合器设计）
-- `vitepress-docs/` — 上游临时邮箱功能文档（附录）
+- `vitepress-docs/` — 临时邮箱功能文档（附录）
 
 ## 许可证
 
 [MIT](LICENSE)
-
-远程临时邮箱基座能力来自上游 [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email)；one-mail 统一收件箱为本仓库新增。

@@ -32,7 +32,7 @@ querystring = {
     "limit":"20",
     "offset":"0",
     # address is optional parameter
-    "address":"xxxx@awsl.uk"
+    "address":"xxxx@mangoqwq.cc.cd"
 }
 
 headers = {
@@ -201,7 +201,7 @@ querystring = {
     "limit":"20",
     "offset":"0",
     # address is optional parameter
-    "address":"xxxx@awsl.uk"
+    "address":"xxxx@mangoqwq.cc.cd"
 }
 
 headers = {

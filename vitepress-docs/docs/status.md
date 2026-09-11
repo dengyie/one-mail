@@ -1,8 +1,8 @@
-# Status Page
+# Service Status
 
-[Status Link](https://uptime.aks.awsl.icu/status/temp-email)
+| Service | URL |
+| ------- | --- |
+| Worker backend API | [https://mail-api.mangoqwq.cc.cd](https://mail-api.mangoqwq.cc.cd) |
+| Frontend (unified inbox) | [https://inbox.mangoqwq.com](https://inbox.mangoqwq.com) |
 
-| Service                                    | Status                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Backend](https://temp-email-api.awsl.uk/) | ![](https://uptime.aks.awsl.icu/api/badge/10/status) ![](https://uptime.aks.awsl.icu/api/badge/10/uptime) ![](https://uptime.aks.awsl.icu/api/badge/10/ping) ![](https://uptime.aks.awsl.icu/api/badge/10/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/10/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/10/response) |
-| [Frontend](https://mail.awsl.uk/)          | ![](https://uptime.aks.awsl.icu/api/badge/12/status) ![](https://uptime.aks.awsl.icu/api/badge/12/uptime) ![](https://uptime.aks.awsl.icu/api/badge/12/ping) ![](https://uptime.aks.awsl.icu/api/badge/12/avg-response) ![](https://uptime.aks.awsl.icu/api/badge/12/cert-exp) ![](https://uptime.aks.awsl.icu/api/badge/12/response) |
+> To add availability monitoring, plug in your own uptime service and embed its status badges on this page.

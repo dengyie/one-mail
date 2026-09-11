@@ -5,7 +5,7 @@
 
 ## UI 部署
 
-1. 下载 [worker-with-wasm-mail-parser.zip](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/worker-with-wasm-mail-parser.zip)
+1. 下载 [worker-with-wasm-mail-parser.zip](https://github.com/dengyie/one-mail/releases/latest/download/worker-with-wasm-mail-parser.zip)
 
 2. 回到 `Overview`，找到刚刚创建的 worker，点击 `Edit Code`, 删除原来的文件，上传 `worker.js` 和 `wasm` 后缀的文件, 点击 `Deploy`
 
@@ -14,7 +14,7 @@
     > 在文件列表的窗口里点击鼠标右键，在右键菜单里找到 `Upload`,
     > 请参考下面的截图
     >
-    > 参考: [issues156](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/156#issuecomment-2079453822)
+    > 参考: [issues156](https://github.com/dengyie/one-mail/issues/156#issuecomment-2079453822)
 
     ![worker2](/ui_install/worker-2.png)
     ![worker-upload](/ui_install/worker-upload.png)

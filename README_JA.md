@@ -10,7 +10,7 @@
 
 > **統合受信トレイ**: 複数のメールアカウント（QQ / 163 / Gmail / Outlook …）に散らばるメールを、**VPS 上のアグリゲーター** が定期的に取得して Cloudflare Worker の統一 API に集約。フロントエンドで、各メールボックスの認証コードやログイン確認メールをひとつの場所で確認できます。
 
-本プロジェクトは [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) のフォークです。元プロジェクトの一時メール基盤（Cloudflare Email Routing + Worker 受信 + Vue フロントエンド）を維持しつつ、その上に **one-mail 統合受信トレイ** の能力を追加しています。
+本プロジェクトはチームが**ゼロから自主開発**したもので、一時メール基盤（Cloudflare Email Routing + Worker 受信 + Vue フロントエンド）と、その上に **one-mail 統合受信トレイ** の能力を備えています。
 
 > 現時点の外部メール対応は主に**単方向の受信集約**です。既読の書き戻し、削除/アーカイブ/移動、外部アカウントとしての送信、スレッド、完全な添付ファイル処理は現在開発中です。目標アーキテクチャ、段階的計画、受け入れ基準は [統合メールボックス開発設計](vitepress-docs/docs/zh/guide/feature/unified-mailbox-development.md) を参照してください（中文）。
 
@@ -30,7 +30,7 @@ VPS Python アグリゲーター  aggregator/
 Cloudflare Worker ──mail-api.mangoqwq.cc.cd──> API (worker/)
    │  ├─ /api/unified/*        統合受信トレイ照会（API-key 認証）
    │  ├─ /admin/unified/*      管理 / ingest（admin 認証）
-   │  └─ /api/* ·/user_api/* ·/admin/*  一時メール基盤（上流機能）
+   │  └─ /api/* ·/user_api/* ·/admin/*  一時メール基盤
    ▼
 frontend/  —  VITE_API_BASE で Worker に直接接続（前後端分離）
 ```
@@ -44,8 +44,8 @@ frontend/  —  VITE_API_BASE で Worker に直接接続（前後端分離）
 | `frontend/` | Vue 3 + Naive UI | UI。Worker に直接接続 |
 | `pages/` | 静的シェル | 任意の静的ホスティング（Functions なし） |
 | `db/` | D1 SQLite | 統合スキーマ + マイグレーション |
-| `mail-parser-wasm/` | Rust WASM | メール解析（上流基盤） |
-| `smtp_proxy_server/` | Python | ローカル開発用 SMTP/IMAP プロキシ（上流基盤） |
+| `mail-parser-wasm/` | Rust WASM | メール解析 |
+| `smtp_proxy_server/` | Python | ローカル開発用 SMTP/IMAP プロキシ |
 
 ## 統合受信トレイ
 
@@ -101,10 +101,8 @@ pnpm install && pnpm dev
 
 - `CHANGELOG.md`（中文） / `CHANGELOG_EN.md`（English） — バージョン履歴
 - `docs/` — one-mail の設計・受け入れノート（前後端分離、アグリゲーター）
-- `vitepress-docs/` — 上流の一時メール機能ドキュメント（付録）
+- `vitepress-docs/` — 一時メール機能ドキュメント（付録）
 
 ## ライセンス
 
 [MIT](LICENSE)
-
-一時メール基盤の能力は上流 [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) に由来します。one-mail 統合受信トレイは本リポジトリの追加部分です。

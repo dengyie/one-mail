@@ -14,7 +14,7 @@
 ### worker 改造为继承 WorkerEntrypoint
 
 一个简单，作为被调用方，提供 rpc 方法调用的worker代码如下（rpcEmail 方法为样例）
-（使用已经修改好的项目 https://github.com/oneisall8955/AuthInbox-fork）  
+（可参考 auth-inbox 项目 https://github.com/TooonyChen/AuthInbox 的实现）  
 
 src/index.ts 文件
 ```js
@@ -49,7 +49,7 @@ export default class extends WorkerEntrypoint<Env> {
 
     // 暴露rpc接口，处理来自其他worker的邮件请求
     async rpcEmail(requestBody: string): Promise<void> {
-        console.log(`接受其他worker（临时邮件服务cloudflare_temp_email）的请求，request body: ${requestBody}`);
+        console.log(`接受其他worker（临时邮件服务one-mail）的请求，request body: ${requestBody}`);
         // requestBody json 格式，由临时邮件服务发送，格式如下
         // type RPCEmailMessage = {
         //     from: string | undefined | null,
@@ -64,7 +64,7 @@ export default class extends WorkerEntrypoint<Env> {
 
 ### 部署其他 worker
 
-修改好或者使用 以auth-inbox 为例，部署到 cloudflare worker 上，详见 https://github.com/TooonyChen/AuthInbox ，或者使用已经修改好的项目 https://github.com/oneisall8955/AuthInbox-fork
+修改好或者使用 以auth-inbox 为例，部署到 cloudflare worker 上，详见 https://github.com/TooonyChen/AuthInbox
 
 ## 配置临时邮件服务，使用指定其他 worker 增强
 

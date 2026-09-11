@@ -1,10 +1,10 @@
 {
   "name": "mail-parser-wasm-worker",
   "description": "A simple mail parser for worker",
-  "homepage": "https://github.com/dreamhunter2333/cloudflare_temp_email/tree/main/mail-parser-wasm",
+  "homepage": "https://github.com/dengyie/one-mail/tree/main/mail-parser-wasm",
   "repository": {
     "type": "git",
-    "url": "https://github.com/dreamhunter2333/cloudflare_temp_email",
+    "url": "https://github.com/dengyie/one-mail",
     "directory": "mail-parser-wasm"
   },
   "version": "0.2.2",

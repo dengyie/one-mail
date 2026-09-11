@@ -81,8 +81,15 @@ const send = async () => {
     }
 
     const subject = `${sendMailModel.value.subject ?? ''}`.trim()
-    const toMail = `${sendMailModel.value.toMail ?? ''}`.trim()
-    const content = `${sendMailModel.value.content ?? ''}`
+    const toMail = String(sendMailModel.value.toMail ?? '').trim()
+    const isHtml = sendMailModel.value.contentType != 'text'
+    // 发送前顶层防线：后端按 is_html=content 原样发出，rich/html 内容（含回信
+    // 引用、编辑器外来粘贴）在此统一过滤 javascript:/data:text/html/事件属性等，
+    // 与下方 safePreviewContent 同一策略，杜绝用户或编辑器片段带入收件人客户端。
+    // 纯文本按原样发送，不做 HTML 解析以免 `a < b` 之类的字面文本被误改。
+    const content = isHtml
+        ? sanitizeHtml(String(sendMailModel.value.content ?? ''))
+        : String(sendMailModel.value.content ?? '')
 
     if (!subject) {
         message.error(t('subjectEmpty'))
@@ -102,7 +109,7 @@ const send = async () => {
         to_name: sendMailModel.value.toName,
         to_mail: toMail,
         subject,
-        is_html: sendMailModel.value.contentType != 'text',
+        is_html: isHtml,
         content,
     }
 

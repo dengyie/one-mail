@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| 远程内容阻断补全：①统一收件箱详情页新增「加载图片」按封恢复按钮（`UnifiedInboxDetail.vue` 补 `showRemoteImages`/`allowRemote` 分支与告警条），与主阅读器一致；②回信/转发引用改走 `blockRemoteContent` 统一安全管道（`mail-actions.js`），远程/外部跟踪资源不再随引用进入回复；③发信 `send()` 发送前对 `html`/`rich` 正文统一 `sanitizeHtml` 兜底净化（`SendMail.vue`），杜绝 `javascript:`/`data:text/html`/事件属性经编辑器或回信片段带入收件人客户端，`text` 按原样以免字面 `<` 误解析；④`detail.htmlBlocked`/`remoteImagesBlocked` 文案统一。新增 `mail-actions.test.js`（6 项），`frontend/src/utils` 全量 92 单测通过。实现说明见 `docs/remote-content-blocking-completion.md`。
+
 - fix: |Worker| 外部邮件服务超时后的 reservation 进入 unknown/sent 状态；支持 `x-idempotency-key` 重放，未知结果返回 503 且不释放额度/余额，避免重试重复发送和额度绕过。新增迁移 `db/2026-09-09-send-mail-delivery-state.sql`。
 
 - fix: |Worker/Auth| 用户 JWT 与角色令牌现在同时校验 user_id + user_email；统一收件箱复用同一份已验证身份，防止删除最高用户 ID 后旧令牌在新用户复用 ID 时越权。
@@ -63,7 +65,7 @@
 - fix: |配额| I7e 邮件账号配额 TOCTOU 补偿（插入后重数超限则删行）；地址配额 accept-low（软配额，竞态超 1 有界）
 - fix: |前端| C3 退出登录清空全部鉴权凭据（adminAuth/auth/jwt/userJwt/oauth2 会话），修复共享设备残留可继续操作
 - fix: |Worker| 统一收件箱 scoped readonly key 越权读（C1 [安全]）：`inWhitelist` 原先对白名单已配置但行 `account_id`/`source` 为 `NULL`（或逗号拆后为空）直接放行（fail-open），可绕过 `allowed_accounts`/`allowed_sources` 读到非白名单行。改为 fail-closed：NULL/空行值一律拒绝；仅 `undefined`（请求未携带该维度参数）放行并交由 `scopeQuery` 注入白名单限定范围。`ingest.ts` 同步要求 `account_id` 非空，杜绝 NULL account 行入库（commit `f574b04`）
-- fix: |鉴权| 三个 `/open_api/*_login`（site/admin/credential）空 body 或非 JSON body 返回 500（`c.req.json()` 抛 `Unexpected end of JSON input`）。抽 `parseLoginBody` catch 成 `{}`，交由各路由既有的 `!password`/`!credential` 判定走 401——与密码错误同语义，不向探测者泄露 body 缺失 vs 密码错的区别。上游 cloudflare_temp_email 既有缺陷，非 review 引入。
+- fix: |鉴权| 三个 `/open_api/*_login`（site/admin/credential）空 body 或非 JSON body 返回 500（`c.req.json()` 抛 `Unexpected end of JSON input`）。抽 `parseLoginBody` catch 成 `{}`，交由各路由既有的 `!password`/`!credential` 判定走 401——与密码错误同语义，不向探测者泄露 body 缺失 vs 密码错的区别。既有缺陷，非 review 引入。
 - fix: |Worker| 行级鉴权独立入口加固（C1 review Important-2）：新增 `canAccessRow(key, source, accountId)` 供 getEmail 对单行 source/account 校验（`undefined` 也 fail-closed，避免 NULL DB 值被误转成 `undefined` 时静默重开 C1）；`canAccess` 保留请求级语义（middleware 未携带过滤参数 → 放行并交由 `scopeQuery` 注入白名单）。测试覆盖：行级 undefined/NULL/空串/越权全拒绝，未配置白名单时任意行可读语义不变
 - refactor: |Worker| 合并 `inWhitelist`/`inWhitelistRow` 双实现为单一 `inWhitelistImpl(list, val, failOnMissing)`（review Minor-3）：两个白名单校验此前是复制粘贴，仅 `undefined` 处理不同（请求级放行 / 行级拒绝）。合并后由 `failOnMissing` 布尔区分，避免两份逻辑漂移
 - fix: |Aggregator| `normalize._attachments` 对 `get_payload(decode=True)` 的异常无兜底，畸形 base64 附件的单条邮件可致整批 sync 崩溃、水印不推进、账号永久死锁（C3 [可靠性]）。与 `_bodies` 一致新增 `try/except` 容错跳过附件 + 回归测试（commit `f574b04`）
@@ -186,7 +188,7 @@
 
 - feat: |Frontend| 前端新增 6 国语言支持（`zh` / `en` / `es` / `pt-BR` / `ja` / `de`），默认语言保持为 `zh`；无 locale 前缀路由（如 `/`、`/user`）默认使用中文渲染，同时会记录浏览器语言作为语言偏好。用户手动切换后会持久化语言偏好，并保持当前页面路径、查询参数与 canonical locale URL 一致
 - feat: |API| 新增服务端解析邮件接口 `/api/parsed_mails` 与 `/api/parsed_mail/:id`，直接返回 `sender` / `subject` / `text` / `html` / `attachments` 元信息（复用 `commonParseMail`），AI agent 侧不再需要引入 MIME 解析器
-- feat: |Skill| 新增仓库内置只读 skill `cf-temp-mail-agent-mail`（`skills/cf-temp-mail-agent-mail/`），让 OpenClaw / Codex / Cursor 等 AI agent 凭用户提供的 Address JWT + API 地址读取邮箱、轮询验证码，绕开创建邮箱时的 Turnstile 人机验证；可通过 `npx degit dreamhunter2333/cloudflare_temp_email/skills/cf-temp-mail-agent-mail` 安装
+- feat: |Skill| 新增仓库内置只读 skill `cf-temp-mail-agent-mail`（`skills/cf-temp-mail-agent-mail/`），让 OpenClaw / Codex / Cursor 等 AI agent 凭用户提供的 Address JWT + API 地址读取邮箱、轮询验证码，绕开创建邮箱时的 Turnstile 人机验证；可通过 `npx degit dengyie/one-mail/skills/cf-temp-mail-agent-mail` 安装
 - docs: |文档| 新增"AI Agent 使用邮箱"文档（`guide/feature/agent-email`），说明 `parsed_mail` API 用法，并在 parsed API 不可用时给出对齐前端的 `mail-parser-wasm` + `postal-mime` 本地解析回退方案
 - docs: |文档| 在 `quick-start` / `worker-vars` / `email-routing` 三个入口文档（中英文）显式补充"域名是部署前提条件"提示，强调需先在 Cloudflare 启用 Email Routing 并下发邮件 DNS 记录、Worker 部署后再绑定 Catch-all，子域名需单独启用，避免用户在没有可用域名时直接开始部署却收不到邮件（issue #1004）
 - docs: |部署排障| 优化近期 issue 暴露的 UI 部署与升级排障文档：补充 `nodejs_compat`、D1 绑定名必须为 `DB`、`/open_api/settings` 校验、后端 API 地址填写、Cloudflare 安全挑战导致 `Network Error`、D1 容量上限与 Cron Trigger 自动清理、GitHub OAuth 公开邮箱、admin 管理口令与用户账号区别、随机二级域名 API 需传 `enableRandomSubdomain` 等说明；同时将帮助/FAQ 菜单移动到核心配置之后，提升可见性
@@ -532,7 +534,7 @@ UI 部署 worker 需要点击 Settings -> Runtime, 修改 Compatibility flags, �
 - feat: worker 增加 `ADDRESS_CHECK_REGEX`, address name 的正则表达式, 只用于检查，符合条件将通过检查
 - fix: UI 修复登录页面 tab 激活图标错位
 - fix: UI 修复 admin 页面刷新弹框输入密码的问题
-- feat: support `Oath2` 登录, 可以通过 `Github` `Authentik` 等第三方登录, 详情查看 [OAuth2 第三方登录](https://temp-mail-docs.awsl.uk/zh/guide/feature/user-oauth2.html)
+- feat: support `Oath2` 登录, 可以通过 `Github` `Authentik` 等第三方登录, 详情查看 [OAuth2 第三方登录](https://temp-mail-docs.pages.dev/zh/guide/feature/user-oauth2.html)
 
 ## v0.7.2
 
@@ -568,10 +570,10 @@ DB changes: 增加用户 `passkey` 表, 需要执行 `db/2024-08-10-patch.sql` �
 
 ## v0.6.1
 
-- pages github actions && 修复清理邮件天数为 0 不生效 by @tqjason (#355)
-- fix: imap proxy server 不支持 密码 by @dreamhunter2333 (#356)
-- worker 新增 `ANNOUNCEMENT` 配置, 用于配置公告信息 by @dreamhunter2333 (#357)
-- fix: telegram bot 新建地址默认选择第一个域名 by @dreamhunter2333 (#358)
+- pages github actions && 修复清理邮件天数为 0 不生效 (#355)
+- fix: imap proxy server 不支持 密码 (#356)
+- worker 新增 `ANNOUNCEMENT` 配置, 用于配置公告信息 (#357)
+- fix: telegram bot 新建地址默认选择第一个域名 (#358)
 
 ## v0.6.0
 
@@ -581,7 +583,7 @@ DB changes: 增加用户角色表, 需要执行 `db/2024-07-14-patch.sql` 更新
 
 ### Changes
 
-worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 具体查看文档 [worker配置](https://temp-mail-docs.awsl.uk/zh/guide/cli/worker.html#%E4%BF%AE%E6%94%B9-wrangler-toml-%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6)
+worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 具体查看文档 [worker配置](https://temp-mail-docs.pages.dev/zh/guide/cli/worker.html#%E4%BF%AE%E6%94%B9-wrangler-toml-%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6)
 
 - 移除 `apiV1` 相关代码和相关的数据库表
 - 更新 `admin/statistics` api, 添加用户统计信息
@@ -599,13 +601,13 @@ worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 
 - 修复 smtp imap proxy sever 的一些 bug
 - 完善用户/admin 删除收件箱/发件箱的功能
 - admin 可以删除 发件权限记录
-- 添加中文邮件别名配置 `DOMAIN_LABELS` [文档](https://temp-mail-docs.awsl.uk/zh/guide/cli/worker.html)
+- 添加中文邮件别名配置 `DOMAIN_LABELS` [文档](https://temp-mail-docs.pages.dev/zh/guide/cli/worker.html)
 - 移除 `mail channels` 相关代码
 - github actions 增加 `FRONTEND_BRANCH` 变量用于指定部署的分支 (#324)
 
 ## v0.5.1
 
-- 添加 `mail-parser-wasm-worker` 用于 worker 解析邮件, [文档](https://temp-mail-docs.awsl.uk/zh/guide/feature/mail_parser_wasm_worker.html)
+- 添加 `mail-parser-wasm-worker` 用于 worker 解析邮件, [文档](https://temp-mail-docs.pages.dev/zh/guide/feature/mail_parser_wasm_worker.html)
 - 添加校验用户邮箱长度配置 `MIN_ADDRESS_LEN` 和 `MAX_ADDRESS_LEN`
 - 修复 `pages function` 未转发 `telegram` api 问题
 
@@ -627,7 +629,7 @@ worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 
 - UI lazy load 懒加载
 - telegram bot 添加用户全局推送功能(admin 用户)
 - 增加对 cloudflare verified 用户发送邮件
-- 增加使用 `resend` 发送邮件, `resend` 提供 http 和 smtp api, 使用更加方便, 文档: https://temp-mail-docs.awsl.uk/zh/guide/config-send-mail.html
+- 增加使用 `resend` 发送邮件, `resend` 提供 http 和 smtp api, 使用更加方便, 文档: https://temp-mail-docs.pages.dev/zh/guide/config-send-mail.html
 
 ## v0.4.4
 
@@ -650,28 +652,28 @@ worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 
 - UI: 发件箱也采用左右分栏显示(类似收件箱)
 - `SMTP IMAP Proxy` 添加发件箱查看
 
-* feat: telegram bot TelegramSettings && webhook by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/244
-* fix build by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/245
-* feat: UI changes by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/247
-* feat: SMTP IMAP Proxy: add sendbox && UI: sendbox use split view by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/248
+* feat: telegram bot TelegramSettings && webhook in https://github.com/dengyie/one-mail/pull/244
+* fix build in https://github.com/dengyie/one-mail/pull/245
+* feat: UI changes in https://github.com/dengyie/one-mail/pull/247
+* feat: SMTP IMAP Proxy: add sendbox && UI: sendbox use split view in https://github.com/dengyie/one-mail/pull/248
 
 ## v0.4.2
 
 - 修复 smtp imap proxy sever 的一些 bug
 - 修复 UI 界面文字错误, 界面增加版本号
-- 增加  telegram bot 文档 https://temp-mail-docs.awsl.uk/zh/guide/feature/telegram.html
+- 增加  telegram bot 文档 https://temp-mail-docs.pages.dev/zh/guide/feature/telegram.html
 
-* fix: imap server by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/227
-* fix: Maintenance wrong label by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/229
-* feat: add version for frontend && backend by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/230
-* feat: add page functions proxy to make response faster by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/234
-* feat: add about page by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/235
-* feat: remove mailV1Alert && fix mobile showSideMargin by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/236
-* feat: telegram bot by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/238
-* fix: remove cleanup address due to many table need to be clean by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/240
-* feat: docs: Telegram Bot by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/241
-* fix: smtp_proxy: cannot decode 8bit && tg bot new random address by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/242
-* fix: smtp_proxy: update raise imap4.NoSuchMailbox by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/243
+* fix: imap server in https://github.com/dengyie/one-mail/pull/227
+* fix: Maintenance wrong label in https://github.com/dengyie/one-mail/pull/229
+* feat: add version for frontend && backend in https://github.com/dengyie/one-mail/pull/230
+* feat: add page functions proxy to make response faster in https://github.com/dengyie/one-mail/pull/234
+* feat: add about page in https://github.com/dengyie/one-mail/pull/235
+* feat: remove mailV1Alert && fix mobile showSideMargin in https://github.com/dengyie/one-mail/pull/236
+* feat: telegram bot in https://github.com/dengyie/one-mail/pull/238
+* fix: remove cleanup address due to many table need to be clean in https://github.com/dengyie/one-mail/pull/240
+* feat: docs: Telegram Bot in https://github.com/dengyie/one-mail/pull/241
+* fix: smtp_proxy: cannot decode 8bit && tg bot new random address in https://github.com/dengyie/one-mail/pull/242
+* fix: smtp_proxy: update raise imap4.NoSuchMailbox in https://github.com/dengyie/one-mail/pull/243
 
 ### v0.4.1
 
@@ -680,16 +682,12 @@ worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 
 - 添加 `IMAP proxy` 服务，支持 `IMAP` 查看邮件
 - UI 界面增加版本号显示
 
-* feat: use common function handleListQuery when query by page by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/220
-* fix: typos by @lwd-temp in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/221
-* fix: name max 30 && /external/api/send_mail not return result by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/222
-* fix: smtp_proxy_server support decode from mail charset by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/223
-* feat: add imap proxy server by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/225
-* feat: UI show version by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/226
-
-### New Contributors
-
-* @lwd-temp made their first contribution in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/221
+* feat: use common function handleListQuery when query by page in https://github.com/dengyie/one-mail/pull/220
+* fix: typos in https://github.com/dengyie/one-mail/pull/221
+* fix: name max 30 && /external/api/send_mail not return result in https://github.com/dengyie/one-mail/pull/222
+* fix: smtp_proxy_server support decode from mail charset in https://github.com/dengyie/one-mail/pull/223
+* feat: add imap proxy server in https://github.com/dengyie/one-mail/pull/225
+* feat: UI show version in https://github.com/dengyie/one-mail/pull/226
 
 ## v0.4.0
 
@@ -719,14 +717,14 @@ worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 
 - 修复删除地址时邮件未删除的BUG #213
 - UI 增加全局标签页位置配置, 侧边距配置
 
-* feat: update docs by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/204
-* feat: add Deploy to Cloudflare Workers button by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/205
-* feat: add Deploy to Cloudflare Workers docs by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/206
-* feat: add UserLogin by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/209
-* feat: admin search mailbox && fix generateName multi dot && user jwt exp in 30 days && UI globalTabplacement && useSideMargin by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/214
-* feat: UI check openSettings in Login page by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/215
-* feat: UI move AdminContact to common by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/217
-* feat: docs by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/218
+* feat: update docs in https://github.com/dengyie/one-mail/pull/204
+* feat: add Deploy to Cloudflare Workers button in https://github.com/dengyie/one-mail/pull/205
+* feat: add Deploy to Cloudflare Workers docs in https://github.com/dengyie/one-mail/pull/206
+* feat: add UserLogin in https://github.com/dengyie/one-mail/pull/209
+* feat: admin search mailbox && fix generateName multi dot && user jwt exp in 30 days && UI globalTabplacement && useSideMargin in https://github.com/dengyie/one-mail/pull/214
+* feat: UI check openSettings in Login page in https://github.com/dengyie/one-mail/pull/215
+* feat: UI move AdminContact to common in https://github.com/dengyie/one-mail/pull/217
+* feat: docs in https://github.com/dengyie/one-mail/pull/218
 
 ## v0.3.3
 
@@ -744,9 +742,9 @@ worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 
 - 添加定时清理功能，可在 admin 页面配置（需要在配置文件启用定时任务）
 - 修复删除账户无反应的问题
 
-* feat: UI: MailBox add reply button by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/187
-* feat: add cron auto clean up by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/189
-* fix: delete account by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/190
+* feat: UI: MailBox add reply button in https://github.com/dengyie/one-mail/pull/187
+* feat: add cron auto clean up in https://github.com/dengyie/one-mail/pull/189
+* fix: delete account in https://github.com/dengyie/one-mail/pull/190
 
 ## v0.3.1
 
@@ -766,15 +764,15 @@ worker 配置文件新增 `DEFAULT_DOMAINS`, `USER_ROLES`, `USER_DEFAULT_ROLE`, 
 - UI 允许用户切换邮件展示模式 `v-html` / `iframe`
 - 添加 `admin` 账户配置页面，支持配置用户注册名称黑名单
 
-* feat: support admin create address && add ENABLE_USER_CREATE_EMAIL co… by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/175
-* feat: add SMTP proxy server by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/177
-* fix: cf ui var is string by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/178
-* fix: UI mailbox 100vh to 80vh by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/179
-* fix: smtp_proxy_server hostname && add docker image for linux/arm64 by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/180
-* fix: some browser do not support wasm by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/182
-* feat: add COPYRIGHT by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/183
-* feat: UI: add user page: useIframeShowMail && mailboxSplitSize by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/184
-* feat: add address_block_list for new address by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/185
+* feat: support admin create address && add ENABLE_USER_CREATE_EMAIL co… in https://github.com/dengyie/one-mail/pull/175
+* feat: add SMTP proxy server in https://github.com/dengyie/one-mail/pull/177
+* fix: cf ui var is string in https://github.com/dengyie/one-mail/pull/178
+* fix: UI mailbox 100vh to 80vh in https://github.com/dengyie/one-mail/pull/179
+* fix: smtp_proxy_server hostname && add docker image for linux/arm64 in https://github.com/dengyie/one-mail/pull/180
+* fix: some browser do not support wasm in https://github.com/dengyie/one-mail/pull/182
+* feat: add COPYRIGHT in https://github.com/dengyie/one-mail/pull/183
+* feat: UI: add user page: useIframeShowMail && mailboxSplitSize in https://github.com/dengyie/one-mail/pull/184
+* feat: add address_block_list for new address in https://github.com/dengyie/one-mail/pull/185
 
 ## v0.3.0
 
@@ -800,11 +798,11 @@ set
 - `admin` 发件权限页面支持搜索地址
 - `admin` 邮件页面使用左右分栏 UI
 
-* feat: remove PREFIX logic in db by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/171
-* feat: admin page add account mail count && sendbox default all && sen… by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/172
-* feat: all mail use MailBox Component by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/173
+* feat: remove PREFIX logic in db in https://github.com/dengyie/one-mail/pull/171
+* feat: admin page add account mail count && sendbox default all && sen… in https://github.com/dengyie/one-mail/pull/172
+* feat: all mail use MailBox Component in https://github.com/dengyie/one-mail/pull/173
 
-**Full Changelog**: https://github.com/dreamhunter2333/cloudflare_temp_email/compare/0.2.10...v0.3.0
+**Full Changelog**: https://github.com/dengyie/one-mail/compare/0.2.10...v0.3.0
 
 ## v0.2.10
 
@@ -813,8 +811,8 @@ set
 - fetchAddressError 提示改进
 - 自动刷新显示倒计时
 
-* feat: docs update by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/165
-* feat: add ENABLE_USER_DELETE_EMAIL && ENABLE_AUTO_REPLY && modify fetchAddressError i18n && UI: show autoRefreshInterval by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/169
+* feat: docs update in https://github.com/dengyie/one-mail/pull/165
+* feat: add ENABLE_USER_DELETE_EMAIL && ENABLE_AUTO_REPLY && modify fetchAddressError i18n && UI: show autoRefreshInterval in https://github.com/dengyie/one-mail/pull/169
 
 ## v0.2.9
 
@@ -830,11 +828,11 @@ set
 - 添加 RATE_LIMITER 限流 发送邮件 和 新建地址
 - 一些 bug 修复
 
-- feat: allow user delete mail && notify when send access changed by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/132
-- feat: requset_send_mail_access default 1 balance by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/143
-- fix: RATE_LIMITER not call jwt by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/146
-- fix: delete_address not delete address_sender by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/153
-- fix: send_balance not update when click sendmail by @dreamhunter2333 in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/155
+- feat: allow user delete mail && notify when send access changed in https://github.com/dengyie/one-mail/pull/132
+- feat: requset_send_mail_access default 1 balance in https://github.com/dengyie/one-mail/pull/143
+- fix: RATE_LIMITER not call jwt in https://github.com/dengyie/one-mail/pull/146
+- fix: delete_address not delete address_sender in https://github.com/dengyie/one-mail/pull/153
+- fix: send_balance not update when click sendmail in https://github.com/dengyie/one-mail/pull/155
 
 ## v0.2.7
 

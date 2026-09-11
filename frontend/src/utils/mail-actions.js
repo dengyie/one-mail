@@ -1,4 +1,4 @@
-import DOMPurify from 'dompurify';
+import { blockRemoteContent } from './remote-content-policy';
 
 /**
  * HTML-escape special characters for plain text content.
@@ -15,10 +15,16 @@ function escapeHtml(str) {
 
 /**
  * Sanitize mail content: HTML-escape plain text, whitelist-sanitize HTML.
+ *
+ * Quoting a mail (reply/forward) must go through the same security boundary as
+ * rendering it: blockRemoteContent strips remote resources (tracking pixels,
+ * external CSS url()s) and XSS surfaces, keeping only provably-local refs. This
+ * prevents remote tracking images from being carried into a reply and loaded by
+ * the recipient's client once sent.
  */
 function sanitizeContent(mail) {
   if (mail.message) {
-    return DOMPurify.sanitize(mail.message);
+    return blockRemoteContent(mail.message).html;
   }
   if (mail.text) {
     return escapeHtml(mail.text);

@@ -5,6 +5,7 @@
 - 需要一个 GitHub 账户
 - 良好的网络环境
 
-## Fork 仓库
+## 获取仓库
 
-- 在 GitHub fork [本仓库](https://github.com/dreamhunter2333/cloudflare_temp_email.git)
+- 将本仓库推送到你自己拥有的 GitHub 仓库（或直接使用当前仓库）
+- 确保仓库已公开或对你的部署环境可访问

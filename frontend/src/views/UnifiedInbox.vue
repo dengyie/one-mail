@@ -682,7 +682,7 @@ const status = ref({ emails: 0, unread: 0, sources: [], accounts: [] })
 const statusLoading = ref(false)
 const statusError = ref('')
 const lastRefresh = ref(null)
-// This records the last successful read from the unified API, not upstream sync time.
+// This records the last successful read from the unified API, not the last scheduled sync time.
 const lastLoaded = ref(null)
 
 const loadStatus = async () => {

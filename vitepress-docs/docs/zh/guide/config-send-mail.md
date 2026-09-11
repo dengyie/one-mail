@@ -52,7 +52,7 @@ send_email = [
 > Resend 域名验证的 CNAME 记录**必须设置为 仅 DNS**（灰云），在
 > Cloudflare DNS 控制面板中代理（橙云）记录会阻止 Resend
 > 完成验证，且一次失败的尝试可能需要数小时才能重试。
-> 参见 [#515](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/515)。
+> 参见 [#515](https://github.com/dengyie/one-mail/issues/515)。
 
 `API KEYS` 页面创建 `api key`
 
@@ -72,8 +72,8 @@ wrangler secret put RESEND_TOKEN
 如果你有多个域名，对应不同的 `api key`，可以在 `wrangler.toml` 中添加多个 secret, 名称为 `RESEND_TOKEN_` + `<. 换成 _ 的 大写域名>`,例如
 
 ```bash
-wrangler secret put RESEND_TOKEN_XXX_COM
-wrangler secret put RESEND_TOKEN_DREAMHUNTER2333_XYZ
+wrangler secret put RESEND_TOKEN_YOUR_DOMAIN_COM
+wrangler secret put RESEND_TOKEN_MAIL_YOUR_DOMAIN_COM
 ```
 
 ## 使用 SMTP 发送邮件
