@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+    DEFAULT_MAX_ADDRESS_COUNT,
     DEFAULT_MAX_MAIL_ACCOUNTS,
     DEFAULT_MAX_UNIFIED_PAGE_SIZE,
     HARD_MAX_UNIFIED_PAGE_SIZE,
@@ -34,6 +35,7 @@ test("normal users receive finite default mail service quotas", async () => {
     assert.equal(await getMaxMailAccountCount(c, "user"), DEFAULT_MAX_MAIL_ACCOUNTS);
     assert.equal(await getMaxUnifiedPageSize(c, "user"), DEFAULT_MAX_UNIFIED_PAGE_SIZE);
     assert.deepEqual(await getMailServiceQuota(c, "user"), {
+        maxAddressCount: DEFAULT_MAX_ADDRESS_COUNT,
         maxMailAccountCount: DEFAULT_MAX_MAIL_ACCOUNTS,
         maxUnifiedPageSize: DEFAULT_MAX_UNIFIED_PAGE_SIZE,
     });
@@ -42,23 +44,27 @@ test("normal users receive finite default mail service quotas", async () => {
 test("role-specific finite mail service quotas are applied", async () => {
     const c = makeCtx({
         roleConfig: JSON.stringify({
-            pro: { maxMailAccountCount: 20, maxUnifiedPageSize: 80 },
+            pro: { maxAddressCount: 30, maxMailAccountCount: 20, maxUnifiedPageSize: 80 },
         }),
     });
-    assert.equal(await getMaxMailAccountCount(c, "pro"), 20);
-    assert.equal(await getMaxUnifiedPageSize(c, "pro"), 80);
+    assert.deepEqual(await getMailServiceQuota(c, "pro"), {
+        maxAddressCount: 30,
+        maxMailAccountCount: 20,
+        maxUnifiedPageSize: 80,
+    });
 });
 
-test("admin bypasses business account quota but keeps Worker hard page ceiling", async () => {
+test("admin bypasses business quantity quotas but keeps Worker hard page ceiling", async () => {
     const c = makeCtx({
         adminRole: "admin",
         roleConfig: JSON.stringify({
-            admin: { maxMailAccountCount: 1, maxUnifiedPageSize: 1 },
+            admin: { maxAddressCount: 1, maxMailAccountCount: 1, maxUnifiedPageSize: 1 },
         }),
     });
     assert.equal(await getMaxMailAccountCount(c, "admin"), 0);
     assert.equal(await getMaxUnifiedPageSize(c, "admin"), HARD_MAX_UNIFIED_PAGE_SIZE);
     assert.deepEqual(await getMailServiceQuota(c, "admin"), {
+        maxAddressCount: 0,
         maxMailAccountCount: 0,
         maxUnifiedPageSize: HARD_MAX_UNIFIED_PAGE_SIZE,
     });
