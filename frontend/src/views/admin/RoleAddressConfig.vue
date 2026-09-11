@@ -10,6 +10,7 @@ const { loading } = useGlobalState()
 const message = useMessage()
 
 const { t } = useScopedI18n('views.admin.RoleAddressConfig')
+const finiteQuotaLabel = (key) => t(key).replace(/\s*[（(]0[^）)]*[）)]\s*$/u, '')
 
 const systemRoles = ref([])
 const tableData = ref([])
@@ -85,7 +86,7 @@ const columns = [
         }
     },
     {
-        title: t('maxAddressCount'),
+        title: finiteQuotaLabel('maxAddressCount'),
         key: 'max_address_count',
         render(row) {
             return h(NInputNumber, {
@@ -102,7 +103,7 @@ const columns = [
         }
     },
     {
-        title: t('maxMailAccountCount'),
+        title: finiteQuotaLabel('maxMailAccountCount'),
         key: 'max_mail_account_count',
         render(row) {
             return h(NInputNumber, {
@@ -128,10 +129,6 @@ onMounted(async () => {
 
 <template>
     <div style="margin-top: 10px;">
-        <n-alert type="info" :bordered="false" style="margin-bottom: 20px;">
-            {{ t('roleConfigDesc') }}
-        </n-alert>
-
         <n-alert v-if="systemRoles.length === 0" type="warning" :bordered="false">
             {{ t('noRolesAvailable') }}
         </n-alert>
