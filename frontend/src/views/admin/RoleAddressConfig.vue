@@ -90,7 +90,7 @@ const columns = [
         render(row) {
             return h(NInputNumber, {
                 value: row.max_address_count,
-                min: 0,
+                min: 1,
                 max: 999,
                 clearable: true,
                 placeholder: t('notConfigured'),
@@ -107,7 +107,7 @@ const columns = [
         render(row) {
             return h(NInputNumber, {
                 value: row.max_mail_account_count,
-                min: 0,
+                min: 1,
                 max: 999,
                 clearable: true,
                 placeholder: t('notConfiguredMailAccount'),
