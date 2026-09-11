@@ -1,11 +1,10 @@
 import { Context, Hono } from "hono";
 import { handleListQuery, commonGetUserRole } from "../common";
-import { buildEmailFilters } from "./unified_query";
 import { ingestHandler } from "./ingest";
 import { countEmails, statsEmails, verifCodes, markRead, toggleStar, getMetaOptions } from "./extra_endpoints";
 import { createKey } from "./key_admin";
-import { lookupKey, canAccess, userAddressScope } from "./api_keys";
-import { resolveScope, checkRowAccess } from "./auth_scope";
+import { lookupKey, canAccess } from "./api_keys";
+import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
 import mail_accounts from "../user_api/mail_accounts";
 import {
     DEFAULT_MAX_UNIFIED_PAGE_SIZE,
@@ -17,8 +16,8 @@ const api = new Hono<HonoCustomType>();
 
 // 双通道鉴权：
 //  1) x-user-token（用户登录，浏览器 UI 主路径）：解析 userPayload，按 ADMIN_USER_ROLE
-//     判定管理员；管理员看全部，普通用户注入 to_addr 归属作用域。
-//  2) Authorization: Bearer <api-key>（程序化访问，原逻辑不变）：lookupKey + canAccess。
+//     判定管理员；普通用户的租户边界在 SQL 中按 account/address ownership 强制执行。
+//  2) Authorization: Bearer <api-key>（程序化访问）：lookupKey + source/account 白名单。
 // 两者都缺 → 401。用户 token 优先（同时存在时，浏览器语义以登录身份为准）。
 api.use("/api/unified/*", async (c, next) => {
     const userToken = c.req.raw.headers.get("x-user-token");
@@ -30,17 +29,11 @@ api.use("/api/unified/*", async (c, next) => {
             return c.json({ error: "invalid user token" }, 401);
         }
         try {
-            // 角色只查一次并放入上下文：权限和资源配额必须使用同一事实来源，
-            // 避免一个请求内角色变化造成「管理员判定」与「配额判定」不一致。
+            // 角色只查一次并放入上下文：权限和资源配额必须使用同一事实来源。
+            // 不再预取用户所有地址/邮箱账号，避免随着租户资源增加构造越来越大的 IN 列表。
             const userRole = (await commonGetUserRole(c, payload.user_id))?.role ?? null;
-            // 管理员判定：role_text == ADMIN_USER_ROLE（环境变量）。未配置 ADMIN_USER_ROLE
-            // 时任何用户都不算管理员，落到普通用户的 to_addr 作用域。
             const isAdmin = !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
-            let toAddrScope: string | undefined;
-            if (!isAdmin) {
-                toAddrScope = await userAddressScope(c.env.DB, payload.user_id);
-            }
-            c.set("unifiedUserAuth", { userPayload: payload, isAdmin, userRole, toAddrScope });
+            c.set("unifiedUserAuth", { userPayload: payload, isAdmin, userRole });
             await next();
             return;
         } catch {
@@ -69,7 +62,6 @@ const getUnifiedPageQuota = async (c: Context<HonoCustomType>): Promise<number> 
         return getMaxUnifiedPageSize(c, userAuth.userRole);
     }
     // API key 没有用户 role：admin key 使用 Worker 硬上限，readonly key 使用普通用户默认值。
-    // 这样所有非管理员入口都有限额，而不会另造一套持久化 quota 配置。
     return c.get("apiKey")?.role === "admin"
         ? HARD_MAX_UNIFIED_PAGE_SIZE
         : DEFAULT_MAX_UNIFIED_PAGE_SIZE;
@@ -87,9 +79,7 @@ const listEmails = async (c: Context<HonoCustomType>) => {
         }, 400);
     }
 
-    const q = await resolveScope(c, rest);
-    if (q === null) return c.json({ results: [], count: 0 });
-    const { where, params } = buildEmailFilters(q);
+    const { where, params } = await resolveScopedEmailFilter(c, rest);
     return handleListQuery(c,
         `SELECT id,source,account_id,from_addr,to_addr,subject,COALESCE(internal_date, received_at) as received_at,internal_date,is_read,is_starred,attachments_json FROM emails WHERE ${where}`,
         `SELECT count(*) as count FROM emails WHERE ${where}`,

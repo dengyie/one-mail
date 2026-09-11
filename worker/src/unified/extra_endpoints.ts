@@ -1,6 +1,5 @@
 import { Context } from "hono";
-import { buildEmailFilters } from "./unified_query";
-import { resolveScope, checkRowAccess } from "./auth_scope";
+import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
 import { extractVerifCode } from "./verifcode";
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
@@ -15,18 +14,14 @@ const intOr400 = (c: Context<HonoCustomType>, v: string | undefined, fallback: n
 };
 
 export const countEmails = async (c: Context<HonoCustomType>) => {
-    const q = await resolveScope(c, c.req.query());
-    if (q === null) return c.json({ count: 0 });
-    const { where, params } = buildEmailFilters(q);
+    const { where, params } = await resolveScopedEmailFilter(c, c.req.query());
     const count = await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${where}`)
         .bind(...params).first("count");
     return c.json({ count });
 };
 
 export const statsEmails = async (c: Context<HonoCustomType>) => {
-    const q = await resolveScope(c, c.req.query());
-    if (q === null) return c.json({ count: 0, unread: 0 });
-    const { where, params } = buildEmailFilters(q);
+    const { where, params } = await resolveScopedEmailFilter(c, c.req.query());
     const row = await c.env.DB.prepare(
         `SELECT count(*) as count,
                 COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread
@@ -42,11 +37,8 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
     const addr = q.addr;
     if (!addr) return c.json({ error: "addr required" }, 400);
-    // 注入鉴权作用域（用户 to_addr / API-key 白名单），并去掉透传的 addr（下方单独绑定）
-    const scoped = await resolveScope(c, { ...q, addr: undefined });
-    if (scoped === null) return c.json({ results: [] });
-    const { where, params } = buildEmailFilters(scoped);
-    if (!where) return c.json({ error: "unscoped" }, 400);
+    // 鉴权作用域直接进入 SQL；addr 仍作为业务过滤条件单独绑定。
+    const { where, params } = await resolveScopedEmailFilter(c, { ...q, addr: undefined });
     let freshMs = 10 * 60 * 1000;                        // 默认 10 分钟内
     try { freshMs = intOr400(c, q.fresh, freshMs); } catch { return c.json({ error: "invalid fresh" }, 400); }
     const since = Date.now() - freshMs;
@@ -63,7 +55,6 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
 
 export const markRead = async (c: Context<HonoCustomType>) => {
     const id = c.req.param("id");
-    // 先取行（含 to_addr/source/account_id 用于行级校验），不存在 → 404
     const row = await c.env.DB.prepare(
         `SELECT id, source, account_id, to_addr FROM emails WHERE id = ?`
     ).bind(id).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null } | null;
@@ -98,9 +89,7 @@ export const toggleStar = async (c: Context<HonoCustomType>) => {
 };
 
 export const getMetaOptions = async (c: Context<HonoCustomType>) => {
-    const q = await resolveScope(c, {});
-    if (q === null) return c.json({ sources: [], accounts: [], to_addrs: [] });
-    const { where, params } = buildEmailFilters(q);
+    const { where, params } = await resolveScopedEmailFilter(c, {});
     const { results } = await c.env.DB.prepare(
         `SELECT DISTINCT source, account_id, to_addr FROM emails WHERE ${where} LIMIT 200`
     ).bind(...params).all<{ source: string | null; account_id: string | null; to_addr: string | null }>();
@@ -110,5 +99,4 @@ export const getMetaOptions = async (c: Context<HonoCustomType>) => {
     const to_addrs = [...new Set(rows.map((r) => r.to_addr).filter(Boolean))];
     return c.json({ sources, accounts, to_addrs });
 };
-
 

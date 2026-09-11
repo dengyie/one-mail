@@ -48,6 +48,7 @@ async function createExternalAccount(
 
 test('deleting a user removes imported mail before the username is rebound', async ({ request }) => {
   const username = 'deleted-mail-' + Date.now() + '@external.test';
+  const headerRecipient = 'forwarded-alias-' + Date.now() + '@header.test';
   let originalUserSettings: Record<string, unknown> | undefined;
   let userA: TestUser | undefined;
   let userB: TestUser | undefined;
@@ -106,7 +107,9 @@ test('deleting a user removes imported mail before the username is rebound', asy
           source: 'imap_custom',
           account_id: accountId,
           from_addr: 'sender@external.test',
-          to_addr: username,
+          // Deliberately differs from account.username. External ownership must come
+          // from account_id, not a provider header/alias/forwarded recipient value.
+          to_addr: headerRecipient,
           subject: 'deleted-user-secret',
           text_body: 'must not survive deletion',
           html_body: '<p>must not survive deletion</p>',
@@ -122,9 +125,14 @@ test('deleting a user removes imported mail before the username is rebound', asy
       headers: { 'x-user-token': userA.jwt },
     });
     expect(beforeRes.ok()).toBe(true);
-    const beforeBody = await beforeRes.json() as { count: number; results: unknown[] };
+    const beforeBody = await beforeRes.json() as {
+      count: number;
+      results: Array<{ account_id?: string; to_addr?: string }>;
+    };
     expect(Number(beforeBody.count)).toBe(1);
     expect(beforeBody.results).toHaveLength(1);
+    expect(beforeBody.results[0].account_id).toBe(accountId);
+    expect(beforeBody.results[0].to_addr).toBe(headerRecipient);
 
     const revokedUserJwt = userA.jwt;
     const deleteARes = await request.delete(WORKER_URL + '/admin/users/' + userA.userId);
