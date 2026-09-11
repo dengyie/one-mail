@@ -8,7 +8,7 @@ _VALID_PROTOCOLS = {"imap", "pop3", "auto"}
 @dataclass
 class AccountConfig:
     id: str
-    source: str           # imap_gmail | imap_outlook | imap_qq | imap_163
+    source: str           # imap_gmail | imap_outlook | graph_outlook | imap_qq | imap_163
     host: str
     port: int
     username: str

@@ -190,6 +190,9 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
 
         # 启动新账号的 IDLE
         for acc in accounts:
+            # Graph API 账号没有 IMAP IDLE 连接，交给主循环的 Graph 轮询路径。
+            if acc.source == "graph_outlook":
+                continue
             # 协议必须不是纯 pop3，且若在 state 中已知 fallback 到 pop3 则跳过
             if acc.protocol == "pop3":
                 continue

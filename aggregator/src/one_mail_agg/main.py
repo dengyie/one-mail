@@ -7,6 +7,7 @@ from .config import load_config
 from .state import SyncState
 from .sync import sync_account, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
+from .graph_source import sync_graph
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .idle_worker import ensure_idle_workers
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
@@ -68,6 +69,15 @@ def run_once(config_path: str) -> dict:
                                    account.id, msg)
             continue
         try:
+            if account.source == "graph_outlook":
+                results[account.id] = sync_graph(account, config, state, config_path)
+                r = results[account.id]
+                log.info("synced %s: protocol=%s synced=%d dropped=%d",
+                         account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
+                state.record_success(account.id)
+                if is_user:
+                    report_sync_status(config.worker_base_url, config.admin_token, account.id, None)
+                continue
             factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
         except (KeyError, AttributeError, TypeError):
             provider = normalize_provider(
@@ -142,8 +152,11 @@ def run_daemon(config_path: str, poll_interval: int = 60) -> int:
                     continue
 
                 try:
-                    factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
-                    r = sync_account(factory, config, account, state)
+                    if account.source == "graph_outlook":
+                        r = sync_graph(account, config, state, config_path)
+                    else:
+                        factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
+                        r = sync_account(factory, config, account, state)
                     if r.get("synced", 0) > 0:
                         log.info("poll synced %s: protocol=%s synced=%d dropped=%d",
                                  account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
