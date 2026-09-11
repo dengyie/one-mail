@@ -42,7 +42,8 @@ test.describe('User address pagination', () => {
           ...originalUserSettings,
           enable: true,
           enableMailVerify: false,
-          maxAddressCount: 0,
+          // Tests need room for fixtures, but non-admin users must still have a finite quota.
+          maxAddressCount: 100,
         },
       });
       expect(enableUserRes.ok()).toBe(true);
