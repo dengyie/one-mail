@@ -48,16 +48,15 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
         }
     }
 
-    // Only backfill facts already guaranteed by the legacy model. imap_uid has
-    // always been protected by a partial UNIQUE index; copying it cannot merge
-    // unrelated rows. Never infer provider_message_id from RFC Message-ID or
-    // mutable metadata.
-    await db.exec(
+    // D1's exec() is primarily a script/DDL API and can split multiline UPDATE
+    // expressions unexpectedly. Use prepared single statements for data repair;
+    // this is also the path exercised by normal D1 query execution.
+    await db.prepare(
         `UPDATE emails
             SET source_key = imap_uid
           WHERE source_key IS NULL AND imap_uid IS NOT NULL`,
-    );
-    await db.exec(
+    ).run();
+    await db.prepare(
         `UPDATE emails
             SET provider = CASE
                 WHEN source = 'cf_routing' THEN 'native'
@@ -67,12 +66,12 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
                 ELSE provider
             END
           WHERE provider IS NULL`,
-    );
-    await db.exec(
+    ).run();
+    await db.prepare(
         `UPDATE emails
             SET source_folder = 'INBOX', sync_version = COALESCE(sync_version, 1)
           WHERE source = 'cf_routing' AND source_folder IS NULL`,
-    );
+    ).run();
 
     const folderTable = await db.prepare(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mail_account_folders'`,
