@@ -27,7 +27,7 @@ def test_classify_scopes():
 
 
 def test_build_account_graph_and_imap():
-    card = {"email": "bmifagjv86138@hotmail.com", "password": "pw",
+    card = {"email": "user1@hotmail.com", "password": "pw",
             "client_id": "cid", "refresh_token": "rt"}
     graph = msp.build_account(card, "graph_outlook")
     assert graph["source"] == "graph_outlook"

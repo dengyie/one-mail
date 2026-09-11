@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """卡商 MSA 卡一次性导入探测脚本（one-shot card probe）。
 
-背景（2026-09-11 bmifagjv86138 烧卡事故）
+背景（2026-09-11 烧卡事故）
 ------------------------------------------
 MSA/consumers 的 refresh_token 对兑换频率/轮换敏感：同一 RT 被**反复兑换**会触发
 吊销（AADSTS70000 invalid_grant），卡即报废。人工手搓 curl/python 验证 scope 是
@@ -25,15 +25,18 @@ MSA/consumers 的 refresh_token 对兑换频率/轮换敏感：同一 RT 被**�
 用法
 ----
     python3 aggregator/scripts/msa_card_probe.py \
-        "bmifagjv86138@hotmail.com----ZNqz*53A6c9----<client_id>----<refresh_token>"
+        "<email>----<password>----<client_id>----<refresh_token>"
 
     # 输出示例（graph-only 卡）：
     # PATH=graph_outlook
     # {
-    #   "id": "bmifagjv86138-hotmail",
+    #   "id": "<local>-hotmail",
     #   "source": "graph_outlook",
     #   ...
     # }
+
+⚠️ 凭据纪律：卡面原文/密码/RT 不得写进本仓库（public）或任何日志；只入
+Obsidian 私有 vault 与 pxed config.json（gitignored）。
 
 铁律
 ----
@@ -90,6 +93,7 @@ def save_state(email: str, state: dict) -> Path:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
         f.write("\n")
+    os.chmod(tmp, 0o600)  # 状态文件含明文密码/RT，绝不能落到组/全局可读
     os.replace(tmp, path)
     return path
 

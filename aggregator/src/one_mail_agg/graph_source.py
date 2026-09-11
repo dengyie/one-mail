@@ -32,7 +32,7 @@ def _persist_refresh_token(config_path: str, account_id: str, new_refresh_token:
 
     微软个人号（MSA/consumers）的 refresh_token 每次兑换都会轮换：响应里返回新的
     refresh_token，旧 token 随即失效。不落盘 = 下轮兑换 400 invalid_grant，账号
-    永久失联（2026-09-11 bmifagjv86138-hotmail 教训）。写回失败只告警不抛错：
+    永久失联（2026-09-11 烧卡事故教训）。写回失败只告警不抛错：
     本轮同步照常进行，但账号已处于倒计时，需要人工介入。
     """
     try:
