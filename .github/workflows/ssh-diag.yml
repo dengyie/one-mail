@@ -5,7 +5,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: Reproduce deploy SSH flow
+      - name: Structure-only diagnostics
         env:
           PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
           PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
@@ -14,19 +14,18 @@ jobs:
           PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
         run: |
           PORT="${PXED_SSH_PORT:-22}"
-          echo "port empty? ${#PXED_SSH_PORT} chars; key empty? ${#PXED_SSH_KEY} chars; kh empty? ${#PXED_SSH_KNOWN_HOSTS} chars"
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+          echo "host len=${#PXED_SSH_HOST} port len=${#PXED_SSH_PORT} kh len=${#PXED_SSH_KNOWN_HOSTS}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
           {
             printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "$PORT" "$PXED_SSH_KNOWN_HOSTS"
             printf '%s %s\n' "$PXED_SSH_HOST" "$PXED_SSH_KNOWN_HOSTS"
           } > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          echo "--- known_hosts validation (fingerprints per line) ---"
-          ssh-keygen -lf ~/.ssh/known_hosts || true
-          echo "--- line 1 fields (host masked by GitHub if secret) ---"
-          awk '{print "fields=" NF" type="$2}' ~/.ssh/known_hosts
-          USER="${PXED_SSH_USER:-root}"
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$PXED_SSH_HOST" hostname && echo SSH-OK || echo SSH-FAIL
+          echo "== field lengths per line (content withheld) =="
+          awk '{printf "line %d: NF=%d lens:", NR, NF; for (i=1;i<=NF;i++) printf " %d", length($i); print ""}' ~/.ssh/known_hosts
+          echo "== exact lookups =="
+          ssh-keygen -F "$PXED_SSH_HOST" -f ~/.ssh/known_hosts >/dev/null && echo FOUND-plain || echo NOTFOUND-plain
+          ssh-keygen -F "[${PXED_SSH_HOST}]:${PORT}" -f ~/.ssh/known_hosts >/dev/null && echo FOUND-bracket || echo NOTFOUND-bracket
+          echo "== server key check =="
+          printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes -o BatchMode=yes "${PXED_SSH_USER:-root}@$PXED_SSH_HOST" hostname && echo SSH-OK || echo SSH-FAIL
