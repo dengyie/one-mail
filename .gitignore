@@ -86,7 +86,7 @@ web_modules/
 # one-mail I1: frontend/.env.pages is a secret landing zone — never track (see frontend/.env.pages.example)
 frontend/.env.pages
 
-# parcel-bundler cache
+# parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
 
@@ -101,7 +101,7 @@ dist
 # Gatsby files
 .cache/
 # Comment in the public line in if your project uses Gatsby and not Next.js
-# https://github.com/zeit/next.js/pull/7009#issuecomment-471101572
+# https://nextjs.org/blog/next-9-1#public-directory-support
 # public
 
 # vuepress build output
