@@ -93,8 +93,8 @@ jobs:
       - name: Build Worker with wasm mail parser
         run: |
           cd worker
-          echo "Using mail-parser-wasm-worker"
-          pnpm add mail-parser-wasm-worker
+          echo "Using mail-parser-wasm-worker@0.2.2"
+          pnpm add mail-parser-wasm-worker@0.2.2 --save-exact
           git apply ../.github/config/mail-parser-wasm-worker.patch
           echo "Applied mail-parser-wasm-worker patch"
           pnpm build
