@@ -18,7 +18,7 @@ on:
 # D1 schema migration and Worker publication are one production transaction in
 # deployment order. Never let two main/tag deploys race ALTER/CREATE statements.
 concurrency:
-  group: deploy-backend-${{ github.ref }}
+  group: deploy-backend-production
   cancel-in-progress: false
 
 jobs:
