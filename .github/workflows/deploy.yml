@@ -107,17 +107,27 @@ jobs:
           PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
           PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
           PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          PXED_SSH_KNOWN_HOSTS: ${{ secrets.PXED_SSH_KNOWN_HOSTS }}
         run: |
           if [ -z "$PXED_SSH_KEY" ] || [ -z "$PXED_SSH_HOST" ]; then
             echo "::error::Missing PXED_SSH_KEY or PXED_SSH_HOST; refusing to report a successful deploy."
+            exit 1
+          fi
+          if [ -z "$PXED_SSH_KNOWN_HOSTS" ]; then
+            echo "::error::Missing PXED_SSH_KNOWN_HOSTS; refusing to deploy without a pinned SSH host key."
             exit 1
           fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${PXED_SSH_PORT:-22}" "$PXED_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          chmod 644 ~/.ssh/known_hosts
+          # Pin the host key from the secret for exactly the host:port CI uses.
+          # No runtime ssh-keyscan: a server presenting any other key fails closed.
+          {
+            printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "${PXED_SSH_PORT:-22}" "$PXED_SSH_KNOWN_HOSTS"
+            printf '%s %s\n' "$PXED_SSH_HOST" "$PXED_SSH_KNOWN_HOSTS"
+          } > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Upload & Extract Frontend dist on pxed
         env:
@@ -127,8 +137,8 @@ jobs:
         run: |
           PORT="${PXED_SSH_PORT:-22}"
           USER="${PXED_SSH_USER:-root}"
-          scp -O -P "$PORT" /tmp/one-mail-fe-dist.tgz "$USER@$PXED_SSH_HOST:/tmp/one-mail-fe-dist.tgz"
-          ssh -p "$PORT" "$USER@$PXED_SSH_HOST" "rm -rf /opt/one-mail-frontend/dist && mkdir -p /opt/one-mail-frontend/dist && tar xzf /tmp/one-mail-fe-dist.tgz -C /opt/one-mail-frontend/dist"
+          scp -O -P "$PORT" -o StrictHostKeyChecking=yes /tmp/one-mail-fe-dist.tgz "$USER@$PXED_SSH_HOST:/tmp/one-mail-fe-dist.tgz"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" "rm -rf /opt/one-mail-frontend/dist && mkdir -p /opt/one-mail-frontend/dist && tar xzf /tmp/one-mail-fe-dist.tgz -C /opt/one-mail-frontend/dist"
 
       - name: Health Check
         run: |
