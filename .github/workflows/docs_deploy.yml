@@ -15,7 +15,7 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        startsWith(github.event.workflow_run.head_branch, 'v'))
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -35,22 +35,32 @@ jobs:
           version: 10
           run_install: false
 
-      - name: Deploy Docs
+      - name: Install docs dependencies
+        run: pnpm --dir vitepress-docs install --no-frozen-lockfile
+
+      - name: Download frontend release artifact
+        run: wget https://github.com/dengyie/one-mail/releases/latest/download/frontend.zip -O vitepress-docs/docs/public/ui_install/frontend.zip
+
+      - name: Resolve release tag
+        id: release_tag
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          cd vitepress-docs/
-          wget https://github.com/dengyie/one-mail/releases/latest/download/frontend.zip -O docs/public/ui_install/frontend.zip
-          pnpm install --no-frozen-lockfile
           if TAG_NAME=$(gh release view --json tagName --jq '.tagName' 2>/dev/null); then
             echo "Using release tag $TAG_NAME"
           else
             TAG_NAME="${WORKFLOW_RUN_HEAD_BRANCH:-${GITHUB_REF_NAME:-main}}"
             echo "No GitHub release found for this repo; fallback TAG_NAME=$TAG_NAME"
           fi
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Docs
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TAG_NAME: ${{ steps.release_tag.outputs.tag_name }}
+        run: |
+          cd vitepress-docs/
           echo "Deploying docs for tag $TAG_NAME"
-          export TAG_NAME
           pnpm run deploy
