@@ -5,13 +5,12 @@ RUN corepack enable && corepack prepare pnpm@10.10.0 --activate
 
 WORKDIR /app
 
-# Build from the workspace manifests. Per-package lockfiles are intentionally not
-# tracked, so the Docker build must not fail before pnpm can resolve dependencies.
-COPY package.json pnpm-workspace.yaml ./
+# Build from the workspace manifests and the committed workspace lockfile.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY worker/package.json worker/package.json
 COPY worker/patches/ worker/patches/
 COPY packages/shared/package.json packages/shared/package.json
-RUN pnpm install --filter @one-mail/worker... --no-frozen-lockfile
+RUN pnpm install --filter @one-mail/worker... --frozen-lockfile
 
 COPY packages/shared/ packages/shared/
 RUN pnpm --filter @one-mail/shared build

@@ -35,7 +35,7 @@ jobs:
           run_install: false
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build @one-mail/shared
         run: pnpm --filter @one-mail/shared build

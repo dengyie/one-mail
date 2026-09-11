@@ -25,7 +25,7 @@ jobs:
           run_install: false
 
       - name: Install frontend dependencies
-        run: pnpm --dir frontend install --no-frozen-lockfile
+        run: pnpm --dir frontend install --frozen-lockfile
 
       - name: Deploy Frontend for ${{ github.ref_name }}
         if: ${{ env.FRONTEND_NAME != '' }}
@@ -66,7 +66,7 @@ jobs:
           run_install: false
 
       - name: Install frontend dependencies
-        run: pnpm --dir frontend install --no-frozen-lockfile
+        run: pnpm --dir frontend install --frozen-lockfile
 
       - name: Deploy Telegram Frontend for ${{ github.ref_name }}
         if: ${{ env.TG_FRONTEND_NAME != '' }}
