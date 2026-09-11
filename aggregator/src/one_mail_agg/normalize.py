@@ -32,6 +32,28 @@ def _header_json_stringify(v) -> str:
     return str(v)
 
 
+def _nullable_header(msg, name: str) -> str | None:
+    value = msg.get(name)
+    if value is None:
+        return None
+    text = _dec(value).strip()
+    return text or None
+
+
+def _references(msg) -> list[str] | None:
+    """Return RFC References tokens without inventing thread identity.
+
+    References is useful for later fallback threading, but it is not a provider
+    message/thread ID and therefore must never participate in provider-level
+    uniqueness. Multiple header lines are preserved in order.
+    """
+    refs: list[str] = []
+    for value in msg.get_all("References", []):
+        text = _dec(value).replace("\r", " ").replace("\n", " ")
+        refs.extend(token for token in text.split() if token)
+    return refs or None
+
+
 def _bodies(msg) -> tuple[str, str]:
     text, html = "", ""
     parts = msg.walk() if msg.is_multipart() else [msg]
@@ -72,12 +94,28 @@ def _attachments(msg) -> list[dict]:
     return out
 
 
+def _infer_provider(account: AccountConfig) -> str:
+    source = str(getattr(account, "source", "") or "").lower()
+    protocol = str(getattr(account, "protocol", "") or "").lower()
+    if source.startswith("graph_"):
+        return "graph"
+    if protocol == "pop3":
+        return "pop3"
+    return "imap"
+
+
 def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
                       uidvalidity: int, uid: int, internal_date_ms: int | None,
-                      now_ms: int = 0, imap_uid_override: str | None = None) -> dict:
+                      now_ms: int = 0, imap_uid_override: str | None = None,
+                      *, provider: str | None = None,
+                      provider_message_id: str | None = None,
+                      provider_thread_id: str | None = None,
+                      source_folder_id: str | None = None,
+                      source_key_override: str | None = None) -> dict:
     import time
     msg = message_from_bytes(raw_bytes)
     text, html = _bodies(msg)
+    attachments = _attachments(msg)
 
     # from_addr 兜底：worker ingest 契约要求 from_addr/to_addr 非空。
     # 缺 From 头 / 空 From / 解析出不含 @ 的伪地址 → 用整段头文本 / "unknown"
@@ -85,15 +123,17 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
     from_hdr = _dec(msg.get("From", ""))
     _parsed = parseaddr(from_hdr)[1]
     from_addr = _parsed if ("@" in _parsed) else (from_hdr or "unknown")
-    # to_addr 恒等于 account.username，不再取 To: 头。
-    # 归属语义：聚合器是用「该邮箱凭据」登录抓取的，抓到的所有邮件必然属于该
-    # 邮箱主人。统一收件箱按 to_addr 做归属隔离（resolveScope 把 to_addr IN 作用域
-    # 过滤给用户），若取 To: 头则 alias（user+tag@）、邮件列表转发、bcc、多收件人
-    # 等场景下 to_addr ≠ username → 邮件变孤儿（谁的 scope 都匹配不到），用户看不到
-    # 本该属于自己邮箱的邮件（可达性缺口，非泄漏——隔离层已拦住跨租户串看）。
-    # 固定取 username 保证每封抓回来的邮件都能被邮箱主人看到；原 To: 头仍在
-    # headers_json 里完整保留，展示需求不受影响。
+
+    # account_id is the authorization/tenant boundary. to_addr remains the
+    # connected mailbox address for compatibility and display, but it is never
+    # used to authorize an external mailbox message.
     to_addr = account.username
+    provider_name = provider or _infer_provider(account)
+    legacy_uid = imap_uid_override or make_imap_uid(
+        account.id, account.host, folder, uidvalidity, uid)
+    source_key = source_key_override or legacy_uid
+    refs = _references(msg)
+
     return {
         "source": account.source,
         "account_id": account.id,
@@ -109,7 +149,25 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
         ),
         "is_read": 0,
         "flags_json": "[]",
-        "attachments_json": json.dumps(_attachments(msg), ensure_ascii=False),
+        "attachments_json": json.dumps(attachments, ensure_ascii=False),
         "raw_ref": None,
-        "imap_uid": imap_uid_override or make_imap_uid(account.id, account.host, folder, uidvalidity, uid),
+        # Keep the legacy field for rolling deploys and old IMAP-proxy/API
+        # consumers. It is no longer the canonical cross-provider model.
+        "imap_uid": legacy_uid,
+        "provider": provider_name,
+        "source_folder": folder,
+        "source_folder_id": source_folder_id,
+        # Only callers that obtained a provider-stable ID may populate this.
+        # IMAP UID is intentionally never promoted into provider_message_id.
+        "provider_message_id": provider_message_id,
+        "provider_thread_id": provider_thread_id,
+        "message_id_header": _nullable_header(msg, "Message-ID"),
+        "in_reply_to": _nullable_header(msg, "In-Reply-To"),
+        "references_json": json.dumps(refs, ensure_ascii=False) if refs is not None else None,
+        "has_attachments": 1 if attachments else 0,
+        "source_key": source_key,
+        "sync_version": 1,
+        # Folder state is not an emails column; Worker consumes it while
+        # upserting mail_account_folders from the same ingest batch.
+        "source_uidvalidity": uidvalidity if provider_name == "imap" and uidvalidity > 0 else None,
     }
