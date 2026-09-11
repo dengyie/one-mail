@@ -39,17 +39,23 @@ const makeContext = ({ auth, apiKey, accountOwners = {}, nativeAddressOwners = {
   },
 });
 
-test("non-admin query is scoped by account ownership plus native-address ownership", async () => {
+test("non-admin query uses indexed account/address ownership sets", async () => {
   const c = makeContext({ auth: userAuth(42) });
   const filter = await resolveScopedEmailFilter(c, { source: "imap_gmail", unread: "1" });
 
   assert.match(filter.where, /source = \?/);
-  assert.match(filter.where, /user_mail_accounts uma/);
-  assert.match(filter.where, /uma\.id = emails\.account_id AND uma\.user_id = \?/);
+  assert.match(filter.where, /emails\.account_id IN/);
+  assert.match(filter.where, /SELECT uma\.id FROM user_mail_accounts uma/);
+  assert.match(filter.where, /uma\.user_id = \?/);
   assert.match(filter.where, /emails\.source = 'cf_routing'/);
-  assert.match(filter.where, /a\.name = emails\.to_addr/);
+  assert.match(filter.where, /emails\.to_addr IN/);
+  assert.match(filter.where, /SELECT a\.name FROM users_address ua/);
   assert.match(filter.where, /source_meta != 'external'/);
   assert.doesNotMatch(filter.where, /enabled\s*=\s*1/);
+  // Regression: the list scope must not become correlated against each email row,
+  // otherwise D1/SQLite falls back to scanning emails instead of using account/to_addr indexes.
+  assert.doesNotMatch(filter.where, /uma\.id\s*=\s*emails\.account_id/);
+  assert.doesNotMatch(filter.where, /a\.name\s*=\s*emails\.to_addr/);
   assert.deepEqual(filter.params, ["imap_gmail", 42, 42]);
 });
 
