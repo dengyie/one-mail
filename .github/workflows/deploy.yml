@@ -131,9 +131,22 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           # Pin the host key from the secret for exactly the host:port CI uses.
           # No runtime ssh-keyscan: a server presenting any other key fails closed.
+          # The secret may be a bare key ("ssh-ed25519 AAAA...") or full
+          # known_hosts line(s); take the key type + body from its last line.
+          KEY_LINE=$(printf '%s\n' "$PXED_SSH_KNOWN_HOSTS" | awk 'NF>=2 {line=$(NF-1)" "$NF} END{print line}')
+          if [ -z "$KEY_LINE" ]; then
+            echo "::error::PXED_SSH_KNOWN_HOSTS contains no SSH public key; refusing to deploy."
+            exit 1
+          fi
+          printf '%s\n' "$KEY_LINE" > /tmp/pinned_key
+          if ! ssh-keygen -lf /tmp/pinned_key >/dev/null 2>&1; then
+            echo "::error::PXED_SSH_KNOWN_HOSTS does not end with a valid SSH public key; refusing to deploy."
+            exit 1
+          fi
+          rm -f /tmp/pinned_key
           {
-            printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "${PXED_SSH_PORT:-22}" "$PXED_SSH_KNOWN_HOSTS"
-            printf '%s %s\n' "$PXED_SSH_HOST" "$PXED_SSH_KNOWN_HOSTS"
+            printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "${PXED_SSH_PORT:-22}" "$KEY_LINE"
+            printf '%s %s\n' "$PXED_SSH_HOST" "$KEY_LINE"
           } > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
