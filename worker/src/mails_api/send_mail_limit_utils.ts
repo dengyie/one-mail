@@ -440,20 +440,19 @@ const markBalanceReserved = async (c: Context<HonoCustomType>, id: string, addre
  * before a provider call. The INSERT ... SELECT guard and its triggers execute
  * as one SQLite write. D1 serializes writes to a database, so concurrent sends
  * cannot all pass a read-then-increment check. Failed/abandoned active rows are
- * released by the request path or by the scheduled reconciler.
+ * released by the request path or by the scheduled reconciler. Even when both
+ * quotas are disabled, the row is still required as the durable delivery-state
+ * record before provider dispatch begins.
  */
 export const reserveSendMailLimit = async (
     c: Context<HonoCustomType>,
     options: { idempotencyKey?: string; requestHash?: string } = {}
-): Promise<SendMailLimitReservation | null> => {
+): Promise<SendMailLimitReservation> => {
     const msgs = i18n.getMessagesbyContext(c);
     const config = await getStrictSendMailLimitConfig(c);
     const idempotencyKey = options.idempotencyKey?.trim() || null;
     const requestHash = options.requestHash || null;
     if (idempotencyKey && !requestHash) throw new SendMailIdempotencyConflictError();
-    if (!config || (!config.dailyEnabled && !config.monthlyEnabled)) {
-        if (!idempotencyKey) return null;
-    }
 
     const dailyLimit = config?.dailyEnabled &&
         config.dailyLimit !== null && config.dailyLimit !== -1
