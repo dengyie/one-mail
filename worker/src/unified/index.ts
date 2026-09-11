@@ -7,6 +7,11 @@ import { createKey } from "./key_admin";
 import { lookupKey, canAccess, userAddressScope } from "./api_keys";
 import { resolveScope, checkRowAccess } from "./auth_scope";
 import mail_accounts from "../user_api/mail_accounts";
+import {
+    DEFAULT_MAX_UNIFIED_PAGE_SIZE,
+    HARD_MAX_UNIFIED_PAGE_SIZE,
+    getMaxUnifiedPageSize,
+} from "../quota.ts";
 
 const api = new Hono<HonoCustomType>();
 
@@ -25,15 +30,17 @@ api.use("/api/unified/*", async (c, next) => {
             return c.json({ error: "invalid user token" }, 401);
         }
         try {
+            // 角色只查一次并放入上下文：权限和资源配额必须使用同一事实来源，
+            // 避免一个请求内角色变化造成「管理员判定」与「配额判定」不一致。
+            const userRole = (await commonGetUserRole(c, payload.user_id))?.role ?? null;
             // 管理员判定：role_text == ADMIN_USER_ROLE（环境变量）。未配置 ADMIN_USER_ROLE
             // 时任何用户都不算管理员，落到普通用户的 to_addr 作用域。
-            const isAdmin = !!c.env.ADMIN_USER_ROLE
-                && (await commonGetUserRole(c, payload.user_id))?.role === c.env.ADMIN_USER_ROLE;
+            const isAdmin = !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
             let toAddrScope: string | undefined;
             if (!isAdmin) {
                 toAddrScope = await userAddressScope(c.env.DB, payload.user_id);
             }
-            c.set("unifiedUserAuth", { userPayload: payload, isAdmin, toAddrScope });
+            c.set("unifiedUserAuth", { userPayload: payload, isAdmin, userRole, toAddrScope });
             await next();
             return;
         } catch {
@@ -56,8 +63,30 @@ api.use("/api/unified/*", async (c, next) => {
     await next();
 });
 
+const getUnifiedPageQuota = async (c: Context<HonoCustomType>): Promise<number> => {
+    const userAuth = c.get("unifiedUserAuth");
+    if (userAuth) {
+        return getMaxUnifiedPageSize(c, userAuth.userRole);
+    }
+    // API key 没有用户 role：admin key 使用 Worker 硬上限，readonly key 使用普通用户默认值。
+    // 这样所有非管理员入口都有限额，而不会另造一套持久化 quota 配置。
+    return c.get("apiKey")?.role === "admin"
+        ? HARD_MAX_UNIFIED_PAGE_SIZE
+        : DEFAULT_MAX_UNIFIED_PAGE_SIZE;
+};
+
 const listEmails = async (c: Context<HonoCustomType>) => {
     const { limit, offset, ...rest } = c.req.query();
+    const requestedLimit = typeof limit === "string" ? parseInt(limit, 10) : Number(limit);
+    const maxPageSize = await getUnifiedPageQuota(c);
+    if (Number.isFinite(requestedLimit) && requestedLimit > maxPageSize) {
+        return c.json({
+            error: "quota_exceeded",
+            quota: "maxUnifiedPageSize",
+            limit: maxPageSize,
+        }, 400);
+    }
+
     const q = await resolveScope(c, rest);
     if (q === null) return c.json({ results: [], count: 0 });
     const { where, params } = buildEmailFilters(q);
