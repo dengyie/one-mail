@@ -5,6 +5,7 @@ import { countEmails, statsEmails, verifCodes, markRead, toggleStar, getMetaOpti
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess } from "./api_keys";
 import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
+import { cursorPredicate, decodeEmailCursor, encodeEmailCursor } from "./cursor";
 import mail_accounts from "../user_api/mail_accounts";
 import {
     DEFAULT_MAX_UNIFIED_PAGE_SIZE,
@@ -13,6 +14,8 @@ import {
 } from "../quota.ts";
 
 const api = new Hono<HonoCustomType>();
+const UNIFIED_EMAIL_SELECT = `SELECT id,source,account_id,from_addr,to_addr,subject,COALESCE(internal_date, received_at) as received_at,internal_date,is_read,is_starred,attachments_json FROM emails`;
+const UNIFIED_EMAIL_ORDER = `COALESCE(internal_date, received_at) DESC, id DESC`;
 
 // 双通道鉴权：
 //  1) x-user-token（用户登录，浏览器 UI 主路径）：解析 userPayload，按 ADMIN_USER_ROLE
@@ -67,8 +70,14 @@ const getUnifiedPageQuota = async (c: Context<HonoCustomType>): Promise<number> 
         : DEFAULT_MAX_UNIFIED_PAGE_SIZE;
 };
 
+type UnifiedListRow = {
+    id: string;
+    received_at: number;
+    [key: string]: unknown;
+};
+
 const listEmails = async (c: Context<HonoCustomType>) => {
-    const { limit, offset, ...rest } = c.req.query();
+    const { limit, offset, cursor, ...rest } = c.req.query();
     const requestedLimit = typeof limit === "string" ? parseInt(limit, 10) : Number(limit);
     const maxPageSize = await getUnifiedPageQuota(c);
     if (Number.isFinite(requestedLimit) && requestedLimit > maxPageSize) {
@@ -79,11 +88,73 @@ const listEmails = async (c: Context<HonoCustomType>) => {
         }, 400);
     }
 
+    if (cursor && offset !== undefined) {
+        return c.json({ error: "cursor and offset are mutually exclusive" }, 400);
+    }
+
     const { where, params } = await resolveScopedEmailFilter(c, rest);
-    return handleListQuery(c,
-        `SELECT id,source,account_id,from_addr,to_addr,subject,COALESCE(internal_date, received_at) as received_at,internal_date,is_read,is_starred,attachments_json FROM emails WHERE ${where}`,
-        `SELECT count(*) as count FROM emails WHERE ${where}`,
-        params, limit, offset, "COALESCE(internal_date, received_at) desc");
+
+    // Explicit offset keeps the legacy response/query contract for existing
+    // integrations. When offset is omitted, cursor mode is the default path.
+    if (offset !== undefined) {
+        return handleListQuery(c,
+            `${UNIFIED_EMAIL_SELECT} WHERE ${where}`,
+            `SELECT count(*) as count FROM emails WHERE ${where}`,
+            params, limit, offset, UNIFIED_EMAIL_ORDER);
+    }
+
+    if (!Number.isInteger(requestedLimit) || requestedLimit <= 0 || requestedLimit > HARD_MAX_UNIFIED_PAGE_SIZE) {
+        return c.json({ error: "invalid limit" }, 400);
+    }
+
+    let decodedCursor: ReturnType<typeof decodeEmailCursor> | null = null;
+    if (cursor) {
+        try {
+            decodedCursor = decodeEmailCursor(cursor);
+        } catch {
+            return c.json({ error: "invalid cursor" }, 400);
+        }
+    }
+
+    let pageWhere = where;
+    const pageParams: (string | number)[] = [...params];
+    if (decodedCursor) {
+        const predicate = cursorPredicate(decodedCursor);
+        pageWhere = `(${where}) AND ${predicate.sql}`;
+        pageParams.push(...predicate.params);
+    }
+
+    // Fetch one extra row to determine has_more without a second scan. The
+    // cursor predicate matches idx_emails_*_order_cursor from Phase 1.
+    const { results } = await c.env.DB.prepare(
+        `${UNIFIED_EMAIL_SELECT} WHERE ${pageWhere} ORDER BY ${UNIFIED_EMAIL_ORDER} LIMIT ?`,
+    ).bind(...pageParams, requestedLimit + 1).all<UnifiedListRow>();
+
+    const hasMore = results.length > requestedLimit;
+    const page = results.slice(0, requestedLimit);
+    let nextCursor: string | null = null;
+    if (hasMore && page.length > 0) {
+        const last = page[page.length - 1];
+        const sortKey = Number(last.received_at);
+        if (!Number.isSafeInteger(sortKey) || typeof last.id !== "string" || !last.id) {
+            throw new Error("invalid email sort identity");
+        }
+        nextCursor = encodeEmailCursor(sortKey, last.id);
+    }
+
+    // Preserve the old first-page count behavior so clients can show totals,
+    // but never repeat the full COUNT scan for later cursor pages.
+    const count = decodedCursor
+        ? 0
+        : await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${where}`)
+            .bind(...params).first<number>("count");
+
+    return c.json({
+        results: page,
+        count: count ?? 0,
+        next_cursor: nextCursor,
+        has_more: hasMore,
+    });
 };
 
 const getEmail = async (c: Context<HonoCustomType>) => {
