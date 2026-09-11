@@ -1,18 +1,19 @@
 import { Context } from "hono";
 
 /**
- * emails 表 17 列 INSERT 唯一实现（架构重构 P6，灭 T4）。
- * 仅引 hono、零相对 import（项目测试约束）。
- * 列清单/顺序与 unified/ingest.ts + unified/unified_store.ts 原实现逐字一致
- * （两处同源，均为 17 列同序）。必须保留 `INSERT OR IGNORE`：
- * ingest.insertEmails 依赖 meta.changes 统计 inserted/skipped，
- * 去掉 OR IGNORE 后重复 id 会抛唯一约束错误，破坏原语义。
+ * emails INSERT 的唯一实现。
+ *
+ * 旧字段顺序保持不变，新 provider identity 字段只追加在尾部，减少调用方迁移
+ * 风险。必须保留 INSERT OR IGNORE：主键、legacy imap_uid、source_key 或稳定
+ * provider message identity 任一唯一约束命中时，都应被视为幂等重复而不是 500。
  */
 export const INSERT_EMAIL_SQL = `INSERT OR IGNORE INTO emails
   (id,source,account_id,from_addr,to_addr,subject,text_body,html_body,
    received_at,internal_date,headers_json,is_read,flags_json,attachments_json,
-   raw_ref,imap_uid,updated_at)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+   raw_ref,imap_uid,updated_at,
+   provider,source_folder,source_folder_id,provider_message_id,provider_thread_id,
+   message_id_header,in_reply_to,references_json,has_attachments,source_key,sync_version)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 export const insertEmail = async (
   c: Context,
