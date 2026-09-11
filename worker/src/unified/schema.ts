@@ -12,6 +12,10 @@ const PROVIDER_IDENTITY_COLUMNS: Array<[string, string]> = [
     ["sync_version", "INTEGER"],
 ];
 
+const runStatement = async (db: D1Database, sql: string): Promise<void> => {
+    await db.prepare(sql).run();
+};
+
 async function ensureColumn(
     db: D1Database,
     table: string,
@@ -21,7 +25,7 @@ async function ensureColumn(
     const tableInfo = await db.prepare(`PRAGMA table_info(${table})`).all();
     if ((tableInfo.results ?? []).some((column: any) => column.name === name)) return false;
     try {
-        await db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+        await runStatement(db, `ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
         return true;
     } catch (error) {
         // Two admin migration requests can race after reading the same shape.
@@ -48,15 +52,17 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
         }
     }
 
-    // D1's exec() is primarily a script/DDL API and can split multiline UPDATE
-    // expressions unexpectedly. Use prepared single statements for data repair;
-    // this is also the path exercised by normal D1 query execution.
-    await db.prepare(
+    // D1 exec() is a script API and treats newlines as statement separators.
+    // Every statement in this shape-repair helper is a single prepared query so
+    // multiline CASE/DDL formatting cannot be split into incomplete SQL.
+    await runStatement(
+        db,
         `UPDATE emails
             SET source_key = imap_uid
           WHERE source_key IS NULL AND imap_uid IS NOT NULL`,
-    ).run();
-    await db.prepare(
+    );
+    await runStatement(
+        db,
         `UPDATE emails
             SET provider = CASE
                 WHEN source = 'cf_routing' THEN 'native'
@@ -66,12 +72,13 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
                 ELSE provider
             END
           WHERE provider IS NULL`,
-    ).run();
-    await db.prepare(
+    );
+    await runStatement(
+        db,
         `UPDATE emails
             SET source_folder = 'INBOX', sync_version = COALESCE(sync_version, 1)
           WHERE source = 'cf_routing' AND source_folder IS NULL`,
-    ).run();
+    );
 
     const folderTable = await db.prepare(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mail_account_folders'`,
@@ -81,7 +88,7 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
     // Folder names are metadata. Provider folders (Graph today, future Gmail
     // adapters) key by provider_folder_id so renames do not create a new row.
     // IMAP/POP3 have no provider folder id and key by canonical mailbox name.
-    await db.exec(`CREATE TABLE IF NOT EXISTS mail_account_folders (
+    await runStatement(db, `CREATE TABLE IF NOT EXISTS mail_account_folders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         mail_account_id TEXT NOT NULL,
         provider TEXT NOT NULL,
@@ -127,7 +134,7 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
         `CREATE INDEX IF NOT EXISTS idx_mail_account_folders_account_type
             ON mail_account_folders(mail_account_id, folder_type, canonical_name)`,
     ];
-    for (const sql of indexStatements) await db.exec(sql);
+    for (const sql of indexStatements) await runStatement(db, sql);
 
     return changes;
 }
