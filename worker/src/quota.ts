@@ -20,6 +20,8 @@ export const HARD_MAX_UNIFIED_PAGE_SIZE = 100;
 
 export type MailServiceQuota = {
     /** 0 only means unlimited for the configured admin role. */
+    maxAddressCount: number;
+    /** 0 only means unlimited for the configured admin role. */
     maxMailAccountCount: number;
     /** Always 1..HARD_MAX_UNIFIED_PAGE_SIZE. */
     maxUnifiedPageSize: number;
@@ -56,6 +58,14 @@ export const getMaxAddressCount = async (
     const roleMaxCount = roleConfigs?.[userRole]?.maxAddressCount;
     if (!Number.isInteger(roleMaxCount) || roleMaxCount < 1) return fallback;
     return roleMaxCount;
+};
+
+export const getEffectiveMaxAddressCount = async (
+    c: Context<HonoCustomType>,
+    userRole: string | null | undefined,
+): Promise<number> => {
+    const value = await getJsonSetting(c, SETTINGS_KEYS.USER_SETTINGS);
+    return getMaxAddressCount(c, userRole, readMaxAddressCountSetting(value));
 };
 
 /**
@@ -99,11 +109,12 @@ export const getMailServiceQuota = async (
     c: Context<HonoCustomType>,
     userRole: string | null | undefined,
 ): Promise<MailServiceQuota> => {
-    const [maxMailAccountCount, maxUnifiedPageSize] = await Promise.all([
+    const [maxAddressCount, maxMailAccountCount, maxUnifiedPageSize] = await Promise.all([
+        getEffectiveMaxAddressCount(c, userRole),
         getMaxMailAccountCount(c, userRole),
         getMaxUnifiedPageSize(c, userRole),
     ]);
-    return { maxMailAccountCount, maxUnifiedPageSize };
+    return { maxAddressCount, maxMailAccountCount, maxUnifiedPageSize };
 };
 
 /**
@@ -115,9 +126,7 @@ export const isAddressCountLimitReached = async (
     user_id: number | string,
     userRole: string | null | undefined
 ): Promise<boolean> => {
-    const value = await getJsonSetting(c, SETTINGS_KEYS.USER_SETTINGS);
-    const maxAddressCount = await getMaxAddressCount(c, userRole, readMaxAddressCountSetting(value));
-
+    const maxAddressCount = await getEffectiveMaxAddressCount(c, userRole);
     if (maxAddressCount <= 0) return false;
 
     // 只数本站地址，排除外部邮箱归集写入的 source_meta='external' 引用行。
