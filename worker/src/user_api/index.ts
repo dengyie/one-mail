@@ -7,6 +7,7 @@ import passkey from './passkey';
 import oauth2 from './oauth2';
 import user_mail_api from './user_mail_api';
 import mail_accounts from './mail_accounts';
+import mail_service_quota from './mail_service_quota';
 import { validateMailAccountCreateTarget } from './mail_target_policy';
 import i18n from '../i18n';
 
@@ -35,6 +36,9 @@ api.post('/user_api/bind_address', bind_address.bind);
 api.get('/user_api/bind_address_jwt/:address_id', bind_address.getBindedAddressJwt);
 api.post('/user_api/unbind_address', bind_address.unbind);
 api.post('/user_api/transfer_address', bind_address.transferAddress);
+
+// Mail Service quota/usage：客户端展示用，服务端实际操作仍各自强制执行配额。
+api.get('/user_api/mail_service_quota', mail_service_quota.getMailServiceQuotaStatus);
 
 // user external mail accounts（自助接入外部邮箱归集）
 api.get('/user_api/mail_accounts', mail_accounts.list);
