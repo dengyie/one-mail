@@ -207,6 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_emails_provider_thread
     ON emails(account_id, provider_thread_id) WHERE provider_thread_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS mail_account_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     mail_account_id TEXT NOT NULL,
     provider TEXT NOT NULL,
     provider_folder_id TEXT,
@@ -220,12 +221,14 @@ CREATE TABLE IF NOT EXISTS mail_account_folders (
     last_sync_at INTEGER,
     last_error TEXT,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (mail_account_id, canonical_name)
+    updated_at INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_provider_id_uq
-    ON mail_account_folders(mail_account_id, provider_folder_id)
+    ON mail_account_folders(mail_account_id, provider, provider_folder_id)
     WHERE provider_folder_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_canonical_uq
+    ON mail_account_folders(mail_account_id, provider, canonical_name)
+    WHERE provider_folder_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_mail_account_folders_account_type
     ON mail_account_folders(mail_account_id, folder_type, canonical_name);
 
