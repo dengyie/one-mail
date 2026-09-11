@@ -3,7 +3,7 @@ import { WorkerMailerOptions } from 'worker-mailer';
 
 import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
 import { unbindTelegramByAddress } from './telegram_api/common';
-import { hashPasswordForStorage } from './core/password.ts';
+import { generateRandomPassword, hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
 import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
 import { signAddressJwt } from './core/auth';
@@ -282,15 +282,6 @@ export function updateUserAddressesUpdatedAt(
             console.warn("[updateUserAddressesUpdatedAt] failed:", errorName);
         }
     })());
-}
-
-export const generateRandomPassword = (): string => {
-    const charset = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let password = "";
-    for (let i = 0; i < 8; i++) {
-        password += charset.charAt(Math.floor(Math.random() * charset.length));
-    }
-    return password;
 }
 
 const generatePasswordForAddress = async (

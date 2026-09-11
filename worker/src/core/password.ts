@@ -169,3 +169,26 @@ export const verifyPassword = async (
         needsRehash: directMatch || hashedMatch,
     };
 };
+
+/**
+ * Generate a random address password.  Credentials must come from a CSPRNG
+ * (Web Crypto), never Math.random().
+ */
+export const generateRandomPassword = (): string => {
+    const charset = "abcdefghijklmnopqrstuvwxyz0123456789";
+    const random = new Uint32Array(8);
+    crypto.getRandomValues(random);
+    let password = "";
+    for (let i = 0; i < 8; i++) {
+        // Unbiased sampling: reject values that would skew the last bucket.
+        const range = 0x100000000 - (0x100000000 % charset.length);
+        let v = random[i];
+        while (v >= range) {
+            const buf = new Uint32Array(1);
+            crypto.getRandomValues(buf);
+            v = buf[0];
+        }
+        password += charset.charAt(v % charset.length);
+    }
+    return password;
+};
