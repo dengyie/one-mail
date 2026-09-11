@@ -11,6 +11,7 @@ from .graph_source import sync_graph
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .idle_worker import ensure_idle_workers
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
+from .egress_guard import install_egress_guard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("one-mail-agg")
@@ -174,6 +175,10 @@ def run_daemon(config_path: str, poll_interval: int = 60) -> int:
 
 
 def main() -> int:
+    # 进程级出站防线：在 admission 时的 DNS 校验与真实 connect 之间存在
+    # rebinding/TOCTOU 窗口，部署容器无内核防火墙能力（无 CAP_NET_ADMIN /
+    # systemd / docker），因此在 connect(2) 时刻对实际目标地址做最终校验。
+    install_egress_guard()
     config_path = sys.argv[1] if len(sys.argv) > 1 else "./config.json"
     daemon_mode = "--daemon" in sys.argv
     if daemon_mode:
