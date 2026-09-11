@@ -37,7 +37,7 @@ docker-compose up -d
 ```yaml
 services:
   smtp_proxy_server:
-    image: ghcr.io/dreamhunter2333/cloudflare_temp_email/smtp_proxy_server:latest
+    image: ghcr.io/dengyie/one-mail/smtp_proxy_server:latest
     # build:
     #   context: .
     #   dockerfile: dockerfile

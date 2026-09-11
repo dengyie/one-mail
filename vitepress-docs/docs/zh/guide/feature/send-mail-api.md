@@ -77,9 +77,9 @@ from email.mime.multipart import MIMEMultipart
 with smtplib.SMTP('localhost', 8025) as smtp:
     smtp.login("jwt", "此处填写你的JWT令牌密码")
     message = MIMEMultipart()
-    message['From'] = "Me <me@awsl.uk>"
-    message['To'] = "Admin <admin@awsl.uk>"
+    message['From'] = "Me <me@mangoqwq.cc.cd>"
+    message['To'] = "Admin <admin@mangoqwq.cc.cd>"
     message['Subject'] = "测试主题"
     message.attach(MIMEText("测试内容", 'html'))
-    smtp.sendmail("me@awsl.uk", "admin@awsl.uk", message.as_string())
+    smtp.sendmail("me@mangoqwq.cc.cd", "admin@mangoqwq.cc.cd", message.as_string())
 ```

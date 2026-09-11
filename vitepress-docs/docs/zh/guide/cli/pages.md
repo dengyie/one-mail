@@ -45,7 +45,7 @@ pnpm run deploy
 
 第一次部署会提示创建项目, `production` 分支请填写 `production`
 
-如果你的 worker 后端 名称不为 `cloudflare_temp_email` 请修改 `pages/wrangler.toml`
+如果你的 worker 后端 名称不为 `one-mail` 请修改 `pages/wrangler.toml`
 
 ```bash
 cd frontend

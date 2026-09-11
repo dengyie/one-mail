@@ -5,7 +5,7 @@
 
 ## UI Deployment
 
-1. Download [worker-with-wasm-mail-parser.zip](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/worker-with-wasm-mail-parser.zip)
+1. Download [worker-with-wasm-mail-parser.zip](https://github.com/dengyie/one-mail/releases/latest/download/worker-with-wasm-mail-parser.zip)
 
 2. Go back to `Overview`, find the worker you just created, click `Edit Code`, delete the original files, upload `worker.js` and files with `wasm` extension, click `Deploy`
 
@@ -14,7 +14,7 @@
     > Right-click in the file list window and find `Upload` in the context menu,
     > Please refer to the screenshot below
     >
-    > Reference: [issues156](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/156#issuecomment-2079453822)
+    > Reference: [issues156](https://github.com/dengyie/one-mail/issues/156#issuecomment-2079453822)
 
     ![worker2](/ui_install/worker-2.png)
     ![worker-upload](/ui_install/worker-upload.png)

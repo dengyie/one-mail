@@ -1,8 +1,7 @@
 # 前端开发文档（one-mail 统一收件箱）
 
 > [!NOTE]
-> 本文针对 **one-mail 统一收件箱** 的 Vue 3 前端。本项目 `frontend/` 目录 fork 自上游
-> `cloudflare_temp_email` 的 Vue 前端（Vue 3 + Vite + Naive UI），并且在最近一次
+> 本文针对 **one-mail 统一收件箱** 的 Vue 3 前端。本项目 `frontend/` 目录是团队自主开发的 Vue 3 前端（Vue 3 + Vite + Naive UI），并且在最近一次
 > 前后端分离（commit `64f0eda`）之后，**前端是唯一通过跨域直接连接 Worker 的形态**——
 > 不再有 Pages Functions 代理拓扑。
 
@@ -18,7 +17,7 @@
 Cloudflare Worker ──mail-api.mangoqwq.cc.cd
    │  ├─ /api/unified/*       统一收件箱查询（API-key 鉴权）
    │  ├─ /admin/unified/*     统一收件箱管理（x-admin-auth 鉴权）
-   │  └─ /api/* · /user_api/* · /admin/*  临时邮箱基座（上游能力）
+   │  └─ /api/* · /user_api/* · /admin/*  临时邮箱基座
 ```
 
 前端 `frontend/` 是一个纯静态 Vue 3 SPA：

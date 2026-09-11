@@ -112,7 +112,7 @@ const generate = async () => {
     ![pages](/ui_install/pages.png)
 
 3. 输入部署的 worker 地址，必须填写后端 API 根地址，并且以 `https://` 开头，地址不要带 `/`，点击生成，成功会出现下载按钮，你会得到一个 zip 包
-    - 此处 worker 域名为后端 api 的域名，比如我部署在 `https://temp-email-api.awsl.uk`，则填写 `https://temp-email-api.awsl.uk`
+    - 此处 worker 域名为后端 api 的域名，比如我部署在 `https://mail-api.mangoqwq.cc.cd`，则填写 `https://mail-api.mangoqwq.cc.cd`
     - 如果你的域名是 `https://temp-email-api.xxx.workers.dev`，则填写 `https://temp-email-api.xxx.workers.dev`
     - 不要填写前端 `Pages` 自己的域名，也不要带 `/admin`、`/api` 等路径，否则前端请求会打到错误地址，可能出现 `Cannot read properties of undefined (reading 'map')` 或 `405 Method Not Allowed`
     - 填写前请先在浏览器打开 `https://你的worker域名/open_api/settings`，确认返回 JSON；如果返回 HTML、404、405 或 Cloudflare 挑战页，请先修复 Worker 绑定、变量或安全策略
@@ -131,7 +131,7 @@ const generate = async () => {
     <p v-if="errorMessage" :class="$style.error">{{ errorMessage }}</p>
 
     > [!NOTE]
-    > 你也可以手动部署，从这里下载 zip, [frontend.zip](https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/frontend.zip)
+    > 你也可以手动部署，从这里下载 zip, [frontend.zip](https://github.com/dengyie/one-mail/releases/latest/download/frontend.zip)
     >
     > 修改压缩包里面的 index-xxx.js 文件 ，xx 是随机的字符串
     >

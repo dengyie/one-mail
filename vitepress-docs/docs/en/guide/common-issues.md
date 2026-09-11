@@ -18,7 +18,7 @@
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | `Uncaught Error: No such module "path". imported from "worker.js"` | [Reference](/en/guide/ui/worker)                                            |
 | `No such module "node:stream". imported from "worker.js"`          | [Reference](/en/guide/ui/worker)                                            |
-| `Subdomain cannot send emails`                                     | [Reference](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/515) |
+| `Subdomain cannot send emails`                                     | [Reference](https://github.com/dengyie/one-mail/issues/515) |
 | `Failed to send verify code: No balance`                           | Set unlimited emails in admin console or increase quota on the sending permission page |
 | `GitHub OAuth unable to get email` / `[400]: Failed to get user email from OAuth2 provider` | The GitHub template reads the `email` field from `https://api.github.com/user`. If the GitHub account hides its public email, this field is `null`. Select a `Public email` in the GitHub profile, or change `User Info URL` to `https://api.github.com/user/emails`, `User Email Key` to `$[?(@.primary==true)].email`, and `Scope` to `user:email` |
 | `Cannot read properties of undefined (reading 'map')` during page initialization | First check whether `/open_api/settings` is returning valid data. In a direct Worker deployment, this usually means Worker variables were not configured correctly, so verify JSON-format variables such as `DOMAINS` and `ADMIN_PASSWORDS`. If this happens in a Pages deployment because requests are going to the wrong backend address, continue with the Pages troubleshooting section below |
@@ -40,7 +40,7 @@
 | --------------- | --------------------------------------------------------- |
 | Set `DEFAULT_SEND_BALANCE` but still getting `No balance` | Refresh the settings page or try sending again first. When `DEFAULT_SEND_BALANCE > 0`, the system only auto-initializes the default quota for addresses that have **no `address_sender` row yet**; existing rows — including legacy `balance = 0 && enabled = 0` rows, admin-disabled rows, and admin-edited rows — are never modified by the runtime and must be manually restored by an admin (enable + set balance). Alternatively, add the address to the "No Limit Send Address List" in the admin console, or configure `NO_LIMIT_SEND_ROLE` |
 | Error: `Please enable resend or smtp for this domain` | You need to configure `RESEND_TOKEN` or `SMTP_CONFIG` first. See [Configure Email Sending](/en/guide/config-send-mail) |
-| `SMTP_CONFIG` configured but sending fails | Make sure the JSON key is **your own sending domain** (e.g. `your-domain.com`), not the example `awsl.uk`. See [Configure Email Sending](/en/guide/config-send-mail#send-emails-using-smtp) |
+| `SMTP_CONFIG` configured but sending fails | Make sure the JSON key is **your own sending domain** (e.g. `your-domain.com`), not the example `mangoqwq.cc.cd`. See [Configure Email Sending](/en/guide/config-send-mail#send-emails-using-smtp) |
 
 ## Mail Client Related
 

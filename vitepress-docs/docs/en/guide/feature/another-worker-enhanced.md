@@ -14,7 +14,8 @@
 ### Transform Worker to Extend WorkerEntrypoint
 
 A simple worker code that acts as a callee providing RPC method calls is as follows (the rpcEmail method is an example)
-(Using the already modified project https://github.com/oneisall8955/AuthInbox-fork)
+A simple worker as the callee that provides RPC methods (the `rpcEmail` method is an example).
+(For the base project, see https://github.com/TooonyChen/AuthInbox)
 
 src/index.ts file
 ```js
@@ -49,7 +50,7 @@ export default class extends WorkerEntrypoint<Env> {
 
     // Expose RPC interface to handle email requests from other workers
     async rpcEmail(requestBody: string): Promise<void> {
-        console.log(`Received request from another worker (temporary email service cloudflare_temp_email), request body: ${requestBody}`);
+        console.log(`Received request from another worker (temporary email service one-mail), request body: ${requestBody}`);
         // requestBody is in JSON format, sent by temporary email service, format as follows
         // type RPCEmailMessage = {
         //     from: string | undefined | null,
@@ -64,7 +65,7 @@ export default class extends WorkerEntrypoint<Env> {
 
 ### Deploy Another Worker
 
-After modification, or using auth-inbox as an example, deploy to Cloudflare Worker. See https://github.com/TooonyChen/AuthInbox, or use the already modified project https://github.com/oneisall8955/AuthInbox-fork
+After modification, or using auth-inbox as an example, deploy to Cloudflare Worker. See https://github.com/TooonyChen/AuthInbox
 
 ## Configure Temporary Email Service to Use Specified Worker Enhancement
 

@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["httpx>=0.27"]
 # ///
-"""Send a cloudflare_temp_email release announcement to a Telegram channel topic.
+"""Send a one-mail release announcement to a Telegram channel topic.
 
 Usage:
     uv run scripts/send_release_to_telegram.py <tag>

@@ -1,28 +1,15 @@
-# cloudflare_temp_email
+# one-mail 前端 (frontend)
 
-This template should help get you started developing with Vue 3 in Vite.
+Vue 3 + Naive UI 前端，直连 Cloudflare Worker（前后端分离）。详见仓库根 `README.md`。
 
-## Recommended IDE Setup
-
-[VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur) + [TypeScript Vue Plugin (Volar)](https://marketplace.visualstudio.com/items?itemName=Vue.vscode-typescript-vue-plugin).
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vitejs.dev/config/).
-
-## Project Setup
+## 本地开发
 
 ```sh
 npm install
-```
-
-### Compile and Hot-Reload for Development
-
-```sh
 npm run dev
 ```
 
-### Compile and Minify for Production
+## 构建
 
 ```sh
 npm run build
