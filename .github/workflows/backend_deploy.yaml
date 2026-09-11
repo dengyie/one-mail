@@ -113,26 +113,9 @@ jobs:
           cd worker/
           trap 'rm -f ../.d1-emails-schema.json ../.d1-provider-identity.sql' EXIT
 
-          DB_NAME="$(python3 - <<'PY'
-          import sys
-          import tomllib
-
-          with open("wrangler.toml", "rb") as fh:
-              cfg = tomllib.load(fh)
-          matches = [item for item in cfg.get("d1_databases", []) if item.get("binding") == "DB"]
-          if len(matches) != 1:
-              print("Expected exactly one D1 binding named DB in BACKEND_TOML", file=sys.stderr)
-              raise SystemExit(1)
-          name = matches[0].get("database_name")
-          if not isinstance(name, str) or not name.strip():
-              print("D1 binding DB is missing database_name", file=sys.stderr)
-              raise SystemExit(1)
-          print(name)
-          PY
-          )"
-
-          # Query only schema metadata; never export production mail contents.
-          pnpm exec wrangler d1 execute "$DB_NAME" \
+          # Wrangler accepts the configured D1 binding name here. Query only
+          # schema metadata; never export production mail contents.
+          pnpm exec wrangler d1 execute DB \
             --remote \
             --command "PRAGMA table_info(emails)" \
             --json > ../.d1-emails-schema.json
@@ -143,8 +126,9 @@ jobs:
             --output ../.d1-provider-identity.sql
 
           if [ -s ../.d1-provider-identity.sql ]; then
-            pnpm exec wrangler d1 execute "$DB_NAME" \
+            pnpm exec wrangler d1 execute DB \
               --remote \
+              --yes \
               --file ../.d1-provider-identity.sql
             echo "Remote D1 provider identity schema is current"
           else
