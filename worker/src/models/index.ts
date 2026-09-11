@@ -203,6 +203,9 @@ export type RoleConfig = {
     // 外部邮箱接入上限；缺失/负数 → 回退全局默认 5（getMaxMailAccountCount）。
     // 与 maxAddressCount 同走 role_address_config，admin 后台按角色配。
     maxMailAccountCount?: number;
+    // Unified Inbox 列表单页业务上限。普通用户默认 50，合法范围 1..100；
+    // admin 始终使用 Worker 硬上限 100，不受此配置收紧。
+    maxUnifiedPageSize?: number;
     // future configs can be added here
 }
 
