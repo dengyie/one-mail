@@ -45,7 +45,6 @@ export const verifyAddressJwt = async (
   }
 };
 
-
 /**
  * Verify an address credential and its current database binding.
  *
@@ -79,4 +78,22 @@ export const verifyActiveAddressJwt = async (
   }
 
   return { ...payload, address_id: addressId };
+};
+
+/**
+ * Parse an Authorization: Bearer credential and apply the complete active
+ * address policy. Route middleware must use this instead of Hono's generic
+ * jwt() middleware so exp-less or DB-stale address credentials cannot bypass
+ * the project's stronger address-token semantics.
+ */
+export const verifyActiveAddressBearer = async (
+  c: Context,
+  authorization: string | null,
+): Promise<AddressJwtPayload | null> => {
+  if (!authorization) return null;
+  const parts = authorization.split(/\s+/);
+  if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer" || !parts[1]) {
+    return null;
+  }
+  return verifyActiveAddressJwt(c, parts[1]);
 };

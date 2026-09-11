@@ -1,8 +1,7 @@
 import { Context, Hono } from 'hono'
 import { cors } from 'hono/cors';
-import { jwt } from 'hono/jwt'
 import { Jwt } from 'hono/utils/jwt'
-import { verifyActiveAddressJwt } from './core/auth'
+import { verifyActiveAddressBearer } from './core/auth'
 import { isActiveUser } from './core/user_identity'
 
 import { api as commonApi } from './commom_api';
@@ -192,20 +191,10 @@ app.use('/api/*', async (c, next) => {
 	}
 
 	// 地址 JWT 校验（签名、过期时间和当前地址绑定）。删除或替换地址后，旧凭据立即失效。
-	// 抽取逻辑与 hono jwt() 中间件一致：Authorization: Bearer <token>，失败 401。
-	const token = c.req.raw.headers.get("Authorization");
-	if (!token) {
-		const lang = c.get("lang") || c.env.DEFAULT_LANG;
-		const msgs = i18n.getMessages(lang);
-		return c.text(msgs.InvalidAddressCredentialMsg, 401);
-	}
-	const parts = token.split(/\s+/);
-	if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer") {
-		const lang = c.get("lang") || c.env.DEFAULT_LANG;
-		const msgs = i18n.getMessages(lang);
-		return c.text(msgs.InvalidAddressCredentialMsg, 401);
-	}
-	const payload = await verifyActiveAddressJwt(c, parts[1]);
+	const payload = await verifyActiveAddressBearer(
+		c,
+		c.req.raw.headers.get("Authorization"),
+	);
 	if (!payload) {
 		const lang = c.get("lang") || c.env.DEFAULT_LANG;
 		const msgs = i18n.getMessages(lang);
@@ -256,7 +245,16 @@ app.use('/user_api/*', async (c, next) => {
 	if (c.req.path.startsWith('/user_api/bind_address')
 		&& c.req.method === 'POST'
 	) {
-		return jwt({ secret: c.env.JWT_SECRET, alg: "HS256" })(c, next);
+		const payload = await verifyActiveAddressBearer(
+			c,
+			c.req.raw.headers.get("Authorization"),
+		);
+		if (!payload) {
+			return c.text(msgs.InvalidAddressCredentialMsg, 401);
+		}
+		c.set("jwtPayload", payload as JwtPayload);
+		await next();
+		return;
 	}
 	await next();
 });
