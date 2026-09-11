@@ -1,6 +1,6 @@
-import { Context } from "hono";
+import type { Context } from "hono";
 import { canAccessRow, scopeQuery } from "./api_keys";
-import { buildEmailFilters, EmailFilter } from "./unified_query";
+import { buildEmailFilters, type EmailFilter } from "./unified_query";
 
 /**
  * 普通用户的统一邮箱租户边界。
