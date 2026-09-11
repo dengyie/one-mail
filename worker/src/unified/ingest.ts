@@ -97,11 +97,15 @@ const collectFolders = (emails: Record<string, unknown>[]): FolderState[] => {
         const provider = nullableText(e.provider);
         const folder = nullableText(e.source_folder);
         if (!accountId || !provider || !folder) continue;
-        byKey.set(`${accountId}\u0000${folder}`, {
+        const providerFolderId = nullableText(e.source_folder_id);
+        // A stable provider folder ID wins over names: Graph folders can be
+        // renamed and hierarchical providers can have duplicate display names.
+        const identity = providerFolderId ? `id:${providerFolderId}` : `name:${folder}`;
+        byKey.set(`${accountId}\u0000${provider}\u0000${identity}`, {
             accountId,
             provider,
             folder,
-            providerFolderId: nullableText(e.source_folder_id),
+            providerFolderId,
             uidvalidity: nullableInteger(e.source_uidvalidity),
         });
     }
@@ -145,6 +149,73 @@ const buildIdentityRefreshStatements = (
     )];
 });
 
+const buildFolderStatement = (
+    c: Context<HonoCustomType>,
+    folder: FolderState,
+    nowMs: number,
+) => {
+    const type = folderType(folder.folder);
+    if (folder.providerFolderId) {
+        // Stable provider identity is the conflict target. A rename updates the
+        // same row instead of colliding on (or duplicating by) canonical_name.
+        return c.env.DB.prepare(
+            `INSERT INTO mail_account_folders (
+                mail_account_id, provider, provider_folder_id, canonical_name, display_name,
+                folder_type, uidvalidity, last_sync_at, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(mail_account_id, provider, provider_folder_id)
+             WHERE provider_folder_id IS NOT NULL
+             DO UPDATE SET
+                canonical_name = excluded.canonical_name,
+                display_name = excluded.display_name,
+                folder_type = excluded.folder_type,
+                uidvalidity = excluded.uidvalidity,
+                last_sync_at = excluded.last_sync_at,
+                last_error = NULL,
+                updated_at = excluded.updated_at`
+        ).bind(
+            folder.accountId,
+            folder.provider,
+            folder.providerFolderId,
+            folder.folder,
+            folder.folder,
+            type,
+            folder.uidvalidity,
+            nowMs,
+            nowMs,
+            nowMs,
+        );
+    }
+
+    // IMAP/POP3 have no stable provider folder id. Their canonical mailbox
+    // name/path is the identity until an adapter can supply a stronger one.
+    return c.env.DB.prepare(
+        `INSERT INTO mail_account_folders (
+            mail_account_id, provider, provider_folder_id, canonical_name, display_name,
+            folder_type, uidvalidity, last_sync_at, created_at, updated_at
+         ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(mail_account_id, provider, canonical_name)
+         WHERE provider_folder_id IS NULL
+         DO UPDATE SET
+            display_name = excluded.display_name,
+            folder_type = excluded.folder_type,
+            uidvalidity = excluded.uidvalidity,
+            last_sync_at = excluded.last_sync_at,
+            last_error = NULL,
+            updated_at = excluded.updated_at`
+    ).bind(
+        folder.accountId,
+        folder.provider,
+        folder.folder,
+        folder.folder,
+        type,
+        folder.uidvalidity,
+        nowMs,
+        nowMs,
+        nowMs,
+    );
+};
+
 export async function insertEmails(c: Context<HonoCustomType>, emails: Record<string, unknown>[]): Promise<{ inserted: number; skipped: number }> {
     let inserted = 0, skipped = 0;
     if (emails.length === 0) return { inserted, skipped };
@@ -169,35 +240,10 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
     // is not a new email, but its mutable provider metadata must follow the source.
     const stateStatements = buildIdentityRefreshStatements(c, emails, nowMs);
 
-    // Register folders observed in the same ingest operation. source_folder_id is
-    // only persisted when the adapter actually supplied a provider folder ID.
+    // Register folders observed in the same ingest operation. Provider folders
+    // key by their stable ID; IMAP/POP3 fall back to canonical mailbox name.
     for (const folder of collectFolders(emails)) {
-        stateStatements.push(c.env.DB.prepare(
-            `INSERT INTO mail_account_folders (
-                mail_account_id, provider, provider_folder_id, canonical_name, display_name,
-                folder_type, uidvalidity, last_sync_at, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(mail_account_id, canonical_name) DO UPDATE SET
-                provider = excluded.provider,
-                provider_folder_id = excluded.provider_folder_id,
-                display_name = excluded.display_name,
-                folder_type = excluded.folder_type,
-                uidvalidity = excluded.uidvalidity,
-                last_sync_at = excluded.last_sync_at,
-                last_error = NULL,
-                updated_at = excluded.updated_at`
-        ).bind(
-            folder.accountId,
-            folder.provider,
-            folder.providerFolderId,
-            folder.folder,
-            folder.folder,
-            folderType(folder.folder),
-            folder.uidvalidity,
-            nowMs,
-            nowMs,
-            nowMs,
-        ));
+        stateStatements.push(buildFolderStatement(c, folder, nowMs));
     }
 
     for (let start = 0; start < stateStatements.length; start += 100) {
