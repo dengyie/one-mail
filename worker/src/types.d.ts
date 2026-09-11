@@ -160,6 +160,8 @@ type Variables = {
     unifiedUserAuth?: {
         userPayload: UserPayload,
         isAdmin: boolean,
+        // 已解析的用户角色，统一查询配额与管理员绕过均复用这一值，避免每个端点重复查角色。
+        userRole?: string | null,
         // 普通用户的收件地址归属作用域（逗号多值，配合 buildEmailFilters 的 to_addr IN）。
         // 管理员不设此字段（看全部）。无绑定地址时为 "__none__" 哨兵（fail-closed 返回 0 行）。
         toAddrScope?: string,

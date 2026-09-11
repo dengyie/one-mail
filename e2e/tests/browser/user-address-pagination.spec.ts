@@ -58,7 +58,8 @@ test.describe('User address pagination browser flow', () => {
         ...originalUserSettings,
         enable: true,
         enableMailVerify: false,
-        maxAddressCount: 0,
+        // Browser pagination needs 21 fixtures; keep the test quota high but finite.
+        maxAddressCount: 100,
       });
 
       const user = await createUser(request);

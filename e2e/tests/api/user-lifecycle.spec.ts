@@ -63,7 +63,8 @@ test('deleting a user removes imported mail before the username is rebound', asy
         ...originalUserSettings,
         enable: true,
         enableMailVerify: false,
-        maxAddressCount: 0,
+        // This test creates only a few resources; keep the non-admin quota finite.
+        maxAddressCount: 100,
       },
     });
     expect(enableRes.ok()).toBe(true);
