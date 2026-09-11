@@ -91,9 +91,13 @@ def test_provider_identity_migration_backfills_only_provable_legacy_facts():
     assert "idx_emails_source_key_uq" in _indexes(db, "emails")
     assert "idx_emails_provider_message_uq" in _indexes(db, "emails")
     assert _columns(db, "mail_account_folders") >= {
-        "mail_account_id", "provider", "provider_folder_id", "canonical_name",
+        "id", "mail_account_id", "provider", "provider_folder_id", "canonical_name",
         "folder_type", "uidvalidity", "last_cursor",
     }
+    assert {
+        "idx_mail_account_folders_provider_id_uq",
+        "idx_mail_account_folders_canonical_uq",
+    } <= _indexes(db, "mail_account_folders")
 
 
 def test_migration_enforces_source_and_provider_identity_uniqueness_per_account():
@@ -130,6 +134,73 @@ def test_migration_enforces_source_and_provider_identity_uniqueness_per_account(
     )
 
 
+def test_provider_folder_id_survives_rename_and_duplicate_display_names():
+    db = sqlite3.connect(":memory:")
+    db.executescript(FRESH_SCHEMA.read_text(encoding="utf-8"))
+
+    provider_upsert = """
+        INSERT INTO mail_account_folders (
+            mail_account_id, provider, provider_folder_id, canonical_name, display_name,
+            folder_type, uidvalidity, last_sync_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mail_account_id, provider, provider_folder_id)
+        WHERE provider_folder_id IS NOT NULL
+        DO UPDATE SET
+            canonical_name = excluded.canonical_name,
+            display_name = excluded.display_name,
+            folder_type = excluded.folder_type,
+            uidvalidity = excluded.uidvalidity,
+            last_sync_at = excluded.last_sync_at,
+            last_error = NULL,
+            updated_at = excluded.updated_at
+    """
+    db.execute(provider_upsert, (
+        "acc", "graph", "folder-stable-1", "Old Name", "Old Name",
+        "custom", None, 1, 1, 1,
+    ))
+    db.execute(provider_upsert, (
+        "acc", "graph", "folder-stable-1", "Renamed", "Renamed",
+        "custom", None, 2, 2, 2,
+    ))
+    rows = list(db.execute(
+        "SELECT provider_folder_id, canonical_name, last_sync_at FROM mail_account_folders"
+    ))
+    assert rows == [("folder-stable-1", "Renamed", 2)]
+
+    # Hierarchical provider folders may share the same human-readable name. A
+    # distinct stable provider_folder_id must remain a distinct row.
+    db.execute(provider_upsert, (
+        "acc", "graph", "folder-stable-2", "Renamed", "Renamed",
+        "custom", None, 3, 3, 3,
+    ))
+    assert db.execute("SELECT COUNT(*) FROM mail_account_folders").fetchone()[0] == 2
+
+
+def test_imap_folder_without_provider_id_keys_by_canonical_mailbox_name():
+    db = sqlite3.connect(":memory:")
+    db.executescript(FRESH_SCHEMA.read_text(encoding="utf-8"))
+    imap_upsert = """
+        INSERT INTO mail_account_folders (
+            mail_account_id, provider, provider_folder_id, canonical_name, display_name,
+            folder_type, uidvalidity, last_sync_at, created_at, updated_at
+        ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mail_account_id, provider, canonical_name)
+        WHERE provider_folder_id IS NULL
+        DO UPDATE SET
+            display_name = excluded.display_name,
+            folder_type = excluded.folder_type,
+            uidvalidity = excluded.uidvalidity,
+            last_sync_at = excluded.last_sync_at,
+            last_error = NULL,
+            updated_at = excluded.updated_at
+    """
+    db.execute(imap_upsert, ("acc", "imap", "INBOX", "INBOX", "inbox", 7, 1, 1, 1))
+    db.execute(imap_upsert, ("acc", "imap", "INBOX", "INBOX", "inbox", 8, 2, 2, 2))
+    assert db.execute(
+        "SELECT COUNT(*), MAX(uidvalidity) FROM mail_account_folders"
+    ).fetchone() == (1, 8)
+
+
 def test_fresh_schema_contains_identity_model_and_cursor_indexes():
     db = sqlite3.connect(":memory:")
     db.executescript(FRESH_SCHEMA.read_text(encoding="utf-8"))
@@ -145,7 +216,7 @@ def test_fresh_schema_contains_identity_model_and_cursor_indexes():
         "idx_emails_account_folder_order_cursor",
     } <= _indexes(db, "emails")
     assert _columns(db, "mail_account_folders") >= {
-        "mail_account_id", "provider", "provider_folder_id", "canonical_name", "folder_type",
+        "id", "mail_account_id", "provider", "provider_folder_id", "canonical_name", "folder_type",
     }
 
     db.execute(
