@@ -1,10 +1,13 @@
 """Microsoft Graph API 邮件同步源：为授予 Mail.Read / Mail.ReadWrite 权限的个人/企业 Microsoft 账号同步邮件。
 
 使用 stdlib/requests 经 Microsoft Graph REST API 增量同步邮件并获取原始 RFC822 MIME 内容。
-水印通过 Graph 消息 ID 集合（`state.pop3_seen` 相同语义的 seen 集合）推进。
+水印继续使用旧 Graph message ID 集合，保证升级时不重拉已同步历史；数据库 provider identity
+则使用 Graph ImmutableId，避免邮件移动文件夹后默认 ID 改变而产生重复副本。
 """
 import logging
 from datetime import datetime
+from urllib.parse import quote
+
 import requests
 from typing import NamedTuple
 
@@ -18,12 +21,20 @@ from .imap_base import BATCH_SIZE, MAX_SINGLE_BYTES
 log = logging.getLogger("one-mail-agg")
 
 GRAPH_UID_PREFIX = "graph:"
+GRAPH_IMMUTABLE_PREFER = 'IdType="ImmutableId"'
+GRAPH_BATCH_LIMIT = 20
 
 
 class GraphMessageMeta(NamedTuple):
+    # id is the provider-stable ImmutableId stored in emails.provider_message_id.
     id: str
+    # legacy_id is the default Graph ID used by the existing seen-state key. It
+    # intentionally remains separate so rollout does not invalidate all watermarks.
+    legacy_id: str
     received_at_ms: int | None
     subject: str | None
+    conversation_id: str | None
+    parent_folder_id: str | None
 
 
 def graph_access_token(oauth: dict, on_rotated=None) -> str:
@@ -59,8 +70,72 @@ def graph_access_token(oauth: dict, on_rotated=None) -> str:
 
 
 def graph_uid_key(account: AccountConfig, folder: str, msg_id: str) -> str:
-    """Graph 邮件全局唯一稳定键。"""
+    """Legacy Graph seen/imap_uid key.
+
+    Keep the folder/default-ID shape for state compatibility. It is NOT the new
+    provider identity because default Graph IDs may change when a message moves.
+    """
     return f"{GRAPH_UID_PREFIX}{account.id}:{folder}:{msg_id}"
+
+
+def graph_source_key(account: AccountConfig, immutable_id: str) -> str:
+    """Stable database source key based on account + Graph ImmutableId."""
+    return f"{GRAPH_UID_PREFIX}{account.id}:{immutable_id}"
+
+
+def _resolve_immutable_metadata(access_token: str, items: list[dict]) -> dict[str, dict]:
+    """Resolve default Graph IDs to ImmutableId without breaking old watermarks.
+
+    Listing remains in default-ID mode so existing `state.pop3_seen` entries keep
+    matching. Pending IDs are resolved through Graph JSON batching (max 20 per
+    request) with a per-subrequest ImmutableId preference. Any missing/failed
+    resolution aborts the folder before upload/state advancement: silently writing
+    a mutable ID into provider_message_id would corrupt the uniqueness contract.
+    """
+    if not items:
+        return {}
+
+    auth_headers = {"Authorization": f"Bearer {access_token}"}
+    resolved: dict[str, dict] = {}
+
+    for start in range(0, len(items), GRAPH_BATCH_LIMIT):
+        chunk = items[start:start + GRAPH_BATCH_LIMIT]
+        request_map: dict[str, str] = {}
+        batch_requests = []
+        for offset, item in enumerate(chunk):
+            legacy_id = item.get("id")
+            if not legacy_id:
+                raise RuntimeError("graph message missing default id before ImmutableId resolution")
+            request_id = str(start + offset)
+            request_map[request_id] = legacy_id
+            encoded = quote(legacy_id, safe="")
+            batch_requests.append({
+                "id": request_id,
+                "method": "GET",
+                "url": f"/me/messages/{encoded}?$select=id,conversationId,parentFolderId",
+                "headers": {"Prefer": GRAPH_IMMUTABLE_PREFER},
+            })
+
+        response = requests.post(
+            "https://graph.microsoft.com/v1.0/$batch",
+            headers=auth_headers,
+            json={"requests": batch_requests},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        by_id = {str(row.get("id")): row for row in payload.get("responses", [])}
+
+        for request_id, legacy_id in request_map.items():
+            row = by_id.get(request_id)
+            body = row.get("body", {}) if row else {}
+            if not row or row.get("status") != 200 or not body.get("id"):
+                status = row.get("status") if row else "missing"
+                raise RuntimeError(
+                    f"graph ImmutableId resolution failed for message {legacy_id!r}: status={status}")
+            resolved[legacy_id] = body
+
+    return resolved
 
 
 def fetch_graph_messages(
@@ -73,10 +148,14 @@ def fetch_graph_messages(
     headers = {"Authorization": f"Bearer {access_token}"}
     seen = state.get_pop3_seen(account.id, folder)
 
-    # 映射常用 folder 名称到 Graph 端点
+    # Keep this listing in default-ID mode. Switching the list itself to
+    # ImmutableId would invalidate every existing seen key during rollout and
+    # re-download the newest history window.
     folder_path = "Inbox" if folder.upper() == "INBOX" else folder
-    # 按接收时间倒序拉取最新的邮件列表
-    url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_path}/messages?$top=50&$orderby=receivedDateTime+desc"
+    url = (
+        f"https://graph.microsoft.com/v1.0/me/mailFolders/{quote(folder_path, safe='')}/messages"
+        "?$select=id,receivedDateTime,subject&$top=50&$orderby=receivedDateTime+desc"
+    )
     r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
     items = r.json().get("value", [])
@@ -106,17 +185,20 @@ def fetch_graph_messages(
 
     # 按时间正序处理入库
     pending_items.reverse()
+    immutable = _resolve_immutable_metadata(access_token, pending_items)
 
     fetched: list[tuple[GraphMessageMeta, bytes]] = []
     oversize_ids: list[str] = []
 
     for item in pending_items:
-        mid = item["id"]
-        # 获取 raw MIME 内容（$value）
-        mime_url = f"https://graph.microsoft.com/v1.0/me/messages/{mid}/$value"
+        legacy_id = item["id"]
+        stable = immutable[legacy_id]
+        # Fetch MIME using the just-listed default ID. If a move races this
+        # request, the fetch is retried next run rather than advancing seen state.
+        mime_url = f"https://graph.microsoft.com/v1.0/me/messages/{quote(legacy_id, safe='')}/$value"
         res = requests.get(mime_url, headers=headers, timeout=30)
         if res.status_code != 200:
-            log.warning("graph fetch mime failed account=%s msg_id=%s status=%s", account.id, mid, res.status_code)
+            log.warning("graph fetch mime failed account=%s msg_id=%s status=%s", account.id, legacy_id, res.status_code)
             continue
 
         raw_bytes = res.content
@@ -124,11 +206,11 @@ def fetch_graph_messages(
             log.warning(
                 "graph skip oversize message account=%s msg_id=%s bytes=%d > limit=%d",
                 account.id,
-                mid,
+                legacy_id,
                 len(raw_bytes),
                 MAX_SINGLE_BYTES,
             )
-            oversize_ids.append(graph_uid_key(account, folder, mid))
+            oversize_ids.append(graph_uid_key(account, folder, legacy_id))
             continue
 
         received_at_ms = None
@@ -137,12 +219,15 @@ def fetch_graph_messages(
             try:
                 received_at_ms = int(datetime.fromisoformat(received_at.replace("Z", "+00:00")).timestamp() * 1000)
             except (TypeError, ValueError):
-                log.warning("graph invalid receivedDateTime account=%s msg_id=%s value=%r", account.id, mid, received_at)
+                log.warning("graph invalid receivedDateTime account=%s msg_id=%s value=%r", account.id, legacy_id, received_at)
 
         meta = GraphMessageMeta(
-            id=mid,
+            id=stable["id"],
+            legacy_id=legacy_id,
             received_at_ms=received_at_ms,
             subject=item.get("subject"),
+            conversation_id=stable.get("conversationId"),
+            parent_folder_id=stable.get("parentFolderId"),
         )
         fetched.append((meta, raw_bytes))
 
@@ -179,6 +264,7 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
         batch = []
         uploaded_ids = []
         for meta, raw_bytes in fetched:
+            legacy_key = graph_uid_key(account, folder, meta.legacy_id)
             try:
                 norm = normalize_message(
                     raw_bytes,
@@ -187,13 +273,18 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
                     uidvalidity=0,
                     uid=0,
                     internal_date_ms=meta.received_at_ms,
-                    imap_uid_override=graph_uid_key(account, folder, meta.id),
+                    imap_uid_override=legacy_key,
+                    provider="graph",
+                    provider_message_id=meta.id,
+                    provider_thread_id=meta.conversation_id,
+                    source_folder_id=meta.parent_folder_id,
+                    source_key_override=graph_source_key(account, meta.id),
                 )
                 batch.append(norm)
-                uploaded_ids.append(graph_uid_key(account, folder, meta.id))
+                uploaded_ids.append(legacy_key)
             except Exception as e:
                 total_dropped += 1
-                log.warning("skip graph message id=%s account=%s: %r", meta.id, account.id, e)
+                log.warning("skip graph message id=%s account=%s: %r", meta.legacy_id, account.id, e)
 
         if batch:
             result = upload_emails(config, batch)
