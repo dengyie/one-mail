@@ -12,7 +12,14 @@ on:
       - "db/**"
       - "package.json"
       - "pnpm-lock.yaml"
+      - ".github/workflows/backend_deploy.yaml"
   workflow_dispatch:
+
+# D1 schema migration and Worker publication are one production transaction in
+# deployment order. Never let two main/tag deploys race ALTER/CREATE statements.
+concurrency:
+  group: deploy-backend-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -75,8 +82,25 @@ jobs:
           git apply ../.github/config/mail-parser-wasm-worker.patch
           echo "Applied mail-parser-wasm-worker patch"
 
-      - name: Deploy Backend for ${{ github.ref_name }}
+      - name: Prepare Worker configuration
+        shell: bash
+        env:
+          WRANGLER_TOML_CONTENT: ${{ secrets.BACKEND_TOML }}
         run: |
+          if [ -z "${WRANGLER_TOML_CONTENT:-}" ]; then
+            echo "::error title=Missing Worker configuration::Set the BACKEND_TOML repository secret before running this workflow."
+            exit 1
+          fi
+          printf '%s\n' "$WRANGLER_TOML_CONTENT" > worker/wrangler.toml
+          chmod 600 worker/wrangler.toml
+
+      - name: Ensure remote D1 provider identity schema
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
             echo "::error title=Missing Cloudflare account ID::Set the CLOUDFLARE_ACCOUNT_ID repository secret before running this workflow."
             exit 1
@@ -85,14 +109,66 @@ jobs:
             echo "::error title=Missing Cloudflare API token::Set the CLOUDFLARE_API_TOKEN repository secret before running this workflow."
             exit 1
           fi
-          if [ -z "${WRANGLER_TOML_CONTENT:-}" ]; then
-            echo "::error title=Missing Worker configuration::Set the BACKEND_TOML repository secret before running this workflow."
+
+          cd worker/
+          trap 'rm -f ../.d1-emails-schema.json ../.d1-provider-identity.sql' EXIT
+
+          DB_NAME="$(python3 - <<'PY'
+          import sys
+          import tomllib
+
+          with open("wrangler.toml", "rb") as fh:
+              cfg = tomllib.load(fh)
+          matches = [item for item in cfg.get("d1_databases", []) if item.get("binding") == "DB"]
+          if len(matches) != 1:
+              print("Expected exactly one D1 binding named DB in BACKEND_TOML", file=sys.stderr)
+              raise SystemExit(1)
+          name = matches[0].get("database_name")
+          if not isinstance(name, str) or not name.strip():
+              print("D1 binding DB is missing database_name", file=sys.stderr)
+              raise SystemExit(1)
+          print(name)
+          PY
+          )"
+
+          # Query only schema metadata; never export production mail contents.
+          pnpm exec wrangler d1 execute "$DB_NAME" \
+            --remote \
+            --command "PRAGMA table_info(emails)" \
+            --json > ../.d1-emails-schema.json
+
+          python3 ../db/render_idempotent_d1_migration.py \
+            --schema-json ../.d1-emails-schema.json \
+            --migration ../db/2026-09-12-provider-message-identity.sql \
+            --output ../.d1-provider-identity.sql
+
+          if [ -s ../.d1-provider-identity.sql ]; then
+            pnpm exec wrangler d1 execute "$DB_NAME" \
+              --remote \
+              --file ../.d1-provider-identity.sql
+            echo "Remote D1 provider identity schema is current"
+          else
+            echo "Remote D1 emails table is not initialized yet; fresh initialization will create the current schema"
+          fi
+
+      - name: Deploy Backend for ${{ github.ref_name }}
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "::error title=Missing Cloudflare account ID::Set the CLOUDFLARE_ACCOUNT_ID repository secret before running this workflow."
+            exit 1
+          fi
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare API token::Set the CLOUDFLARE_API_TOKEN repository secret before running this workflow."
             exit 1
           fi
 
           cd worker/
-          printf '%s\n' "$WRANGLER_TOML_CONTENT" > wrangler.toml
-
           if [ "${DEBUG_MODE:-}" = "true" ]; then
             pnpm run deploy
           else
@@ -104,9 +180,4 @@ jobs:
               exit "$code"
             fi
           fi
-          echo "Deployed for tag ${{ github.ref_name }}"
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          WRANGLER_TOML_CONTENT: ${{ secrets.BACKEND_TOML }}
-          DEBUG_MODE: ${{ secrets.DEBUG_MODE }}
+          echo "Deployed for ref ${{ github.ref_name }}"
