@@ -14,10 +14,36 @@ ALTER TABLE emails ADD COLUMN has_attachments INTEGER;
 ALTER TABLE emails ADD COLUMN source_key TEXT;
 ALTER TABLE emails ADD COLUMN sync_version INTEGER;
 
+-- Legacy imap_uid is already protected by a partial UNIQUE index, so copying it
+-- into source_key is deterministic and cannot create a new collision. Do not
+-- derive provider_message_id from RFC Message-ID, subject or timestamps: those
+-- are not provider identities and false merges would be data loss.
+UPDATE emails
+   SET source_key = imap_uid
+ WHERE source_key IS NULL AND imap_uid IS NOT NULL;
+
+-- Protocol can be proven from the existing key namespace. Rows with an IMAP
+-- shaped key predate provider identity and remain IMAP. Native CF-routing rows
+-- are also unambiguous. Existing Graph rows keep their legacy source_key only;
+-- ImmutableId is populated by the new writer for newly observed messages.
+UPDATE emails
+   SET provider = CASE
+       WHEN source = 'cf_routing' THEN 'native'
+       WHEN imap_uid LIKE 'graph:%' THEN 'graph'
+       WHEN imap_uid LIKE 'pop3:%' THEN 'pop3'
+       WHEN imap_uid IS NOT NULL THEN 'imap'
+       ELSE provider
+   END
+ WHERE provider IS NULL;
+
+UPDATE emails
+   SET source_folder = 'INBOX', sync_version = 1
+ WHERE source = 'cf_routing' AND source_folder IS NULL;
+
 -- source_key is the protocol/provider-specific stable identity. Current IMAP and
--- POP3 writers derive it from account + folder + UIDVALIDITY/UID or UIDL;
--- Graph uses the provider message identity. NULL means identity is unavailable,
--- never an empty/fabricated key.
+-- POP3 writers derive it from account + folder + UIDVALIDITY/UID or UIDL. New
+-- Graph writes use account + ImmutableId; migrated Graph rows retain the legacy
+-- key until naturally re-observed because fabricating an ImmutableId is unsafe.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_source_key_uq
     ON emails(source_key) WHERE source_key IS NOT NULL;
 
