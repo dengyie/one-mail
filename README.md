@@ -136,6 +136,7 @@ pnpm install && pnpm dev     # dev 代理到 127.0.0.1:8787
 
 ## 文档 & 变更
 
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — 开发环境、测试链路、安全不变量、CI/PR 规范与 Agent 执行规则
 - `CHANGELOG.md`（中文） / `CHANGELOG_EN.md`（English） — 版本变更
 - `docs/` — one-mail 专项设计与验收（含前后端分离、聚合器设计）
 - `vitepress-docs/` — 临时邮箱功能文档（附录）
