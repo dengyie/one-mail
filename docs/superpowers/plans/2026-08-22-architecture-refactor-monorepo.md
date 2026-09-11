@@ -18,7 +18,7 @@
 - **行为零变化**：每个替换先「等价替换」，验证全绿后再继续。错误信息文本的措辞变化属可接受的 cosmetic（无逻辑依赖），须在任务说明中标注。
 - **不 git commit**：子 agent 完成任务后**只报告**，由主 agent 在用户显式要求时统一 commit。
 - **双语 CHANGELOG + docs**：收尾任务须同时更新 `CHANGELOG.md`（中文）+ `CHANGELOG_EN.md`（英文）`(main)` 段 + `vitepress-docs` zh/en。
-- worker 包名 `cloudflare_temp_email` 与 frontend 相同 → monorepo 内必须重命名（wrangler 用 `wrangler.toml` 的 `name="one-mail"`，与 package.json name 无关，重命名安全）。`.github/workflows` 里的 `cloudflare_temp_email` 是上游 repo 名，**不要动**。
+- 重构前 worker 包本地包名与 frontend 相同 → monorepo 内已重命名为 `name="one-mail"`（wrangler 用 `wrangler.toml` 的 `name`，与 package.json name 无关）。
 
 ---
 
@@ -148,7 +148,7 @@ patchedDependencies:
 - [ ] **Step 4: 重命名 worker/frontend 包名 + 挂 shared 依赖**
   - `worker/package.json`: `"name": "@one-mail/worker"`；**删除** `pnpm.patchedDependencies` 块（已移到根）；`dependencies` 加 `"@one-mail/shared": "workspace:*"`。
   - `frontend/package.json`: `"name": "@one-mail/frontend"`；`devDependencies` 加 `"@one-mail/shared": "workspace:*"`。
-  - 验证：`grep -rn "cloudflare_temp_email" worker/package.json frontend/package.json` → 无命中（`.github` 里的上游名不动）。
+  - 验证：对 `worker/package.json frontend/package.json` 全仓 grep 旧包名 → 无命中（旧名已全部迁移到 `@one-mail/*`）。
 
 - [ ] **Step 5: 根安装 + 构建 shared + 跑冒烟**
   - 根执行 `pnpm install`（会把 workspace 各包 link 进 node_modules，telegraf patch 生效）。

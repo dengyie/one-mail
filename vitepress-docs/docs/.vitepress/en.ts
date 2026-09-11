@@ -18,7 +18,7 @@ export const en = defineConfig({
         },
 
         editLink: {
-            pattern: 'https://github.com/dreamhunter2333/cloudflare_temp_email/edit/main/vitepress-docs/docs/:path',
+            pattern: 'https://github.com/dengyie/one-mail/edit/main/vitepress-docs/docs/:path',
             text: 'Edit this page on GitHub'
         },
 
@@ -78,11 +78,11 @@ function nav(): DefaultTheme.NavItem[] {
             items: [
                 {
                     text: 'CHANGELOG',
-                    link: 'https://github.com/dreamhunter2333/cloudflare_temp_email/blob/main/CHANGELOG.md'
+                    link: 'https://github.com/dengyie/one-mail/blob/main/CHANGELOG.md'
                 },
                 {
                     text: 'Contribute',
-                    link: 'https://github.com/dreamhunter2333/cloudflare_temp_email'
+                    link: 'https://github.com/dengyie/one-mail'
                 }
             ]
         }
@@ -132,7 +132,6 @@ function sidebarGuide(): DefaultTheme.SidebarItem[] {
                 { text: 'Github Actions Configuration', link: 'actions/github-action' },
                 { text: 'Configure Email Routing', link: 'email-routing.md' },
                 { text: 'Configure Email Sending', link: 'config-send-mail' },
-                { text: 'Auto-Update Configuration', link: 'actions/auto-update' },
             ]
         },
         {

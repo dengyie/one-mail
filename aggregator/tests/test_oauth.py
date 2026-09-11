@@ -1,6 +1,7 @@
 import responses
 import one_mail_agg.oauth as oauth_mod
-from one_mail_agg.config import AccountConfig
+from one_mail_agg.config import AccountConfig, Config
+import json
 from one_mail_agg.oauth import (
     gmail_access_token,
     outlook_access_token,
@@ -175,7 +176,7 @@ def test_msa_factory_routes_through_consumers_and_xoauth2(monkeypatch):
 def test_alias_hotmail_uses_msa(monkeypatch):
     """配置写 provider=hotmail（别名）应归一化为 msa 并正常认证。"""
     called = {}
-    def _fake_msa(oauth):
+    def _fake_msa(oauth, on_rotated=None):
         called["provider"] = oauth.get("provider")
         return "alias-tok"
     # 单一事实来源：factory 先 normalize_provider(hotmail)->msa，再索引 _TOKEN_FN["msa"]。
@@ -197,3 +198,66 @@ def test_alias_hotmail_uses_msa(monkeypatch):
     client = oauth_mod.oauth_client_factory(acc)(acc)
     assert isinstance(client, _FakeClient)
     assert called.get("tok") == "alias-tok"
+
+@responses.activate
+def test_msa_rotated_refresh_token_triggers_callback():
+    """MSA 兑换响应轮换出新 RT 时必须经 on_rotated 交出（丢 = 账号失联根因）。"""
+    captured = []
+    responses.add(
+        responses.POST, "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+        json={"access_token": "acc", "refresh_token": "ROTATED-NEW"}, status=200)
+    oauth = {"client_id": "c", "refresh_token": "OLD"}
+    tok = oauth_mod.msa_access_token(oauth, lambda rt: captured.append(rt))
+    assert tok == "acc"
+    assert oauth["refresh_token"] == "ROTATED-NEW"
+    assert captured == ["ROTATED-NEW"]
+
+
+@responses.activate
+def test_gmail_outlook_rotated_refresh_token_forwarded():
+    """gmail / outlook（组织）通路的轮换 RT 同样不丢弃。"""
+    responses.add(responses.POST, "https://oauth2.googleapis.com/token",
+                  json={"access_token": "g", "refresh_token": "G2"}, status=200)
+    g_oauth = {"client_id": "c", "client_secret": "s", "refresh_token": "G1"}
+    assert oauth_mod.gmail_access_token(g_oauth, lambda rt: None) == "g"
+    assert g_oauth["refresh_token"] == "G2"
+
+    responses.add(responses.POST, "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+                  json={"access_token": "o", "refresh_token": "O2"}, status=200)
+    o_oauth = {"client_id": "c", "client_secret": "s", "refresh_token": "O1"}
+    assert oauth_mod.outlook_access_token(o_oauth, lambda rt: None) == "o"
+    assert o_oauth["refresh_token"] == "O2"
+
+
+@responses.activate
+def test_oauth_client_factory_wires_persister(tmp_path, monkeypatch):
+    """factory 收到 config 后把轮换 RT 经 token_store 写回 config.json（端到端接线）。"""
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({
+        "worker_base_url": "https://w", "admin_token": "t",
+        "accounts": [{"id": "kw", "source": "imap_outlook", "host": "outlook.office365.com",
+                      "port": 993, "username": "x@hotmail.com", "password": "",
+                      "folders": ["INBOX"], "use_ssl": True,
+                      "oauth": {"provider": "msa", "client_id": "c", "refresh_token": "OLD"}}],
+    }), encoding="utf-8")
+
+    responses.add(responses.POST, "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+                  json={"access_token": "acc", "refresh_token": "ROTATED-NEW"}, status=200)
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+        def oauth2_login(self, u, token):
+            pass
+
+    monkeypatch.setattr(oauth_mod, "IMAPClient", _FakeClient)
+
+    config = Config(worker_base_url="https://w", admin_token="t", accounts=[],
+                    config_path=str(cfg_file))
+    acc = AccountConfig(id="kw", source="imap_outlook", host="outlook.office365.com",
+                        port=993, username="x@hotmail.com", password="",
+                        oauth={"provider": "msa", "client_id": "c", "refresh_token": "OLD"})
+    oauth_mod.oauth_client_factory(acc, config)(acc)
+
+    saved = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert saved["accounts"][0]["oauth"]["refresh_token"] == "ROTATED-NEW"

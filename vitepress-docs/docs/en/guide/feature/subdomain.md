@@ -8,7 +8,7 @@ Mail channel is no longer supported. The reference below is limited to the recei
 
 Reference
 
-- [Configure Subdomain Email](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/164#issuecomment-2082612710)
+- [Configure Subdomain Email](https://github.com/dengyie/one-mail/issues/164#issuecomment-2082612710)
 
 ## Create Random Second-level Subdomain Addresses
 
@@ -75,7 +75,7 @@ If you want to create an address under a specific subdomain such as `team.abc.co
 > random subdomain feature will appear to work in the UI but inbound mail will never reach the
 > Worker.
 >
-> Reference issue: [#1035](https://github.com/dreamhunter2333/cloudflare_temp_email/issues/1035)
+> Reference issue: [#1035](https://github.com/dengyie/one-mail/issues/1035)
 
 ## Let APIs Specify Subdomains Directly
 

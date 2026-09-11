@@ -129,8 +129,16 @@
             class="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-zinc-800 dark:text-zinc-200"
           >{{ displayBody }}</pre>
           <div v-else class="text-sm text-zinc-400 py-8 text-center">{{ t('detail.noBody') }}</div>
-          <div v-if="htmlBlocked" class="mt-3 text-xs text-amber-600 dark:text-amber-400">
-            {{ t('detail.htmlBlocked', { count: htmlBlocked }) }}
+          <div v-if="htmlBlocked" class="mt-3">
+            <n-alert type="warning" :show-icon="false" :bordered="false" class="rounded-xl">
+              <div class="flex items-center justify-between w-full">
+                <span>{{ t('detail.htmlBlocked', { count: htmlBlocked }) }}</span>
+                <n-button size="tiny" tertiary type="warning" @click="handleLoadRemoteImages">
+                  <template #icon><n-icon><ImageRound /></n-icon></template>
+                  {{ t('detail.loadRemoteImages') }}
+                </n-button>
+              </div>
+            </n-alert>
           </div>
         </div>
 
@@ -159,8 +167,9 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowBackRound, RefreshRound } from '@vicons/material'
+import { ArrowBackRound, ImageRound, RefreshRound } from '@vicons/material'
 import { sanitizeHtmlMail } from '../utils/sanitize-html-mail'
+import { blockRemoteContent } from '../utils/remote-content-policy'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
 import { useGlobalState } from '../store'
@@ -170,7 +179,7 @@ import MessageActionToolbar from '../components/ai/MessageActionToolbar.vue'
 import { useMessage } from 'naive-ui'
 
 const { t } = useScopedI18n('unified')
-const { userJwt, unifiedApiKey } = useGlobalState()
+const { userJwt, unifiedApiKey, autoLoadRemoteImages } = useGlobalState()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -195,6 +204,9 @@ const aiDuration = ref(0)
 const aiAnalysisText = ref('')
 let aiTimer = null
 
+// Per-mail consent for remote images, mirroring MailContentRenderer.
+const showRemoteImages = ref(false)
+
 watch(() => email.value?.id, () => {
   if (aiTimer) {
     clearTimeout(aiTimer)
@@ -202,6 +214,7 @@ watch(() => email.value?.id, () => {
   }
   aiThinking.value = false
   aiAnalysisText.value = ''
+  showRemoteImages.value = false
 })
 
 const generateAiAnalysis = () => {
@@ -291,10 +304,19 @@ const stripHtml = (html) =>
 
 const sanitisedHtml = computed(() => {
   if (!email.value?.html_body) return { html: '', blocked: 0 }
+  // Strict default: sanitizeHtmlMail blocks remote resources. Only when the user
+  // opts in (per-mail button, or the global auto-load picture switch) do we lift
+  // the remote <img> block — never scripts / event attrs / javascript: / CSS fetches.
+  if (autoLoadRemoteImages.value || showRemoteImages.value) {
+    return blockRemoteContent(email.value.html_body, { allowRemote: true })
+  }
   return sanitizeHtmlMail(email.value.html_body)
 })
 const htmlBody = computed(() => sanitisedHtml.value.html)
 const htmlBlocked = computed(() => sanitisedHtml.value.blocked)
+const handleLoadRemoteImages = () => {
+  showRemoteImages.value = true
+}
 const displayBody = computed(() => {
   if (email.value?.text_body) return email.value.text_body
   if (email.value?.html_body) return stripHtml(email.value.html_body)

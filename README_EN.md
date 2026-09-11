@@ -10,7 +10,7 @@
 
 > **Unified Inbox**: aggregates mail from multiple accounts (QQ / 163 / Gmail / Outlook …) into a single API on Cloudflare Workers — a VPS-based `aggregator/` polls the providers (IMAP first, POP3 fallback) and uploads into a unified D1-backed API, so verification codes and login confirmations from every mailbox land in one place.
 
-Forked from [dreamhunter2333/cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email), keeping its temp-mail base (Cloudflare Email Routing + Worker receive + Vue frontend) and adding the **one-mail unified inbox** on top.
+This project is **developed from scratch by our team**, including a complete temp-mail base (Cloudflare Email Routing + Worker receive + Vue frontend) and the **one-mail unified inbox** on top.
 
 > External-mail support is currently primarily **one-way receiving aggregation**. Source read-state write-back, delete/archive/move, sending as external identities, threads, and complete attachment handling are still evolving. See the [Unified Mailbox Development Design](vitepress-docs/docs/en/guide/feature/unified-mailbox-development.md) for the target architecture, phased plan, and acceptance criteria.
 
@@ -30,7 +30,7 @@ VPS Python aggregator  aggregator/
 Cloudflare Worker ──mail-api.mangoqwq.cc.cd──> API (worker/)
    │  ├─ /api/unified/*        unified inbox queries (API-key auth)
    │  ├─ /admin/unified/*     management / ingest (admin auth)
-   │  └─ /api/* ·/user_api/* ·/admin/*  temp-mail base (upstream)
+   │  └─ /api/* ·/user_api/* ·/admin/*  temp-mail base
    ▼
 frontend/  —  VITE_API_BASE direct to Worker (separated frontend/backend)
 ```
@@ -44,8 +44,8 @@ frontend/  —  VITE_API_BASE direct to Worker (separated frontend/backend)
 | `frontend/` | Vue 3 + Naive UI | UI, connects the Worker directly |
 | `pages/` | static shell | optional static hosting (no Functions) |
 | `db/` | D1 SQLite | unified schema + migrations |
-| `mail-parser-wasm/` | Rust WASM | mail parsing (upstream base) |
-| `smtp_proxy_server/` | Python | SMTP/IMAP proxy for local dev (upstream base) |
+| `mail-parser-wasm/` | Rust WASM | mail parsing |
+| `smtp_proxy_server/` | Python | SMTP/IMAP proxy for local dev |
 
 ## Unified inbox
 
@@ -99,13 +99,13 @@ Back up an existing D1 database before upgrading, then run `db/2026-09-09-send-m
 
 ## What's in this repo
 
-A fork of [cloudflare_temp_email](https://github.com/dreamhunter2333/cloudflare_temp_email) with the one-mail unified inbox layered on top. The temp-mail base (Email Routing receive, Rust-WASM parsing, SMTP proxy) is preserved; the unified inbox (D1 schema, Worker API, VPS aggregator) is this repo's addition.
+The temp-mail base (Email Routing receive, Rust-WASM parsing, SMTP proxy) plus the one-mail unified inbox (D1 schema, Worker API, VPS aggregator) — all developed from scratch in this repository.
 
 ## Docs & changelog
 
 - `CHANGELOG.md` (中文) / `CHANGELOG_EN.md` (English) — version history
 - `docs/` — one-mail design & acceptance notes (frontend/backend separation, aggregator)
-- `vitepress-docs/` — upstream temp-mail feature docs (appendix)
+- `vitepress-docs/` — temp-mail feature docs (appendix)
 
 ## License
 

@@ -134,8 +134,11 @@ let allowRemoteRefs = false;
 
 /**
  * An isolated DOMPurify instance. The hooks below must not reach the shared
- * singleton, which mail-actions.js uses when building replies -- quoting a
- * mail should keep its images.
+ * singleton that sanitize-html.js uses for user-authored content. It is the
+ * single purifier behind every mail-body boundary (reading and reply/forward
+ * quoting), so a strict remote-resource block applies everywhere a mail's
+ * original markup can resurface — a quoted tracking image must not ride along
+ * into a reply.
  */
 function getPurifier() {
     if (purifier) {

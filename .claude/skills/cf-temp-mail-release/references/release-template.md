@@ -21,16 +21,16 @@ Release notes body 使用以下格式，内容从 CHANGELOG.md 的对应版本�
 
 - style/refactor/perf/docs: |模块| 描述
 
-### [更新或者部署网页不生效请如图勾选清理缓存](https://github.com/dreamhunter2333/cloudflare_temp_email/discussions/487)
+### [更新或者部署网页不生效请如图勾选清理缓存](https://github.com/dengyie/one-mail/discussions/487)
 
 <details>
 <summary>PRs</summary>
 
-* PR title by @author in https://github.com/dreamhunter2333/cloudflare_temp_email/pull/NUMBER
+* PR title by @author in https://github.com/dengyie/one-mail/pull/NUMBER
 
 </details>
 
-**Full Changelog**: https://github.com/dreamhunter2333/cloudflare_temp_email/compare/vOLD...vNEW
+**Full Changelog**: https://github.com/dengyie/one-mail/compare/vOLD...vNEW
 ```
 
 ## Notes

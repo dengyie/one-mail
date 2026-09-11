@@ -8,7 +8,7 @@ _VALID_PROTOCOLS = {"imap", "pop3", "auto"}
 @dataclass
 class AccountConfig:
     id: str
-    source: str           # imap_gmail | imap_outlook | imap_qq | imap_163
+    source: str           # imap_gmail | imap_outlook | graph_outlook | imap_qq | imap_163
     host: str
     port: int
     username: str
@@ -23,6 +23,7 @@ class AccountConfig:
     pop3_ssl: bool | None = None    # None 表示继承 use_ssl
     pop3_use_stls: bool = False
     initial_sync_limit: int = 50  # 首次同步时最多拉取最新 N 封（0 为不限/全量）
+    user_managed: bool = False    # True = 用户自助账号（user_mail_accounts），RT 轮换回写 Worker
 
     def __post_init__(self):
         # Keep protocol semantics identical for local config and Worker payloads.
@@ -66,6 +67,7 @@ class Config:
     admin_token: str
     accounts: list[AccountConfig]
     state_path: str = "./sync_state.json"
+    config_path: str | None = None   # load_config 回填，供 refresh_token 轮换写回
 
 
 def load_config(path: str) -> Config:
@@ -77,4 +79,5 @@ def load_config(path: str) -> Config:
         admin_token=raw["admin_token"],
         accounts=accounts,
         state_path=raw.get("state_path", "./sync_state.json"),
+        config_path=path,
     )

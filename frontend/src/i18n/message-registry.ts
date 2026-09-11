@@ -2951,8 +2951,12 @@ export const MESSAGE_REGISTRY = {
       "zh": "刷新"
     },
     "detail.htmlBlocked": {
-      "en": "Some unsafe or remote content was blocked ({count} item(s)).",
-      "zh": "已阻止部分不安全或远程内容（{count} 项）。"
+      "en": "{count} remote resources blocked to protect your privacy",
+      "zh": "已阻止 {count} 项外部资源以保护隐私"
+    },
+    "detail.loadRemoteImages": {
+      "en": "Load Images",
+      "zh": "加载图片"
     },
     "detail.metadataOnly": {
       "en": "metadata only",

@@ -52,7 +52,7 @@ def clean_raw_headers(raw: str) -> str:
 
 
 def fix_mojibake(raw: str) -> str:
-    """Fix UTF-8 mojibake where upstream stored UTF-8 bytes as cp1252/latin-1.
+    """Fix UTF-8 mojibake where bytes were stored as cp1252/latin-1.
 
     Tries whole-string fix first (fast path). If that fails (e.g. complex
     emails with mixed binary/text content), falls back to line-by-line fix.

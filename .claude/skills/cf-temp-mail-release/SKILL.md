@@ -1,6 +1,6 @@
 ---
 name: cf-temp-mail-release
-description: Create a GitHub release for cloudflare_temp_email project. Use when the user asks to create a release, publish a version, tag a release, or make a new release. Reads CHANGELOG.md for release content, collects merged PRs via `gh` CLI, and creates a properly formatted GitHub release.
+description: Create a GitHub release for one-mail project. Use when the user asks to create a release, publish a version, tag a release, or make a new release. Reads CHANGELOG.md for release content, collects merged PRs via `gh` CLI, and creates a properly formatted GitHub release.
 ---
 
 # Release Workflow

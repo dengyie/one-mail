@@ -5,6 +5,7 @@
 - A GitHub account is required
 - A stable network connection
 
-## Fork Repository
+## Obtain the Repository
 
-- Fork [this repository](https://github.com/dreamhunter2333/cloudflare_temp_email.git) on GitHub
+- Push this repository to a GitHub repository you own (or use the current repository directly)
+- Make sure the repository is public or accessible to your deployment environment

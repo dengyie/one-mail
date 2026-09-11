@@ -43,7 +43,7 @@ jobs:
           WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           cd vitepress-docs/
-          wget https://github.com/dreamhunter2333/cloudflare_temp_email/releases/latest/download/frontend.zip -O docs/public/ui_install/frontend.zip
+          wget https://github.com/dengyie/one-mail/releases/latest/download/frontend.zip -O docs/public/ui_install/frontend.zip
           pnpm install --no-frozen-lockfile
           if TAG_NAME=$(gh release view --json tagName --jq '.tagName' 2>/dev/null); then
             echo "Using release tag $TAG_NAME"
