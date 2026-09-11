@@ -8,6 +8,7 @@ import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
 import { mergeRoleAddressConfigs } from "../unified/rbac_config";
 import { hashPasswordForStorage } from "../core/password.ts";
+import { HARD_MAX_UNIFIED_PAGE_SIZE } from "../quota.ts";
 
 export default {
     getSetting: async (c: Context<HonoCustomType>) => {
@@ -231,6 +232,13 @@ export default {
             }
             // 外部邮箱接入上限（角色化配额）。缺失/负数非法，与 maxAddressCount 同口径校验。
             if (typeof config?.maxMailAccountCount === "number" && config.maxMailAccountCount < 0) {
+                return c.text(msgs.InvalidMaxAddressCountMsg, 400);
+            }
+            // Unified Inbox 单页配额必须始终保留 Worker 硬上限；0 不能表达 unlimited。
+            if (config?.maxUnifiedPageSize !== undefined
+                && (!Number.isInteger(config.maxUnifiedPageSize)
+                    || config.maxUnifiedPageSize < 1
+                    || config.maxUnifiedPageSize > HARD_MAX_UNIFIED_PAGE_SIZE)) {
                 return c.text(msgs.InvalidMaxAddressCountMsg, 400);
             }
         }
