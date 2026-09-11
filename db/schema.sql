@@ -167,7 +167,18 @@ CREATE TABLE IF NOT EXISTS emails (
     attachments_json TEXT,
     raw_ref TEXT,
     imap_uid TEXT,
-    updated_at INTEGER
+    updated_at INTEGER,
+    provider TEXT,
+    source_folder TEXT,
+    source_folder_id TEXT,
+    provider_message_id TEXT,
+    provider_thread_id TEXT,
+    message_id_header TEXT,
+    in_reply_to TEXT,
+    references_json TEXT,
+    has_attachments INTEGER,
+    source_key TEXT,
+    sync_version INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
@@ -180,6 +191,46 @@ CREATE INDEX IF NOT EXISTS idx_emails_to_order_received ON emails(to_addr, COALE
 CREATE INDEX IF NOT EXISTS idx_emails_to_read_received ON emails(to_addr, is_read, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_star_received ON emails(to_addr, is_starred, received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_source_key_uq ON emails(source_key) WHERE source_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_provider_message_uq
+    ON emails(account_id, provider, provider_message_id)
+    WHERE account_id IS NOT NULL AND provider IS NOT NULL AND provider_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_emails_order_cursor
+    ON emails(COALESCE(internal_date, received_at) DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_account_order_cursor
+    ON emails(account_id, COALESCE(internal_date, received_at) DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_order_cursor
+    ON emails(to_addr, COALESCE(internal_date, received_at) DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_account_folder_order_cursor
+    ON emails(account_id, source_folder, COALESCE(internal_date, received_at) DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_provider_thread
+    ON emails(account_id, provider_thread_id) WHERE provider_thread_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS mail_account_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mail_account_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_folder_id TEXT,
+    canonical_name TEXT NOT NULL,
+    display_name TEXT,
+    folder_type TEXT NOT NULL CHECK (
+        folder_type IN ('inbox', 'sent', 'drafts', 'archive', 'trash', 'spam', 'custom')
+    ),
+    uidvalidity INTEGER,
+    last_cursor TEXT,
+    last_sync_at INTEGER,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_provider_id_uq
+    ON mail_account_folders(mail_account_id, provider, provider_folder_id)
+    WHERE provider_folder_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_canonical_uq
+    ON mail_account_folders(mail_account_id, provider, canonical_name)
+    WHERE provider_folder_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_mail_account_folders_account_type
+    ON mail_account_folders(mail_account_id, folder_type, canonical_name);
 
 CREATE TABLE IF NOT EXISTS scheduled_locks (
     name TEXT PRIMARY KEY,

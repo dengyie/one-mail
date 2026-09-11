@@ -25,6 +25,48 @@ def test_normalize_basic_fields():
     assert e["imap_uid"] == "qq:imap.qq.com:INBOX:7:123"
     assert e["internal_date"] == 1700000000000
     assert e["is_read"] == 0
+    assert e["provider"] == "imap"
+    assert e["source_folder"] == "INBOX"
+    assert e["source_folder_id"] is None
+    assert e["source_uidvalidity"] == 7
+    assert e["provider_message_id"] is None
+    assert e["source_key"] == e["imap_uid"]
+    assert e["has_attachments"] == 0
+    assert e["sync_version"] == 1
+
+
+def test_normalize_rfc_thread_headers_are_metadata_not_provider_identity():
+    raw = (b"From: Alice <alice@ex.com>\r\nTo: me@qq.com\r\n"
+           b"Message-ID: <m2@example.com>\r\n"
+           b"In-Reply-To: <m1@example.com>\r\n"
+           b"References: <root@example.com> <m1@example.com>\r\n"
+           b"Subject: reply\r\nContent-Type: text/plain\r\n\r\nbody\r\n")
+    e = normalize_message(raw, acc(), "INBOX", uidvalidity=8, uid=9, internal_date_ms=None)
+    assert e["message_id_header"] == "<m2@example.com>"
+    assert e["in_reply_to"] == "<m1@example.com>"
+    assert json.loads(e["references_json"]) == ["<root@example.com>", "<m1@example.com>"]
+    # RFC headers are not promoted to provider uniqueness.
+    assert e["provider_message_id"] is None
+
+
+def test_normalize_explicit_provider_identity_is_preserved():
+    e = normalize_message(
+        RAW, acc(), "Archive", uidvalidity=0, uid=0, internal_date_ms=None,
+        imap_uid_override="graph:qq:Archive:legacy-id",
+        provider="graph",
+        provider_message_id="immutable-id",
+        provider_thread_id="conversation-id",
+        source_folder_id="folder-id",
+        source_key_override="graph:qq:immutable-id",
+    )
+    assert e["provider"] == "graph"
+    assert e["provider_message_id"] == "immutable-id"
+    assert e["provider_thread_id"] == "conversation-id"
+    assert e["source_folder"] == "Archive"
+    assert e["source_folder_id"] == "folder-id"
+    assert e["source_key"] == "graph:qq:immutable-id"
+    assert e["imap_uid"] == "graph:qq:Archive:legacy-id"
+    assert e["source_uidvalidity"] is None
 
 
 def test_normalize_header_not_json_serializable():
@@ -49,15 +91,17 @@ def test_normalize_header_not_json_serializable():
 
 def test_normalize_pop3_uid_override():
     """POP3 路径没有 IMAP UIDVALIDITY/UID，调用方用 imap_uid_override 传稳定键，
-    归一化结果的 imap_uid 必须用该值，而非默认的 host:folder:uidvalidity:uid。"""
-    from one_mail_agg.config import AccountConfig
+    归一化结果的 imap_uid/source_key 必须用该值，并识别 auto fallback 的真实协议。"""
     pop = AccountConfig(id="163", source="imap_163", host="imap.163.com", port=993,
-                        username="x@163.com", password="p", protocol="pop3",
+                        username="x@163.com", password="p", protocol="auto",
                         pop3_host="pop.163.com", pop3_port=995, pop3_ssl=True)
+    key = "pop3:163:pop.163.com:INBOX:UIDL-ABC123"
     e = normalize_message(RAW, pop, "INBOX", uidvalidity=1, uid=42,
-                          internal_date_ms=None,
-                          imap_uid_override="pop3:163:pop.163.com:INBOX:UIDL-ABC123")
-    assert e["imap_uid"] == "pop3:163:pop.163.com:INBOX:UIDL-ABC123"
+                          internal_date_ms=None, imap_uid_override=key)
+    assert e["imap_uid"] == key
+    assert e["source_key"] == key
+    assert e["provider"] == "pop3"
+    assert e["source_uidvalidity"] is None
     # 不传 override 时用含账号维度的 IMAP 键
     e_imap = normalize_message(RAW, acc(), "INBOX", uidvalidity=7, uid=123, internal_date_ms=None)
     assert e_imap["imap_uid"] == "qq:imap.qq.com:INBOX:7:123"
@@ -71,13 +115,12 @@ def test_normalize_header_values_coerced():
     cases = [
         None,
         b"bytes\xe4\xb8\xad\xe6\x96\x87",
-        Header("=?utf-8?B?5wWL6K+V?=", "utf-8"),  # Header 对象（真实故障形态）
+        Header("=?utf-8?B?5wWL6K+V?=", "utf-8"),
         "plain str",
     ]
     for raw in cases:
         s = _header_json_stringify(raw)
-        assert isinstance(s, str)  # 防止 json.dumps 抛 TypeError 的关键
-        # 值被安全转成字符串（即使是空串），全量 headers_json 能 json.loads
+        assert isinstance(s, str)
 
 
 def test_normalize_missing_from_falls_back_to_unknown():
@@ -98,7 +141,7 @@ def test_normalize_from_without_address_falls_back():
     raw = (b"From: just a name\r\nTo: me@qq.com\r\n"
            b"Content-Type: text/plain; charset=utf-8\r\n\r\nbody\r\n")
     e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1000, internal_date_ms=None)
-    assert e["from_addr"]  # 非空
+    assert e["from_addr"]
     assert e["from_addr"] == "just a name"
 
 
@@ -112,24 +155,18 @@ def _raw_with_bad_attachment(binary: bytes) -> bytes:
 
 
 def test_normalize_corrupt_attachment_does_not_wedge_sync():
-    """C3 goal: 畸形附件（base64 垃圾/二进制乱码）不能毁掉整批 sync。
-    Py3.11 a2b_base64 对坏字节宽松忽略（解码出垃圾 bytes）——所以不抛错，
-    但这正是危险之处：不同 Python 版本/VPS 与本地解释器行为不同，
-    一旦解码从宽松变严格（3.13+ 曾讨论收紧），单封坏件会让
-    normalize_message 抛错、水印不推进、账号死锁。因此：消息必须
-    仍能被规范化成一行、imap_uid 可用，attachments_json 是合法数组。"""
+    """C3 goal: 畸形附件（base64 垃圾/二进制乱码）不能毁掉整批 sync。"""
     raw = _raw_with_bad_attachment(b"@@@@@@not-valid-base64@@@@@@")
     e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1001, internal_date_ms=None)
-    assert e["imap_uid"] == "qq:imap.qq.com:INBOX:7:1001"  # 水印照常，同步不卡死
+    assert e["imap_uid"] == "qq:imap.qq.com:INBOX:7:1001"
     atts = json.loads(e["attachments_json"])
-    assert isinstance(atts, list)                     # attachments_json 恒为合法数组
-    assert all({"name", "size", "mimeType"} <= set(a) for a in atts)  # 条目结构完整
+    assert isinstance(atts, list)
+    assert all({"name", "size", "mimeType"} <= set(a) for a in atts)
+    assert e["has_attachments"] in (0, 1)
 
 
 def test_attachments_guard_skips_part_whose_decode_raises():
-    """C3 mechanism: _attachments 对 get_payload(decode=True) 的 except 分支。
-    直接打桩让该调用抛错，证明异常被吞掉、附件被跳过，而不是传给整批 sync。
-    （当前解释器上真实坏 base64 不会抛，此测试用桩显式覆盖守卫分支。）"""
+    """C3 mechanism: _attachments 对 get_payload(decode=True) 的 except 分支。"""
     from one_mail_agg import normalize as N
 
     msg = message_from_bytes(_raw_with_bad_attachment(b"x"))
@@ -139,5 +176,5 @@ def test_attachments_guard_skips_part_whose_decode_raises():
     def bomb(_dc=None, **kw):
         raise ValueError("simulated strict base64 decode crash")
 
-    part.get_payload = bomb                      # 桩：模拟严格模式下解码头抛错
-    assert N._attachments(msg) == []             # 守卫吞掉、跳过该附件
+    part.get_payload = bomb
+    assert N._attachments(msg) == []
