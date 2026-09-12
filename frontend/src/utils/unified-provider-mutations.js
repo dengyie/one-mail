@@ -108,12 +108,15 @@ export const installUnifiedProviderMutations = (api, getAuth, options = {}) => {
   api.unified.markRead = wrap(baseMarkRead, (queued, terminal) => ({
     ...queued,
     ...terminal,
-    is_read: Number(queued?.desired_value ?? terminal?.desired_value ?? 1) ? 1 : 0,
+    // Status polling is authoritative. If a future queue implementation
+    // coalesces multiple callers onto one durable intent, never let the older
+    // enqueue response overwrite the terminal desired state.
+    is_read: Number(terminal?.desired_value ?? queued?.desired_value ?? 1) ? 1 : 0,
   }))
   api.unified.toggleStar = wrap(baseToggleStar, (queued, terminal) => ({
     ...queued,
     ...terminal,
-    is_starred: Number(queued?.desired_value ?? terminal?.desired_value ?? 0) ? 1 : 0,
+    is_starred: Number(terminal?.desired_value ?? queued?.desired_value ?? 0) ? 1 : 0,
   }))
 
   Object.defineProperty(api.unified, '__providerMutationInstalled', { value: true })
