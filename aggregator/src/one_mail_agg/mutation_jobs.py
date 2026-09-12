@@ -44,14 +44,27 @@ class MutationIdentityError(RuntimeError):
     pass
 
 
-def claim_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> tuple[str, list[dict]]:
-    lease_token = str(uuid.uuid4())
-    response = requests.post(
-        f"{config.worker_base_url}/admin/unified/mutations/claim",
+def _claim_response(config: Config, path: str, lease_token: str, limit: int):
+    return requests.post(
+        f"{config.worker_base_url}{path}",
         headers={"x-admin-auth": config.admin_token},
         json={"lease_token": lease_token, "limit": limit},
         timeout=15,
     )
+
+
+def claim_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> tuple[str, list[dict]]:
+    """Claim with the v2 operation set, falling back to old Workers safely.
+
+    New Workers keep the historical endpoint read/star-only so an old Aggregator
+    can never consume move/delete work during a rolling deploy. New Aggregators
+    prefer the v2 endpoint; a 404 means the Worker predates v2, where the legacy
+    endpoint still has the original read/star behavior.
+    """
+    lease_token = str(uuid.uuid4())
+    response = _claim_response(config, "/admin/unified/mutations/v2/claim", lease_token, limit)
+    if response.status_code == 404:
+        response = _claim_response(config, "/admin/unified/mutations/claim", lease_token, limit)
     response.raise_for_status()
     payload = response.json()
     jobs = payload.get("jobs", []) if isinstance(payload, dict) else []
