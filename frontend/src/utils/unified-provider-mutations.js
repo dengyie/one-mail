@@ -25,15 +25,43 @@ const responseDetail = async (response) => {
   throw error
 }
 
+const buildQuery = (params = {}) => {
+  const qs = new URLSearchParams()
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === '') continue
+    if (Array.isArray(value)) {
+      if (value.length) qs.set(key, value.join(','))
+    } else {
+      qs.set(key, String(value))
+    }
+  }
+  return qs.toString()
+}
+
 export const createMutationStatusFetcher = ({
   apiBase = import.meta.env.VITE_API_BASE || '',
   fetchImpl = globalThis.fetch,
 } = {}) => async (jobId, auth) => {
   if (typeof fetchImpl !== 'function') throw new Error('fetch unavailable')
   const response = await fetchImpl(
-    `${apiBase}/api/unified/mutations/${encodeURIComponent(jobId)}`,
+    `${String(apiBase).replace(/\/$/, '')}/api/unified/mutations/${encodeURIComponent(jobId)}`,
     { method: 'GET', headers: { Accept: 'application/json', ...(auth?.headers || {}) } },
   )
+  return responseDetail(response)
+}
+
+export const createUnifiedMutationTransport = ({
+  apiBase = import.meta.env.VITE_API_BASE || '',
+  fetchImpl = globalThis.fetch,
+} = {}) => async (path, { method = 'GET', body, auth } = {}) => {
+  if (typeof fetchImpl !== 'function') throw new Error('fetch unavailable')
+  const headers = { Accept: 'application/json', ...(auth?.headers || {}) }
+  const options = { method, headers }
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    options.body = JSON.stringify(body)
+  }
+  const response = await fetchImpl(`${String(apiBase).replace(/\/$/, '')}${path}`, options)
   return responseDetail(response)
 }
 
@@ -86,11 +114,9 @@ export const installUnifiedProviderMutations = (api, getAuth, options = {}) => {
   if (api.unified.__providerMutationInstalled) return
 
   const fetchStatus = options.fetchStatus || createMutationStatusFetcher(options)
-  const wrap = (base, resultMapper) => async (...args) => {
-    const initialAuth = authSnapshot(getAuth?.())
-    const result = await base(...args)
+  const transport = options.transport || createUnifiedMutationTransport(options)
+  const finishQueued = async (result, initialAuth, resultMapper) => {
     if (result?.status !== 'queued') return resultMapper(result, result)
-
     const terminal = await waitForMutationTerminal(result.job_id, {
       initialAuth,
       getAuth,
@@ -100,6 +126,16 @@ export const installUnifiedProviderMutations = (api, getAuth, options = {}) => {
       sleepImpl: options.sleepImpl,
     })
     return resultMapper(result, terminal)
+  }
+  const wrap = (base, resultMapper) => async (...args) => {
+    const initialAuth = authSnapshot(getAuth?.())
+    const result = await base(...args)
+    return finishQueued(result, initialAuth, resultMapper)
+  }
+  const requireAuth = () => {
+    const auth = authSnapshot(getAuth?.())
+    if (!auth.key) throw new Error('unified auth unavailable')
+    return auth
   }
 
   const baseMarkRead = api.unified.markRead.bind(api.unified)
@@ -118,6 +154,58 @@ export const installUnifiedProviderMutations = (api, getAuth, options = {}) => {
     ...terminal,
     is_starred: Number(terminal?.desired_value ?? queued?.desired_value ?? 0) ? 1 : 0,
   }))
+
+  // Keep provider mutation transport next to the existing terminal-polling
+  // wrapper instead of duplicating raw fetch/auth logic in the large api module.
+  // If the api module grows native implementations later, preserve and wrap them.
+  const baseMoveEmail = typeof api.unified.moveEmail === 'function'
+    ? api.unified.moveEmail.bind(api.unified)
+    : null
+  const baseDeleteEmail = typeof api.unified.deleteEmail === 'function'
+    ? api.unified.deleteEmail.bind(api.unified)
+    : null
+  const baseListFolders = typeof api.unified.listFolders === 'function'
+    ? api.unified.listFolders.bind(api.unified)
+    : null
+
+  api.unified.listFolders = async (params = {}) => {
+    if (baseListFolders) return baseListFolders(params)
+    const auth = requireAuth()
+    const query = buildQuery(params)
+    return transport(`/api/unified/folders${query ? `?${query}` : ''}`, { auth })
+  }
+
+  api.unified.moveEmail = async (id, folderId) => {
+    const initialAuth = requireAuth()
+    const result = baseMoveEmail
+      ? await baseMoveEmail(id, folderId)
+      : await transport(`/api/unified/emails/${encodeURIComponent(id)}/move`, {
+          method: 'POST',
+          body: { folder_id: folderId },
+          auth: initialAuth,
+        })
+    return finishQueued(result, initialAuth, (queued, terminal) => ({
+      ...queued,
+      ...terminal,
+      source_folder: terminal?.target_folder ?? queued?.target_folder ?? null,
+      source_folder_id: terminal?.target_folder_id ?? queued?.target_folder_id ?? null,
+    }))
+  }
+
+  api.unified.deleteEmail = async (id) => {
+    const initialAuth = requireAuth()
+    const result = baseDeleteEmail
+      ? await baseDeleteEmail(id)
+      : await transport(`/api/unified/emails/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          auth: initialAuth,
+        })
+    return finishQueued(result, initialAuth, (queued, terminal) => ({
+      ...queued,
+      ...terminal,
+      deleted: terminal?.status === 'succeeded' || queued?.deleted === true,
+    }))
+  }
 
   Object.defineProperty(api.unified, '__providerMutationInstalled', { value: true })
 }
