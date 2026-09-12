@@ -10,14 +10,24 @@ import i18n from './i18n'
 import { api } from './api'
 import { useGlobalState } from './store'
 import { installUnifiedCursorPagination } from './utils/unified-cursor-pagination'
+import { installUnifiedProviderMutations } from './utils/unified-provider-mutations'
 
 const { userJwt, unifiedApiKey } = useGlobalState()
+const unifiedAuth = () => ({
+  userJwt: userJwt.value,
+  apiKey: unifiedApiKey.value,
+})
+
 installUnifiedCursorPagination(api, () => {
   const jwt = userJwt.value?.trim()
   if (jwt) return `user:${jwt}`
   const key = unifiedApiKey.value?.trim()
   return key ? `key:${key}` : ''
 })
+// Existing detail actions await these API methods. External provider writes now
+// resolve only after the durable mutation job reaches a terminal success, so the
+// UI cannot report a queued IMAP/Graph write as already completed.
+installUnifiedProviderMutations(api, unifiedAuth)
 
 const head = createHead()
 const app = createApp(App)
