@@ -126,9 +126,36 @@ def _apply_imap_mutation(config: Config, account: AccountConfig, job: dict) -> N
             pass
 
 
+def _scope_token(scope: str) -> str:
+    return scope.strip().lower().rstrip("/")
+
+
+def _graph_scope_allows_write(oauth: dict) -> bool:
+    """Fail early only when the stored scope explicitly proves read-only Graph access.
+
+    Older cards can omit scope entirely, and `.default` app scopes do not expose
+    individual delegated permissions in this field. Those cases are allowed to
+    attempt PATCH and let Graph make the authoritative decision. A recorded
+    Mail.Read token without Mail.ReadWrite, however, can never perform this
+    mutation and requires user re-authorization rather than retries.
+    """
+    raw = str(oauth.get("scope") or "").strip()
+    if not raw:
+        return True
+    tokens = {_scope_token(token) for token in raw.split() if token.strip()}
+    if any(token == "mail.readwrite" or token.endswith("/mail.readwrite") for token in tokens):
+        return True
+    if any(token == "mail.read" or token.endswith("/mail.read") for token in tokens):
+        return False
+    return True
+
+
 def _apply_graph_mutation(config: Config, account: AccountConfig, job: dict) -> None:
     if not account.oauth:
         raise MutationIdentityError("Graph account has no OAuth configuration")
+    if not _graph_scope_allows_write(account.oauth):
+        raise MutationUnsupported(
+            "Microsoft Graph account has Mail.Read only; reconnect it with Mail.ReadWrite to sync message state")
     message_id = str(job.get("provider_message_id") or "").strip()
     if not message_id:
         raise MutationIdentityError("Graph mutation missing ImmutableId")
