@@ -43,11 +43,24 @@ test('move rewrites provider identity before later jobs and delete keeps termina
           source: 'imap_custom',
           provider: 'imap',
           account_id: accountId,
+          from_addr: 'no-message-id@external.test',
+          to_addr: `move-${suffix}@example.test`,
+          subject: 'missing message id move target',
+          text_body: 'body',
+          received_at: Date.now() - 1,
+          source_folder: 'INBOX',
+          source_uidvalidity: 7,
+          source_key: `${accountId}:imap.example.test:INBOX:7:43`,
+        },
+        {
+          source: 'imap_custom',
+          provider: 'imap',
+          account_id: accountId,
           from_addr: 'archive-seed@external.test',
           to_addr: `move-${suffix}@example.test`,
           subject: 'archive folder seed',
           text_body: 'seed',
-          received_at: Date.now() - 1,
+          received_at: Date.now() - 2,
           source_folder: 'Archive',
           source_uidvalidity: 9,
           source_key: `${accountId}:imap.example.test:Archive:9:1`,
@@ -61,7 +74,7 @@ test('move rewrites provider identity before later jobs and delete keeps termina
           to_addr: `other-${suffix}@example.test`,
           subject: 'other archive seed',
           text_body: 'seed',
-          received_at: Date.now() - 2,
+          received_at: Date.now() - 3,
           source_folder: 'Archive',
           source_uidvalidity: 3,
           source_key: `${otherAccountId}:imap.example.test:Archive:3:1`,
@@ -79,7 +92,9 @@ test('move rewrites provider identity before later jobs and delete keeps termina
   expect(listRes.ok()).toBe(true);
   const list = await listRes.json() as { results: Array<{ id: string; subject: string }> };
   const sourceEmail = list.results.find((row) => row.subject === 'move source target');
+  const missingMessageIdEmail = list.results.find((row) => row.subject === 'missing message id move target');
   expect(sourceEmail).toBeTruthy();
+  expect(missingMessageIdEmail).toBeTruthy();
   const emailId = sourceEmail!.id;
 
   const foldersRes = await request.get(
@@ -92,6 +107,18 @@ test('move rewrites provider identity before later jobs and delete keeps termina
   };
   const archive = folders.results.find((folder) => folder.canonical_name === 'Archive');
   expect(archive).toMatchObject({ account_id: accountId, provider: 'imap' });
+
+  const missingMessageIdMove = await request.post(
+    WORKER_URL + `/api/unified/emails/${encodeURIComponent(missingMessageIdEmail!.id)}/move`,
+    { headers: authHeaders, data: { folder_id: archive!.id } },
+  );
+  expect(missingMessageIdMove.status()).toBe(409);
+  expect(await missingMessageIdMove.json()).toMatchObject({
+    status: 'unsupported',
+    code: 'missing_imap_message_id',
+    provider: 'imap',
+    operation: 'move',
+  });
 
   const otherFoldersRes = await request.get(
     WORKER_URL + `/api/unified/folders?account_id=${encodeURIComponent(otherAccountId)}`,
@@ -155,6 +182,25 @@ test('move rewrites provider identity before later jobs and delete keeps termina
     source_key: `${accountId}:imap.example.test:INBOX:7:42`,
     message_id_header: sourceMessageId,
   });
+
+  // A provider success without the new IMAP UID identity must never be allowed
+  // to project the target folder while silently retaining the stale INBOX UID.
+  const unsafeMoveResult = await request.post(
+    WORKER_URL + `/admin/unified/mutations/${encodeURIComponent(moveJob.job_id)}/result`,
+    {
+      headers: ADMIN_HEADERS,
+      data: {
+        lease_token: moveLease,
+        status: 'succeeded',
+        projection: {
+          source_folder: 'Archive',
+          source_folder_id: null,
+        },
+      },
+    },
+  );
+  expect(unsafeMoveResult.status()).toBe(400);
+  expect(await unsafeMoveResult.json()).toMatchObject({ error: 'invalid move projection' });
 
   const movedSourceKey = `${accountId}:imap.example.test:Archive:9:84`;
   const moveResultRes = await request.post(
