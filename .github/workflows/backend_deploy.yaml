@@ -135,6 +135,24 @@ jobs:
             echo "Remote D1 emails table is not initialized yet; fresh initialization will create the current schema"
           fi
 
+      - name: Ensure remote D1 mutation job schema
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare credentials::D1 migrations require CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+          cd worker/
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-09-12-mail-mutation-jobs.sql
+          echo "Remote D1 mutation job schema is current"
+
       - name: Deploy Backend for ${{ github.ref_name }}
         shell: bash
         env:

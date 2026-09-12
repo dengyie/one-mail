@@ -1,5 +1,5 @@
 import { Context } from "hono";
-import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
+import { resolveScopedEmailFilter } from "./auth_scope";
 import { extractVerifCode } from "./verifcode";
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
@@ -53,41 +53,6 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     return c.json({ results: out });
 };
 
-export const markRead = async (c: Context<HonoCustomType>) => {
-    const id = c.req.param("id");
-    const row = await c.env.DB.prepare(
-        `SELECT id, source, account_id, to_addr FROM emails WHERE id = ?`
-    ).bind(id).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null } | null;
-    if (!row) return c.json({ error: "not found" }, 404);
-    if (!(await checkRowAccess(c, row))) {
-        return c.json({ error: "forbidden" }, 403);
-    }
-    await c.env.DB.prepare(`UPDATE emails SET is_read = 1, updated_at = ? WHERE id = ?`)
-        .bind(Date.now(), id).run();
-    return c.json({ ok: true });
-};
-
-export const toggleStar = async (c: Context<HonoCustomType>) => {
-    const id = c.req.param("id");
-    const row = await c.env.DB.prepare(
-        `SELECT id, source, account_id, to_addr, is_starred FROM emails WHERE id = ?`
-    ).bind(id).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null; is_starred?: number | null } | null;
-    if (!row) return c.json({ error: "not found" }, 404);
-    if (!(await checkRowAccess(c, row))) {
-        return c.json({ error: "forbidden" }, 403);
-    }
-    const body = await c.req.json<{ is_starred?: number }>().catch(() => ({}));
-    let newStarred: number;
-    if (body && typeof body.is_starred === "number") {
-        newStarred = body.is_starred ? 1 : 0;
-    } else {
-        newStarred = (row.is_starred === 1) ? 0 : 1;
-    }
-    await c.env.DB.prepare(`UPDATE emails SET is_starred = ?, updated_at = ? WHERE id = ?`)
-        .bind(newStarred, Date.now(), id).run();
-    return c.json({ ok: true, is_starred: newStarred });
-};
-
 export const getMetaOptions = async (c: Context<HonoCustomType>) => {
     const { where, params } = await resolveScopedEmailFilter(c, {});
     const { results } = await c.env.DB.prepare(
@@ -99,4 +64,3 @@ export const getMetaOptions = async (c: Context<HonoCustomType>) => {
     const to_addrs = [...new Set(rows.map((r) => r.to_addr).filter(Boolean))];
     return c.json({ sources, accounts, to_addrs });
 };
-

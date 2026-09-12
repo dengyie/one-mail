@@ -1,7 +1,15 @@
 import { Context, Hono } from "hono";
 import { handleListQuery, commonGetUserRole } from "../common";
 import { ingestHandler } from "./ingest";
-import { countEmails, statsEmails, verifCodes, markRead, toggleStar, getMetaOptions } from "./extra_endpoints";
+import { countEmails, statsEmails, verifCodes, getMetaOptions } from "./extra_endpoints";
+import {
+    claimMutationJobs,
+    getMutationStatus,
+    markRead,
+    markUnread,
+    reportMutationResult,
+    toggleStar,
+} from "./mutation_jobs";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess } from "./api_keys";
 import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
@@ -173,12 +181,16 @@ api.get("/api/unified/emails/:id", getEmail);
 api.get("/api/unified/count", countEmails);
 api.get("/api/unified/stats", statsEmails);
 api.get("/api/unified/verifcodes", verifCodes);
-api.post("/api/unified/emails/:id/read", markRead);   // readonly 被 canAccess 挡（POST）
-api.post("/api/unified/emails/:id/star", toggleStar); // readonly 被 canAccess 挡（POST）
+api.get("/api/unified/mutations/:id", getMutationStatus);
+api.post("/api/unified/emails/:id/read", markRead);     // external providers return 202 queued
+api.post("/api/unified/emails/:id/unread", markUnread); // desired-state operation, retry-safe
+api.post("/api/unified/emails/:id/star", toggleStar);   // readonly API keys are blocked by canAccess
 api.post("/admin/unified/ingest", ingestHandler);
 api.get("/admin/unified/mail_accounts", mail_accounts.exportForAggregator);  // x-admin-auth 保护
 api.post("/admin/unified/mail_accounts/:id/status", mail_accounts.reportStatus);  // 聚合器 sync 回写
 api.post("/admin/unified/mail_accounts/:id/refresh_token", mail_accounts.reportRefreshToken);  // 聚合器 RT 轮换回写
+api.post("/admin/unified/mutations/claim", claimMutationJobs); // 聚合器短租约领取外部写任务
+api.post("/admin/unified/mutations/:id/result", reportMutationResult); // 聚合器回写 provider 结果
 // User-facing dispatch contracts live under /user_api; these admin routes are intentionally not exposed here.
 api.post("/admin/unified/keys", createKey);           // x-admin-auth 保护
 

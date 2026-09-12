@@ -1,3 +1,5 @@
+import { ensureMailMutationSchema } from "./mutation_schema";
+
 const PROVIDER_IDENTITY_COLUMNS: Array<[string, string]> = [
     ["provider", "TEXT"],
     ["source_folder", "TEXT"],
@@ -135,6 +137,11 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
             ON mail_account_folders(mail_account_id, folder_type, canonical_name)`,
     ];
     for (const sql of indexStatements) await runStatement(db, sql);
+
+    // Mutation jobs are part of the same unified-mail schema lifecycle. Keep
+    // admin initialize/migrate shape-driven even if the deploy migration was
+    // skipped in a custom installation.
+    await ensureMailMutationSchema(db);
 
     return changes;
 }
