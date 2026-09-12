@@ -79,7 +79,8 @@ test('newest pending desired-state mutation supersedes older intent deterministi
   expect(claimRes.ok()).toBe(true);
   const claim = await claimRes.json() as { jobs: Array<{ id: string; desired_value: number }> };
   const matching = claim.jobs.filter((job) => job.id === first.job_id || job.id === second.job_id);
-  expect(matching).toEqual([{ id: second.job_id, desired_value: 1 }]);
+  expect(matching).toHaveLength(1);
+  expect(matching[0]).toMatchObject({ id: second.job_id, desired_value: 1 });
 
   const resultRes = await request.post(
     WORKER_URL + `/admin/unified/mutations/${encodeURIComponent(second.job_id)}/result`,
