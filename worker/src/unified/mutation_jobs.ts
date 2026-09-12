@@ -1,4 +1,4 @@
-import { Context } from "hono";
+import type { Context } from "hono";
 
 import { checkRowAccess } from "./auth_scope.ts";
 
@@ -113,15 +113,6 @@ const queueExternalMutation = async (
     const now = Date.now();
     const id = crypto.randomUUID();
 
-    // A newer desired state makes older not-yet-started writes obsolete. A job
-    // already processing is allowed to finish, and the newer pending job runs
-    // afterwards to converge the provider to the latest user intent.
-    await c.env.DB.prepare(
-        `UPDATE mail_mutation_jobs
-            SET status = 'superseded', completed_at = ?, updated_at = ?
-          WHERE email_id = ? AND operation = ? AND status = 'pending'`,
-    ).bind(now, now, row.id, operation).run();
-
     await c.env.DB.prepare(
         `INSERT INTO mail_mutation_jobs (
             id, email_id, account_id, provider, operation, desired_value,
@@ -142,6 +133,19 @@ const queueExternalMutation = async (
         now,
         now,
     ).run();
+
+    // Collapse racing pending intents after insertion using SQLite rowid, which
+    // reflects the real durable insertion order even when two requests share
+    // the same millisecond timestamp. A processing job is never superseded here;
+    // the new pending desired state runs immediately after it and converges the
+    // provider to the newest user intent.
+    await c.env.DB.prepare(
+        `UPDATE mail_mutation_jobs
+            SET status = 'superseded', completed_at = ?, updated_at = ?
+          WHERE email_id = ? AND operation = ? AND status = 'pending'
+            AND id != ?
+            AND rowid < (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)`,
+    ).bind(now, now, row.id, operation, id, id).run();
 
     return c.json({
         ok: true,
@@ -244,7 +248,7 @@ export const claimMutationJobs = async (c: Context<HonoCustomType>) => {
     ).bind(now, now).run();
 
     const { results } = await c.env.DB.prepare(
-        `SELECT id FROM mail_mutation_jobs j
+        `SELECT id, email_id, operation FROM mail_mutation_jobs j
           WHERE j.status = 'pending'
             AND j.next_attempt_at <= ?
             AND NOT EXISTS (
@@ -253,11 +257,28 @@ export const claimMutationJobs = async (c: Context<HonoCustomType>) => {
                    AND p.operation = j.operation
                    AND p.status = 'processing'
             )
-          ORDER BY j.created_at ASC, j.id ASC
+            AND NOT EXISTS (
+                SELECT 1 FROM mail_mutation_jobs newer
+                 WHERE newer.email_id = j.email_id
+                   AND newer.operation = j.operation
+                   AND newer.status = 'pending'
+                   AND newer.rowid > j.rowid
+            )
+          ORDER BY j.created_at ASC, j.rowid ASC
           LIMIT ?`,
-    ).bind(now, requested).all<{ id: string }>();
+    ).bind(now, requested).all<{ id: string; email_id: string; operation: MailMutationOperation }>();
 
     for (const candidate of results || []) {
+        // Defensive cleanup for historical/racing duplicate pending rows. Only
+        // rows durably inserted before this candidate can be superseded.
+        await c.env.DB.prepare(
+            `UPDATE mail_mutation_jobs
+                SET status = 'superseded', completed_at = ?, updated_at = ?
+              WHERE email_id = ? AND operation = ? AND status = 'pending'
+                AND id != ?
+                AND rowid < (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)`,
+        ).bind(now, now, candidate.email_id, candidate.operation, candidate.id, candidate.id).run();
+
         await c.env.DB.prepare(
             `UPDATE mail_mutation_jobs
                 SET status = 'processing', attempts = attempts + 1,
@@ -272,7 +293,7 @@ export const claimMutationJobs = async (c: Context<HonoCustomType>) => {
                 status, attempts, lease_token, lease_until, created_at
            FROM mail_mutation_jobs
           WHERE status = 'processing' AND lease_token = ?
-          ORDER BY created_at ASC, id ASC`,
+          ORDER BY created_at ASC, rowid ASC`,
     ).bind(leaseToken).all<MutationJobRow>();
 
     return c.json({ jobs: claimed.results || [], lease_until: leaseUntil });
@@ -300,12 +321,12 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
     const now = Date.now();
     const error = body.error ? String(body.error).slice(0, 500) : null;
     const newer = await c.env.DB.prepare(
-        `SELECT 1 FROM mail_mutation_jobs
-          WHERE email_id = ? AND operation = ?
-            AND (created_at > ? OR (created_at = ? AND id != ?))
-            AND status != 'superseded'
+        `SELECT 1 FROM mail_mutation_jobs newer
+          WHERE newer.email_id = ? AND newer.operation = ?
+            AND newer.rowid > (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)
+            AND newer.status != 'superseded'
           LIMIT 1`,
-    ).bind(job.email_id, job.operation, job.created_at, job.created_at, job.id).first();
+    ).bind(job.email_id, job.operation, job.id).first();
 
     if (requestedStatus === "retry") {
         if (newer) {
