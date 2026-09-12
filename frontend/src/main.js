@@ -7,6 +7,17 @@ import './tailwind.css'
 import App from './App.vue'
 import router from './router'
 import i18n from './i18n'
+import { api } from './api'
+import { useGlobalState } from './store'
+import { installUnifiedCursorPagination } from './utils/unified-cursor-pagination'
+
+const { userJwt, unifiedApiKey } = useGlobalState()
+installUnifiedCursorPagination(api, () => {
+  const jwt = userJwt.value?.trim()
+  if (jwt) return `user:${jwt}`
+  const key = unifiedApiKey.value?.trim()
+  return key ? `key:${key}` : ''
+})
 
 const head = createHead()
 const app = createApp(App)
