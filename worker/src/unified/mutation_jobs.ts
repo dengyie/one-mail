@@ -276,6 +276,12 @@ export const moveEmail = async (c: Context<HonoCustomType>) => {
             operation: "move",
         }, 409);
     }
+    if (support.provider === "imap" && !boundedText(row.message_id_header, 4096)) {
+        return unsupportedResponse(c, {
+            provider: "imap",
+            code: "missing_imap_message_id",
+        }, "move");
+    }
 
     const body = await c.req.json<{ folder_id?: number | string }>().catch(() => ({}));
     const folderId = Number(body.folder_id);
@@ -284,6 +290,12 @@ export const moveEmail = async (c: Context<HonoCustomType>) => {
     }
     const target = await resolveMoveTarget(c, row.account_id, support.provider, folderId);
     if (!target) return c.json({ error: "target folder not found for this mail account" }, 400);
+    if (support.provider === "graph" && !boundedText(target.provider_folder_id, 2048)) {
+        return unsupportedResponse(c, {
+            provider: "graph",
+            code: "missing_provider_folder_identity",
+        }, "move");
+    }
 
     const sameFolder = target.provider_folder_id && row.source_folder_id
         ? target.provider_folder_id === row.source_folder_id
@@ -487,24 +499,42 @@ const terminalJobStatement = (
 const normalizedMoveProjection = (
     job: MutationJobRow,
     projection: MutationProjection | undefined,
-): { sourceFolder: string; sourceFolderId: string | null; sourceKey: string | null; providerMessageId: string | null } | null => {
+): { sourceFolder: string; sourceFolderId: string | null; sourceKey: string; providerMessageId: string | null } | null => {
     const sourceFolder = boundedText(projection?.source_folder, 1024);
     if (!sourceFolder || !job.target_folder || sourceFolder !== job.target_folder) return null;
 
-    const rawFolderId = projection?.source_folder_id;
-    const sourceFolderId = rawFolderId === null
-        ? null
-        : boundedText(rawFolderId, 2048) ?? job.target_folder_id;
-    const sourceKey = boundedText(projection?.source_key, 4096) ?? job.source_key;
-    const providerMessageId = boundedText(projection?.provider_message_id, 4096) ?? job.provider_message_id;
+    const projectedSourceKey = boundedText(projection?.source_key, 4096);
+    if (!projectedSourceKey) return null;
 
-    if (job.provider === "imap" && !sourceKey) return null;
-    // Graph ImmutableId is deliberately stable across folder moves. Accepting a
-    // changed provider_message_id would silently fork the uniqueness contract.
-    if (job.provider === "graph" && job.provider_message_id && providerMessageId !== job.provider_message_id) {
-        return null;
+    if (job.provider === "imap") {
+        // IMAP identity is account + folder + UIDVALIDITY + UID. A successful
+        // move must explicitly return the NEW identity; falling back to the old
+        // source key would make later mutations target the pre-move UID.
+        if (projectedSourceKey === job.source_key) return null;
+        return {
+            sourceFolder,
+            sourceFolderId: null,
+            sourceKey: projectedSourceKey,
+            providerMessageId: job.provider_message_id,
+        };
     }
-    return { sourceFolder, sourceFolderId, sourceKey, providerMessageId };
+
+    if (job.provider === "graph") {
+        const sourceFolderId = boundedText(projection?.source_folder_id, 2048);
+        const providerMessageId = boundedText(projection?.provider_message_id, 4096);
+        if (!job.target_folder_id || sourceFolderId !== job.target_folder_id) return null;
+        // Graph ImmutableId must remain stable across a move. Require the
+        // provider result to prove that invariant instead of filling from job.
+        if (!job.provider_message_id || providerMessageId !== job.provider_message_id) return null;
+        return {
+            sourceFolder,
+            sourceFolderId,
+            sourceKey: projectedSourceKey,
+            providerMessageId,
+        };
+    }
+
+    return null;
 };
 
 export const reportMutationResult = async (c: Context<HonoCustomType>) => {
