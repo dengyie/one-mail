@@ -43,12 +43,14 @@ class _FakeImap:
         target_uids=(84,),
         message_id="<m1@example.com>",
         move_response=None,
+        target_has_message=False,
     ):
         self.capability_set = {c.upper() if isinstance(c, bytes) else str(c).upper().encode() for c in capabilities}
         self.folder_uidvalidity = {"INBOX": uidvalidity, "Archive": target_uidvalidity}
         self.folder_uids = {"INBOX": list(uids), "Archive": list(target_uids)}
+        self.message_id = message_id
         self.message_ids = {
-            "Archive": {message_id: list(target_uids)},
+            "Archive": {message_id: list(target_uids) if target_has_message else []},
             "INBOX": {message_id: list(uids)},
         }
         self.current_folder = None
@@ -91,6 +93,7 @@ class _FakeImap:
         if source_uid in self.folder_uids.get(source, []):
             self.folder_uids[source].remove(source_uid)
         destination_uid = self.folder_uids[target][0]
+        self.message_ids.setdefault(target, {})[self.message_id] = [destination_uid]
         if self.move_response is not None:
             return self.move_response
         return f"OK [COPYUID {self.folder_uidvalidity[target]} {source_uid} {destination_uid}] moved"
@@ -191,7 +194,7 @@ def test_imap_move_without_copyuid_recovers_exact_target_message_id(monkeypatch)
 
 def test_imap_move_retry_recovers_when_source_uid_is_already_gone(monkeypatch):
     account = _imap_account()
-    client = _FakeImap(uids=(), target_uids=(84,))
+    client = _FakeImap(uids=(), target_uids=(84,), target_has_message=True)
     monkeypatch.setattr(mutations, "default_client_factory", lambda _account: client)
     job = {**_imap_job("move", None, attempts=2), "target_folder": "Archive"}
 
