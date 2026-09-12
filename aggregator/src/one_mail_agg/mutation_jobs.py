@@ -146,7 +146,7 @@ def _parse_copyuid(response, source_uid: int) -> tuple[int, int] | None:
     return uidvalidity, destination_uids[index]
 
 
-def _imap_recover_moved_message(client, job: dict, target_folder: str) -> tuple[int, int]:
+def _imap_target_message_matches(client, job: dict, target_folder: str) -> tuple[int, list[int]]:
     message_id = str(job.get("message_id_header") or "").strip()
     if not message_id:
         raise MutationIdentityError("IMAP move recovery requires Message-ID")
@@ -154,14 +154,25 @@ def _imap_recover_moved_message(client, job: dict, target_folder: str) -> tuple[
     uidvalidity = int(selected[b"UIDVALIDITY"])
     if uidvalidity <= 0:
         raise MutationIdentityError("invalid target IMAP UIDVALIDITY")
-    matches = list(client.search(["HEADER", "Message-ID", message_id], charset=None))
+    matches = [int(uid) for uid in client.search(["HEADER", "Message-ID", message_id], charset=None)]
+    if any(uid <= 0 for uid in matches):
+        raise MutationIdentityError("invalid target IMAP UID")
+    return uidvalidity, matches
+
+
+def _imap_recover_moved_message(client, job: dict, target_folder: str) -> tuple[int, int]:
+    uidvalidity, matches = _imap_target_message_matches(client, job, target_folder)
     if len(matches) != 1:
         raise MutationIdentityError(
             f"IMAP move recovery expected exactly one target Message-ID match, found {len(matches)}")
-    uid = int(matches[0])
-    if uid <= 0:
-        raise MutationIdentityError("invalid recovered target IMAP UID")
-    return uidvalidity, uid
+    return uidvalidity, matches[0]
+
+
+def _imap_assert_move_target_absent(client, job: dict, target_folder: str) -> None:
+    _uidvalidity, matches = _imap_target_message_matches(client, job, target_folder)
+    if matches:
+        raise MutationIdentityError(
+            f"IMAP move target already contains {len(matches)} matching Message-ID message(s)")
 
 
 def _imap_move_projection(
@@ -199,12 +210,18 @@ def _apply_imap_mutation(config: Config, account: AccountConfig, job: dict) -> d
             _require_imap_capability(client, "MOVE")
             _require_imap_capability(client, "UIDPLUS")
 
+            # Recovery uses Message-ID only when the source UID disappeared after
+            # a prior attempt. Prove the destination is initially clear before a
+            # first MOVE so a later retry cannot mistake a pre-existing duplicate
+            # for the message this job moved.
+            if attempts == 1:
+                _imap_assert_move_target_absent(client, job, target_folder)
+
             selected = client.select_folder(folder, readonly=False)
             current_uidvalidity = int(selected[b"UIDVALIDITY"])
             if current_uidvalidity != expected_uidvalidity:
-                if attempts > 1:
-                    recovered = _imap_recover_moved_message(client, job, target_folder)
-                    return _imap_move_projection(account, target_folder, *recovered)
+                # UIDVALIDITY reset invalidates the entire source UID namespace.
+                # Never infer prior success from Message-ID alone after that reset.
                 raise MutationIdentityError(
                     f"IMAP UIDVALIDITY changed: expected={expected_uidvalidity} current={current_uidvalidity}")
 
@@ -266,7 +283,7 @@ def _apply_imap_mutation(config: Config, account: AccountConfig, job: dict) -> d
             return None
         if operation == "delete":
             # Plain EXPUNGE could destroy unrelated messages another client
-            # already marked \Deleted. UID EXPUNGE is the required exact-delete
+            # already marked \\Deleted. UID EXPUNGE is the required exact-delete
             # primitive for this durable job.
             _require_imap_capability(client, "UIDPLUS")
             client.delete_messages([uid], silent=True)
@@ -314,18 +331,21 @@ def _graph_headers(access_token: str) -> dict[str, str]:
 
 def _graph_move_projection(account: AccountConfig, job: dict, body: dict) -> dict:
     message_id = str(job.get("provider_message_id") or "").strip()
-    returned_id = str(body.get("id") or message_id).strip()
+    returned_id = str(body.get("id") or "").strip()
     if not returned_id or returned_id != message_id:
         raise MutationIdentityError("Graph move did not preserve ImmutableId")
     target_folder = str(job.get("target_folder") or "").strip()
-    target_folder_id = str(body.get("parentFolderId") or job.get("target_folder_id") or "").strip()
+    target_folder_id = str(body.get("parentFolderId") or "").strip()
     if not target_folder or not target_folder_id:
         raise MutationIdentityError("Graph move result missing target folder identity")
+    expected_target_id = str(job.get("target_folder_id") or "").strip()
+    if not expected_target_id or target_folder_id != expected_target_id:
+        raise MutationIdentityError("Graph move result does not match requested destination")
     return {
         "source_folder": target_folder,
         "source_folder_id": target_folder_id,
         "source_key": graph_source_key(account, message_id),
-        "provider_message_id": message_id,
+        "provider_message_id": returned_id,
     }
 
 
@@ -385,6 +405,8 @@ def _apply_graph_mutation(config: Config, account: AccountConfig, job: dict) -> 
             )
             current.raise_for_status()
             current_body = current.json()
+            if not isinstance(current_body, dict):
+                raise MutationIdentityError("Graph move recovery returned invalid message payload")
             if str(current_body.get("parentFolderId") or "") == target_folder_id:
                 return _graph_move_projection(account, job, current_body)
 
