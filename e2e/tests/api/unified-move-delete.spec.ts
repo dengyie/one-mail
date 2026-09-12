@@ -145,8 +145,8 @@ test('move rewrites provider identity before later jobs and delete keeps termina
   const moveJob = await moveRes.json() as { job_id: string; operation: string; status: string };
   expect(moveJob).toMatchObject({ operation: 'move', status: 'queued' });
 
-  // Queue a later state mutation before move is acknowledged. The claim API
-  // must lease only move for this email; otherwise star would use stale INBOX UID.
+  // Queue a later state mutation before move is acknowledged. It must wait for
+  // the move identity projection instead of being leased with the old INBOX UID.
   const starRes = await request.post(
     WORKER_URL + `/api/unified/emails/${encodeURIComponent(emailId)}/star`,
     { headers: authHeaders, data: { is_starred: 1 } },
@@ -154,8 +154,19 @@ test('move rewrites provider identity before later jobs and delete keeps termina
   expect(starRes.status()).toBe(202);
   const starJob = await starRes.json() as { job_id: string };
 
+  // Rolling deploy safety: an old aggregator still calling v1 must not see the
+  // new move job, nor jump over it to the later star job.
+  const legacyLease = `legacy-lease-${suffix}`;
+  const legacyClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/claim', {
+    headers: ADMIN_HEADERS,
+    data: { lease_token: legacyLease, limit: 50 },
+  });
+  expect(legacyClaimRes.ok()).toBe(true);
+  const legacyClaim = await legacyClaimRes.json() as { jobs: Array<{ id: string; operation: string }> };
+  expect(legacyClaim.jobs.some((job) => job.id === moveJob.job_id || job.id === starJob.job_id)).toBe(false);
+
   const moveLease = `move-lease-${suffix}`;
-  const moveClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/claim', {
+  const moveClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/v2/claim', {
     headers: ADMIN_HEADERS,
     data: { lease_token: moveLease, limit: 50 },
   });
@@ -233,7 +244,7 @@ test('move rewrites provider identity before later jobs and delete keeps termina
   });
 
   const starLease = `post-move-star-${suffix}`;
-  const starClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/claim', {
+  const starClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/v2/claim', {
     headers: ADMIN_HEADERS,
     data: { lease_token: starLease, limit: 50 },
   });
@@ -259,7 +270,7 @@ test('move rewrites provider identity before later jobs and delete keeps termina
   expect(deleteJob.operation).toBe('delete');
 
   const deleteLease = `delete-lease-${suffix}`;
-  const deleteClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/claim', {
+  const deleteClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/v2/claim', {
     headers: ADMIN_HEADERS,
     data: { lease_token: deleteLease, limit: 50 },
   });
