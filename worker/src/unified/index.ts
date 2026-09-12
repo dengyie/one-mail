@@ -4,12 +4,15 @@ import { ingestHandler } from "./ingest";
 import { countEmails, statsEmails, verifCodes, getMetaOptions } from "./extra_endpoints";
 import {
     claimMutationJobs,
+    deleteEmail,
     getMutationStatus,
     markRead,
     markUnread,
+    moveEmail,
     reportMutationResult,
     toggleStar,
 } from "./mutation_jobs";
+import { listFolders } from "./folders.ts";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess } from "./api_keys";
 import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
@@ -177,6 +180,7 @@ const getEmail = async (c: Context<HonoCustomType>) => {
 
 api.get("/api/unified/emails", listEmails);
 api.get("/api/unified/meta", getMetaOptions);
+api.get("/api/unified/folders", listFolders);
 api.get("/api/unified/emails/:id", getEmail);
 api.get("/api/unified/count", countEmails);
 api.get("/api/unified/stats", statsEmails);
@@ -185,6 +189,8 @@ api.get("/api/unified/mutations/:id", getMutationStatus);
 api.post("/api/unified/emails/:id/read", markRead);     // external providers return 202 queued
 api.post("/api/unified/emails/:id/unread", markUnread); // desired-state operation, retry-safe
 api.post("/api/unified/emails/:id/star", toggleStar);   // readonly API keys are blocked by canAccess
+api.post("/api/unified/emails/:id/move", moveEmail);    // folder_id must belong to the same account/provider
+api.delete("/api/unified/emails/:id", deleteEmail);     // external delete completes only after provider success
 api.post("/admin/unified/ingest", ingestHandler);
 api.get("/admin/unified/mail_accounts", mail_accounts.exportForAggregator);  // x-admin-auth 保护
 api.post("/admin/unified/mail_accounts/:id/status", mail_accounts.reportStatus);  // 聚合器 sync 回写
