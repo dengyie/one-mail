@@ -147,11 +147,37 @@ jobs:
             exit 1
           fi
           cd worker/
+          trap 'rm -f ../.d1-mutation-schema.json ../.d1-mutation-upgrade.sql' EXIT
+
+          # This CREATE IF NOT EXISTS is the canonical shape for fresh installs
+          # and remains safe to replay against already-initialized production DBs.
           pnpm exec wrangler d1 execute DB \
             --remote \
             --yes \
             --file ../db/2026-09-12-mail-mutation-jobs.sql
-          echo "Remote D1 mutation job schema is current"
+
+          # Existing read/star-only installations need one table rebuild to
+          # widen the operation CHECK. Render it only while target_folder is
+          # absent; once upgraded, every later deployment is a no-op here.
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --command "PRAGMA table_info(mail_mutation_jobs)" \
+            --json > ../.d1-mutation-schema.json
+
+          python3 ../db/render_mutation_move_delete_migration.py \
+            --schema-json ../.d1-mutation-schema.json \
+            --migration ../db/2026-09-12-mail-mutation-move-delete.sql \
+            --output ../.d1-mutation-upgrade.sql
+
+          if [ -s ../.d1-mutation-upgrade.sql ]; then
+            pnpm exec wrangler d1 execute DB \
+              --remote \
+              --yes \
+              --file ../.d1-mutation-upgrade.sql
+            echo "Remote D1 mutation job schema upgraded for move/delete"
+          else
+            echo "Remote D1 mutation job schema is current"
+          fi
 
       - name: Deploy Backend for ${{ github.ref_name }}
         shell: bash
