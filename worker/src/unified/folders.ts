@@ -18,6 +18,24 @@ const csv = (value?: string): string[] =>
 
 const inClause = (values: string[]): string => values.map(() => "?").join(",");
 
+const addSourceFilter = (
+    where: string[],
+    params: (string | number)[],
+    sources: string[],
+) => {
+    if (!sources.length) return;
+    // Folder rows intentionally do not duplicate account source. Derive source
+    // visibility from indexed email ownership instead of assuming every account
+    // lives in user_mail_accounts (admin/static aggregator accounts may not).
+    where.push(`EXISTS (
+        SELECT 1 FROM emails e
+         WHERE e.account_id = f.mail_account_id
+           AND e.provider = f.provider
+           AND e.source IN (${inClause(sources)})
+    )`);
+    params.push(...sources);
+};
+
 export async function resolveMoveTarget(
     c: Context<HonoCustomType>,
     accountId: string,
@@ -42,7 +60,10 @@ export async function listFolders(c: Context<HonoCustomType>) {
 
     if (userAuth) {
         if (!userAuth.isAdmin) {
-            where.push("a.user_id = ?");
+            where.push(`EXISTS (
+                SELECT 1 FROM user_mail_accounts uma
+                 WHERE uma.id = f.mail_account_id AND uma.user_id = ?
+            )`);
             params.push(userAuth.userPayload.user_id);
         }
         if (requestedAccount) {
@@ -54,8 +75,7 @@ export async function listFolders(c: Context<HonoCustomType>) {
         if (requestedSource) {
             const sources = csv(requestedSource);
             if (!sources.length) return c.json({ results: [] });
-            where.push(`a.source IN (${inClause(sources)})`);
-            params.push(...sources);
+            addSourceFilter(where, params, sources);
         }
     } else {
         const key = c.get("apiKey");
@@ -67,17 +87,13 @@ export async function listFolders(c: Context<HonoCustomType>) {
             where.push(`f.mail_account_id IN (${inClause(accounts)})`);
             params.push(...accounts);
         }
-        if (sources.length) {
-            where.push(`a.source IN (${inClause(sources)})`);
-            params.push(...sources);
-        }
+        addSourceFilter(where, params, sources);
     }
 
     const sql = `SELECT f.id, f.mail_account_id AS account_id, f.provider,
                         f.provider_folder_id, f.canonical_name, f.display_name,
                         f.folder_type, f.uidvalidity
                    FROM mail_account_folders f
-                   JOIN user_mail_accounts a ON a.id = f.mail_account_id
                   ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
                   ORDER BY f.mail_account_id ASC,
                            CASE f.folder_type
