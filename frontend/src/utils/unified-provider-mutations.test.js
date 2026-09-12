@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   createMutationStatusFetcher,
+  createUnifiedMutationTransport,
   installUnifiedProviderMutations,
   waitForMutationTerminal,
 } from './unified-provider-mutations'
@@ -44,6 +45,7 @@ describe('installUnifiedProviderMutations', () => {
     }
     installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a' }), {
       fetchStatus: vi.fn(),
+      transport: vi.fn(),
     })
 
     await expect(api.unified.markRead('m1')).resolves.toMatchObject({ status: 'succeeded', is_read: 1 })
@@ -62,6 +64,7 @@ describe('installUnifiedProviderMutations', () => {
     }
     installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a' }), {
       fetchStatus,
+      transport: vi.fn(),
       sleepImpl: async () => {},
     })
 
@@ -69,6 +72,74 @@ describe('installUnifiedProviderMutations', () => {
     expect(result.status).toBe('succeeded')
     expect(result.is_starred).toBe(1)
     expect(fetchStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for move completion and maps the terminal target folder', async () => {
+    const transport = vi.fn(async (path, options) => {
+      expect(path).toBe('/api/unified/emails/m%2F1/move')
+      expect(options).toMatchObject({
+        method: 'POST',
+        body: { folder_id: 17 },
+        auth: { key: 'user:jwt-a', headers: { 'x-user-token': 'jwt-a' } },
+      })
+      return { status: 'queued', job_id: 'j-move', target_folder: 'Archive' }
+    })
+    const fetchStatus = vi.fn()
+      .mockResolvedValueOnce({ status: 'processing' })
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        operation: 'move',
+        target_folder: 'Archive',
+        target_folder_id: 'folder-17',
+      })
+    const api = { unified: { markRead: vi.fn(), toggleStar: vi.fn() } }
+    installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a', apiKey: 'must-not-leak' }), {
+      transport,
+      fetchStatus,
+      sleepImpl: async () => {},
+    })
+
+    await expect(api.unified.moveEmail('m/1', 17)).resolves.toMatchObject({
+      status: 'succeeded',
+      source_folder: 'Archive',
+      source_folder_id: 'folder-17',
+    })
+    expect(fetchStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not report queued delete as complete before terminal provider success', async () => {
+    const transport = vi.fn(async () => ({ status: 'queued', job_id: 'j-delete' }))
+    const fetchStatus = vi.fn()
+      .mockResolvedValueOnce({ status: 'pending' })
+      .mockResolvedValueOnce({ status: 'succeeded', operation: 'delete' })
+    const api = { unified: { markRead: vi.fn(), toggleStar: vi.fn() } }
+    installUnifiedProviderMutations(api, () => ({ apiKey: 'key-a' }), {
+      transport,
+      fetchStatus,
+      sleepImpl: async () => {},
+    })
+
+    await expect(api.unified.deleteEmail('m1')).resolves.toMatchObject({
+      status: 'succeeded',
+      deleted: true,
+    })
+    expect(transport.mock.calls[0][0]).toBe('/api/unified/emails/m1')
+    expect(transport.mock.calls[0][1]).toMatchObject({
+      method: 'DELETE',
+      auth: { key: 'key:key-a', headers: { Authorization: 'Bearer key-a' } },
+    })
+  })
+
+  it('lists folders through the same single auth snapshot', async () => {
+    const transport = vi.fn(async () => ({ results: [{ id: 1, canonical_name: 'INBOX' }] }))
+    const api = { unified: { markRead: vi.fn(), toggleStar: vi.fn() } }
+    installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a' }), { transport, fetchStatus: vi.fn() })
+
+    await expect(api.unified.listFolders({ account_id: 'a/1' })).resolves.toMatchObject({
+      results: [{ id: 1, canonical_name: 'INBOX' }],
+    })
+    expect(transport.mock.calls[0][0]).toBe('/api/unified/folders?account_id=a%2F1')
+    expect(transport.mock.calls[0][1].auth.headers).toEqual({ 'x-user-token': 'jwt-a' })
   })
 
   it('aborts UI completion when auth identity changes while a job is queued', async () => {
@@ -83,7 +154,7 @@ describe('installUnifiedProviderMutations', () => {
       },
     }
     const fetchStatus = vi.fn()
-    installUnifiedProviderMutations(api, () => ({ userJwt: jwt }), { fetchStatus })
+    installUnifiedProviderMutations(api, () => ({ userJwt: jwt }), { fetchStatus, transport: vi.fn() })
 
     await expect(api.unified.markRead('m1')).rejects.toThrow('登录身份已变化')
     expect(fetchStatus).not.toHaveBeenCalled()
@@ -91,15 +162,15 @@ describe('installUnifiedProviderMutations', () => {
 })
 
 
-describe('createMutationStatusFetcher', () => {
-  it('uses login JWT first and never sends the API key in parallel', async () => {
+describe('raw provider mutation transport', () => {
+  it('uses login JWT first for status polling and never sends the API key in parallel', async () => {
     const fetchImpl = vi.fn(async (_url, options) => ({
       ok: true,
       status: 200,
       json: async () => ({ status: 'succeeded' }),
       options,
     }))
-    const fetchStatus = createMutationStatusFetcher({ apiBase: 'https://api.example', fetchImpl })
+    const fetchStatus = createMutationStatusFetcher({ apiBase: 'https://api.example/', fetchImpl })
     const result = await fetchStatus('job/1', {
       headers: { 'x-user-token': 'jwt-a' },
     })
@@ -110,5 +181,32 @@ describe('createMutationStatusFetcher', () => {
       Accept: 'application/json',
       'x-user-token': 'jwt-a',
     })
+  })
+
+  it('serializes JSON only for mutating requests and surfaces response errors', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ status: 'queued' }) })
+      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: 'bad folder' }) })
+    const transport = createUnifiedMutationTransport({ apiBase: 'https://api.example', fetchImpl })
+
+    await expect(transport('/api/unified/emails/m1/move', {
+      method: 'POST',
+      body: { folder_id: 9 },
+      auth: { headers: { 'x-user-token': 'jwt-a' } },
+    })).resolves.toEqual({ status: 'queued' })
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({ folder_id: 9 }),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'x-user-token': 'jwt-a',
+      },
+    })
+
+    await expect(transport('/api/unified/folders', {
+      auth: { headers: { 'x-user-token': 'jwt-a' } },
+    })).rejects.toThrow('bad folder')
+    expect(fetchImpl.mock.calls[1][1].body).toBeUndefined()
   })
 })
