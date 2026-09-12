@@ -1,0 +1,144 @@
+name: Deploy Aggregator
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "aggregator/**"
+      - ".github/workflows/aggregator_deploy.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aggregator-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Pack aggregator source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='.venv' \
+            --exclude='__pycache__' \
+            --exclude='.pytest_cache' \
+            -czf /tmp/one-mail-aggregator.tgz \
+            -C aggregator .
+
+      - name: Configure pinned SSH key
+        shell: bash
+        env:
+          PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
+          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
+          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
+          PXED_SSH_KNOWN_HOSTS: ${{ secrets.PXED_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PXED_SSH_KEY:-}" ] || [ -z "${PXED_SSH_HOST:-}" ]; then
+            echo "::error::Missing PXED_SSH_KEY or PXED_SSH_HOST; refusing aggregator deploy."
+            exit 1
+          fi
+          if [ -z "${PXED_SSH_KNOWN_HOSTS:-}" ]; then
+            echo "::error::Missing PXED_SSH_KNOWN_HOSTS; refusing deploy without a pinned host key."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          KEY_LINE=$(printf '%s\n' "$PXED_SSH_KNOWN_HOSTS" | awk 'NF>=2 {line=$(NF-1)" "$NF} END{print line}')
+          if [ -z "$KEY_LINE" ]; then
+            echo "::error::PXED_SSH_KNOWN_HOSTS contains no SSH public key."
+            exit 1
+          fi
+          printf '%s\n' "$KEY_LINE" > /tmp/pinned_key
+          if ! ssh-keygen -lf /tmp/pinned_key >/dev/null 2>&1; then
+            echo "::error::PXED_SSH_KNOWN_HOSTS does not end with a valid SSH public key."
+            exit 1
+          fi
+          rm -f /tmp/pinned_key
+          {
+            printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "${PXED_SSH_PORT:-22}" "$KEY_LINE"
+            printf '%s %s\n' "$PXED_SSH_HOST" "$KEY_LINE"
+          } > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Install and restart aggregator
+        shell: bash
+        env:
+          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
+          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
+          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+        run: |
+          set -euo pipefail
+          PORT="${PXED_SSH_PORT:-22}"
+          USER="${PXED_SSH_USER:-root}"
+          SCP_OPTS=(-O -P "$PORT" -o StrictHostKeyChecking=yes)
+          SSH_OPTS=(-p "$PORT" -o StrictHostKeyChecking=yes)
+
+          scp "${SCP_OPTS[@]}" /tmp/one-mail-aggregator.tgz \
+            "$USER@$PXED_SSH_HOST:/tmp/one-mail-aggregator.tgz"
+
+          ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          BASE=/opt/one-mail-agg
+          AGG="$BASE/aggregator"
+          SUPERVISOR=/personal/pxed/supervisord.conf
+
+          test -f "$BASE/config.json"
+          test -x "$AGG/.venv/bin/python"
+          test -f "$SUPERVISOR"
+
+          # Preserve local runtime state and the existing venv. Replace only
+          # repository-managed source/deploy files so stale removed modules do
+          # not survive a release.
+          rm -rf "$AGG/src" "$AGG/tests" "$AGG/deploy"
+          rm -f "$AGG/pyproject.toml" "$AGG/README.md"
+          tar xzf /tmp/one-mail-aggregator.tgz -C "$AGG"
+
+          "$AGG/.venv/bin/pip" install --no-deps -e "$AGG"
+          install -m 0755 "$AGG/deploy/agg-loop.sh" "$BASE/agg-loop.sh"
+
+          # Import check is side-effect free: it verifies the deployed venv sees
+          # the new queue worker without claiming a real production mutation.
+          "$AGG/.venv/bin/python" -c \
+            'import one_mail_agg.mutation_jobs, one_mail_agg.mutation_main; print("mutation worker import OK")'
+
+          supervisorctl -c "$SUPERVISOR" restart one-mail-agg
+          sleep 2
+          STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg)
+          printf '%s\n' "$STATUS"
+          case "$STATUS" in
+            *RUNNING*) ;;
+            *) echo "aggregator failed to reach RUNNING" >&2; exit 1 ;;
+          esac
+
+          rm -f /tmp/one-mail-aggregator.tgz
+          REMOTE
+
+      - name: Verify supervisor remains healthy
+        shell: bash
+        env:
+          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
+          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
+          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+        run: |
+          set -euo pipefail
+          sleep 5
+          PORT="${PXED_SSH_PORT:-22}"
+          USER="${PXED_SSH_USER:-root}"
+          STATUS=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
+            'supervisorctl -c /personal/pxed/supervisord.conf status one-mail-agg')
+          printf '%s\n' "$STATUS"
+          case "$STATUS" in
+            *RUNNING*) ;;
+            *) echo "::error::Aggregator did not remain RUNNING after restart."; exit 1 ;;
+          esac
