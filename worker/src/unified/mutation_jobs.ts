@@ -1,6 +1,6 @@
 import { Context } from "hono";
 
-import { checkRowAccess } from "./auth_scope";
+import { checkRowAccess } from "./auth_scope.ts";
 
 export type MailMutationOperation = "set_read" | "set_starred";
 export type MailMutationTerminalStatus = "succeeded" | "failed" | "unsupported" | "superseded";
@@ -339,7 +339,7 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
         return c.json({ ok: true, status: "pending", retry_at: now + retryAfter });
     }
 
-    const terminal = requestedStatus as Exclude<typeof requestedStatus, "retry">;
+    const terminal = requestedStatus as "succeeded" | "failed" | "unsupported";
     await c.env.DB.prepare(
         `UPDATE mail_mutation_jobs
             SET status = ?, last_error = ?, lease_token = NULL, lease_until = NULL,
