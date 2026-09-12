@@ -82,6 +82,28 @@ describe('createCursorAwareListEmails', () => {
     expect(calls[2]).toEqual({ limit: 20, cursor: 'new-next' })
   })
 
+  it('does not let an older out-of-order refresh overwrite a newer cursor boundary', async () => {
+    const calls = []
+    const resolvers = []
+    const list = createCursorAwareListEmails((params) => {
+      calls.push(params)
+      return new Promise((resolve) => resolvers.push(resolve))
+    })
+
+    const oldRefresh = list({ limit: 20, offset: 0 })
+    const newRefresh = list({ limit: 20, offset: 0 })
+
+    resolvers[1]({ has_more: true, next_cursor: 'new-next' })
+    await newRefresh
+    resolvers[0]({ has_more: true, next_cursor: 'old-next' })
+    await oldRefresh
+
+    const nextPage = list({ limit: 20, offset: 20 })
+    expect(calls[2]).toEqual({ limit: 20, cursor: 'new-next' })
+    resolvers[2]({ has_more: false, next_cursor: null })
+    await nextPage
+  })
+
   it('preserves explicit cursor calls and invalid pagination shapes unchanged', async () => {
     const calls = []
     const list = createCursorAwareListEmails(async (params) => {
