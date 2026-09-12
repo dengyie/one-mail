@@ -85,7 +85,11 @@ export const createCursorAwareListEmails = (baseListEmails, getScopeKey = () => 
 
     const result = await baseListEmails(requestParams)
 
-    if (usedCursor && state) {
+    // Requests may resolve out of order. Only the request whose state object is
+    // still current for this filter signature may advance the cursor cache.
+    // A newer first-page refresh replaces the state object before its response
+    // arrives, so an older/slower response cannot resurrect a stale snapshot.
+    if (usedCursor && state && cursorsBySignature.get(signature) === state) {
       const nextOffset = page.offset + page.limit
       if (result?.has_more === true && typeof result?.next_cursor === 'string' && result.next_cursor) {
         state.set(nextOffset, result.next_cursor)
