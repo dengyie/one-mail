@@ -1,10 +1,8 @@
 import logging
-import time
 import threading
-from typing import Callable, Any
+from typing import Callable
 
 from imapclient import IMAPClient
-from imapclient.exceptions import IMAPClientError, IMAPClientAbortError
 
 from .config import Config, AccountConfig
 from .state import SyncState
@@ -15,15 +13,36 @@ log = logging.getLogger("one-mail-agg")
 
 # 活跃长连接表：account_id -> ImapIdleWorker
 _active_idle_workers: dict[str, "ImapIdleWorker"] = {}
+# 服务端明确不支持 IDLE 时，记住当前连接配置并交回 daemon 轮询；只有配置变化才重试。
+_idle_unsupported: dict[str, tuple] = {}
 _lock = threading.Lock()
 
 
-class ImapIdleWorker(threading.Thread):
-    """常驻后台线程：为一个 IMAP 账号保持长连接并挂起 IDLE，
+def _idle_fingerprint(acc: AccountConfig) -> tuple:
+    """决定一个 IDLE capability 结论是否仍适用于当前账号配置。"""
+    return (
+        str(acc.host or "").strip().lower(),
+        int(acc.port),
+        bool(acc.use_ssl),
+        str(acc.username or "").strip().lower(),
+    )
 
-    一旦收到服务端推来的 EXISTS / EXPUNGE 等邮件事件，立即触发同步。
-    同时，每隔 idle_refresh_seconds（默认 10 分钟）主动刷新一次 IDLE（避免 NAT/防火墙超时），
-    并作为保底轮询保证消息不被遗漏。
+
+def _mark_idle_unsupported(acc: AccountConfig) -> None:
+    with _lock:
+        _idle_unsupported[acc.id] = _idle_fingerprint(acc)
+
+
+def _reconnect_backoff(consecutive_errors: int) -> int:
+    """快速失败时指数退避，最高 30 秒。"""
+    return min(30, 2 ** min(max(1, consecutive_errors), 5))
+
+
+class ImapIdleWorker(threading.Thread):
+    """常驻后台线程：为一个 IMAP 账号保持长连接并挂起 IDLE。
+
+    收到服务端事件后立即同步；每 4 分钟主动退出 IDLE 做一次保底增量检查。
+    连接异常自动重连。服务端明确不支持 IDLE 时退出线程，由 daemon 的常规轮询兜底。
     """
 
     def __init__(
@@ -32,7 +51,7 @@ class ImapIdleWorker(threading.Thread):
         account: AccountConfig,
         state: SyncState,
         client_factory: Callable[[AccountConfig], IMAPClient] = default_client_factory,
-        idle_refresh_seconds: int = 240,  # 4 分钟主动唤醒重进 IDLE，防长连接静默断开
+        idle_refresh_seconds: int = 240,
     ):
         super().__init__(name=f"idle-{account.id}", daemon=True)
         self.config = config
@@ -56,21 +75,28 @@ class ImapIdleWorker(threading.Thread):
     def run(self):
         log.info("IMAP IDLE worker started for account %s (%s:%s)", self.account.id, self.account.host, self.account.port)
         consecutive_errors = 0
+        client: IMAPClient | None = None
 
         while not self.is_stopped():
-            client: IMAPClient | None = None
+            client = None
             try:
-                # 建立连接
                 client = self.client_factory(self.account)
                 if not client.has_capability("IDLE"):
-                    log.warning("Account %s does not support IDLE, worker terminating", self.account.id)
+                    _mark_idle_unsupported(self.account)
+                    log.warning(
+                        "Account %s does not support IDLE; falling back to daemon polling",
+                        self.account.id,
+                    )
+                    try:
+                        client.logout()
+                    except Exception:
+                        pass
                     return
 
-                # 连接成功，重置失败计数
-                consecutive_errors = 0
+                # 注意：仅仅 TCP/auth 建连成功不代表 IDLE 稳定，不能在这里清零错误计数。
+                # 否则“每次都能连上但一进 IDLE 就断”的服务端会永久以 2 秒频率重连。
                 log.info("Account %s connected for IDLE monitoring", self.account.id)
 
-                # 先执行一次全量增量检查
                 try:
                     r = self.do_sync(client)
                     log.info("Account %s initial IDLE sync complete: synced=%d dropped=%d",
@@ -78,14 +104,11 @@ class ImapIdleWorker(threading.Thread):
                 except Exception as sync_err:
                     log.warning("Account %s initial IDLE sync warning: %s", self.account.id, sync_err)
 
-                # 监控第一个有效 folder（通常是 INBOX，IDLE 协议单连接通常挂在一个 mailbox）
                 folder = self.account.folders[0] if self.account.folders else "INBOX"
 
                 while not self.is_stopped():
                     client.select_folder(folder, readonly=True)
                     client.idle()
-                    # 阻塞监听事件，最长 idle_refresh_seconds 秒
-                    # 期间若远端发来 EXISTS（新邮件），idle_check 立即返回
                     responses = client.idle_check(timeout=self.idle_refresh_seconds)
                     client.idle_done()
 
@@ -97,7 +120,6 @@ class ImapIdleWorker(threading.Thread):
                         log.info("Account %s received IDLE event from server: %s -> syncing immediately!",
                                  self.account.id, responses)
 
-                    # 只要有事件，或者超时主动唤醒保底，都跑一次 sync
                     try:
                         res = self.do_sync(client)
                         if has_event or res.get("synced", 0) > 0:
@@ -105,12 +127,14 @@ class ImapIdleWorker(threading.Thread):
                                      self.account.id, res.get("synced", 0), res.get("dropped", 0))
                     except Exception as loop_sync_err:
                         log.warning("Account %s loop sync error: %s", self.account.id, loop_sync_err)
-                        # 抛出以重连
                         raise
+
+                    # 一次完整的 select -> IDLE -> sync 成功，才认为连接稳定并重置退避。
+                    consecutive_errors = 0
 
             except Exception as e:
                 consecutive_errors += 1
-                backoff = min(30, 2 ** min(consecutive_errors, 5))
+                backoff = _reconnect_backoff(consecutive_errors)
                 log.warning("Account %s IDLE connection lost (%s), reconnecting in %ds...",
                             self.account.id, e, backoff)
                 if client is not None:
@@ -118,7 +142,6 @@ class ImapIdleWorker(threading.Thread):
                         client.logout()
                     except Exception:
                         pass
-                # 退避等待重连或退出
                 if self._stop_event.wait(backoff):
                     break
 
@@ -131,9 +154,7 @@ class ImapIdleWorker(threading.Thread):
 
 
 def _is_msa_like(acc: AccountConfig) -> bool:
-    """判断是否为个人 Hotmail/Outlook（MSA）账号：host 落在 major outlook host 或
-    source 为 imap_outlook、且配置了 oauth。MSA 账号一旦 token 工厂解析失败，几乎
-    可以确定是当前 token 已吊销/无效，后端 basic auth 对微软个人号必败。"""
+    """判断是否为个人 Hotmail/Outlook（MSA）账号。"""
     if acc.oauth is None:
         return False
     host = (acc.host or "").strip().lower()
@@ -143,7 +164,6 @@ def _is_msa_like(acc: AccountConfig) -> bool:
     }
     if host in outlook_hosts:
         return True
-    provider = None
     try:
         provider = normalize_provider((acc.oauth.get("provider") if isinstance(acc.oauth, dict) else None))
     except AttributeError:
@@ -152,11 +172,7 @@ def _is_msa_like(acc: AccountConfig) -> bool:
 
 
 def _resolve_client_factory(acc: AccountConfig, config: Config | None = None):
-    """OAuth 账号走 oauth_client_factory（XOAUTH2/用户 token），否则默认基础登录。
-
-    config 会传入 OAuth factory，使 IDLE 建连过程中发生的 refresh_token rotation
-    能写回静态 config 或 Worker。未知/畸形 provider 仍做账号级隔离。
-    """
+    """OAuth 账号走 XOAUTH2 工厂，否则默认基础登录。"""
     if acc.oauth is not None:
         try:
             return oauth_client_factory(acc, config)
@@ -174,29 +190,36 @@ def _resolve_client_factory(acc: AccountConfig, config: Config | None = None):
 
 
 def ensure_idle_workers(config: Config, state: SyncState, accounts: list[AccountConfig]) -> None:
-    """保证所有支持且配置为 IMAP 协议的账号都有常驻 IDLE 线程在监听。
-
-    非 auto 或纯 POP3 账号不启动 IDLE。OAuth 账号（含 Hotmail/Outlook 个人号）
-    使用对应 OAuth 工厂以支持 XOAUTH2 认证。
-    """
+    """为可用 IMAP 账号维持 IDLE worker；不支持 IDLE 的账号交给 daemon 轮询。"""
     with _lock:
         current_ids = {a.id for a in accounts}
-        # 停掉已删除的账号
+
         for aid, worker in list(_active_idle_workers.items()):
             if aid not in current_ids or worker.is_stopped() or not worker.is_alive():
                 worker.stop()
                 _active_idle_workers.pop(aid, None)
 
-        # 启动新账号的 IDLE
+        # 删除已移除账号的 capability 记忆，避免 registry 长期增长。
+        for aid in list(_idle_unsupported):
+            if aid not in current_ids:
+                _idle_unsupported.pop(aid, None)
+
         for acc in accounts:
-            # Graph API 账号没有 IMAP IDLE 连接，交给主循环的 Graph 轮询路径。
             if acc.source == "graph_outlook":
                 continue
-            # 协议必须不是纯 pop3，且若在 state 中已知 fallback 到 pop3 则跳过
             if acc.protocol == "pop3":
                 continue
             if state.is_fallback_pinned(acc.id):
                 continue
+
+            fingerprint = _idle_fingerprint(acc)
+            unsupported_fingerprint = _idle_unsupported.get(acc.id)
+            if unsupported_fingerprint == fingerprint:
+                # 无常驻 worker -> main daemon 会按 poll_interval（默认 60s）同步。
+                continue
+            if unsupported_fingerprint is not None:
+                # host/port/SSL/username 改过，允许重新探测 IDLE capability。
+                _idle_unsupported.pop(acc.id, None)
 
             if acc.id not in _active_idle_workers or not _active_idle_workers[acc.id].is_alive():
                 worker = ImapIdleWorker(config, acc, state, client_factory=_resolve_client_factory(acc, config))
