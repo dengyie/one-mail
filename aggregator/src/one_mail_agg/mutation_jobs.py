@@ -265,10 +265,10 @@ def _apply_imap_mutation(config: Config, account: AccountConfig, job: dict) -> d
         selected = client.select_folder(folder, readonly=False)
         current_uidvalidity = int(selected[b"UIDVALIDITY"])
         if current_uidvalidity != expected_uidvalidity:
-            if operation == "delete" and attempts > 1:
-                # The old mailbox identity can no longer exist. Never apply the
-                # old UID to a reset mailbox; desired deletion is already safe.
-                return None
+            # A UIDVALIDITY reset invalidates the old UID namespace but does not
+            # prove the message disappeared. Even on a delete retry, treating
+            # this as success could delete the local row while the provider still
+            # contains the same message under a new UID. Fail closed instead.
             raise MutationIdentityError(
                 f"IMAP UIDVALIDITY changed: expected={expected_uidvalidity} current={current_uidvalidity}")
         exists = uid in client.search(["UID", str(uid)], charset=None)
