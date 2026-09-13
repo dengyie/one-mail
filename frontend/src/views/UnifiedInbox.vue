@@ -450,6 +450,7 @@ let codesRequestSeq = 0
 let statusRequestSeq = 0
 let backgroundListPending = false
 let autoRefreshTimer = null
+let componentDisposed = false
 
 const loadList = async ({ background = false } = {}) => {
   if (!hasAccess.value) return
@@ -861,6 +862,7 @@ watch(authIdentity, (identity, previousIdentity) => {
 })
 
 onMounted(async () => {
+  componentDisposed = false
   if (userJwt.value && !userSettings.value.user_id) {
     await api.getUserSettings(message)
   }
@@ -868,6 +870,7 @@ onMounted(async () => {
     await loadOptions()
     await loadList()
   }
+  if (componentDisposed) return
   startAutoRefresh()
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -875,6 +878,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  componentDisposed = true
+  listRequestSeq += 1
   stopAutoRefresh()
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
