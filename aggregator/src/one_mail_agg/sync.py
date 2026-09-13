@@ -9,7 +9,7 @@ from .imap_base import fetch_new_messages
 from .normalize import normalize_message
 from .uploader import upload_emails
 from .pop3_source import connect_pop3, fetch_new_pop3_messages, uidl_to_key
-from .proxy_client import ProxiedIMAPClient, OVERSEAS_IMAP_HOSTS
+from .proxy_client import create_imap_client
 
 log = logging.getLogger("one-mail-agg")
 
@@ -28,12 +28,9 @@ def _imap_fallback_allowed(error: Exception) -> bool:
 def default_client_factory(account: AccountConfig) -> IMAPClient:
     # 30s socket 超时与 POP3 一致：界住单个挂死的 IMAP 账号，不让它吃满整轮
     # 240s 预算而饿死同轮其它账号（I3）。
-    # 对于已知海外主机（如 imap.gmail.com、outlook 等），pxed 国内 IP 会被阻断，
-    # 自动走 pxed 本地已建立的 SOCKS5 1080 出口隧道。
-    if account.host.lower() in OVERSEAS_IMAP_HOSTS:
-        c = ProxiedIMAPClient(account.host, port=account.port, ssl=account.use_ssl, timeout=30)
-    else:
-        c = IMAPClient(account.host, port=account.port, ssl=account.use_ssl, timeout=30)
+    # 网络 transport 统一由 create_imap_client 决定；OAuth / IDLE / mutation
+    # 复用同一入口，避免同一 host 因认证方式不同而绕开 SOCKS。
+    c = create_imap_client(account, timeout=30)
     c.login(account.username, account.password)
     return c
 
