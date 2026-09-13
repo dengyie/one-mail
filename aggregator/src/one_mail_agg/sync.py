@@ -9,7 +9,7 @@ from .imap_base import fetch_new_messages
 from .normalize import normalize_message
 from .uploader import upload_emails
 from .pop3_source import connect_pop3, fetch_new_pop3_messages, uidl_to_key
-from .proxy_client import create_imap_client
+from .proxy_client import ProxiedIMAPClient, create_imap_client
 
 log = logging.getLogger("one-mail-agg")
 
@@ -30,7 +30,12 @@ def default_client_factory(account: AccountConfig) -> IMAPClient:
     # 240s 预算而饿死同轮其它账号（I3）。
     # 网络 transport 统一由 create_imap_client 决定；OAuth / IDLE / mutation
     # 复用同一入口，避免同一 host 因认证方式不同而绕开 SOCKS。
-    c = create_imap_client(account, timeout=30)
+    c = create_imap_client(
+        account,
+        timeout=30,
+        direct_client_cls=IMAPClient,
+        proxied_client_cls=ProxiedIMAPClient,
+    )
     c.login(account.username, account.password)
     return c
 
