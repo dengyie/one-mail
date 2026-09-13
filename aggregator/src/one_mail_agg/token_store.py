@@ -10,7 +10,8 @@
   `/admin/unified/mail_accounts/:id/refresh_token`（x-admin-auth，Worker 用
   MAIL_CRED_ENCRYPTION_KEY 重加密后落 D1）。
 
-写回失败只告警不抛错：本轮同步照常，但账号已进入「RT 倒计时」，需人工介入。
+轮换 RT 一旦出现，持久化就是 OAuth refresh 的一部分：写回失败必须抛错，避免
+当前进程继续假装成功、重启后却只剩已经失效的旧 refresh_token。
 """
 import json
 import logging
@@ -23,8 +24,17 @@ from .config import Config
 log = logging.getLogger("one-mail-agg")
 
 
+class TokenPersistenceError(RuntimeError):
+    """A rotated refresh token could not be durably persisted."""
+
+
 def rewrite_config_refresh_token(config_path: str, account_id: str, new_refresh_token: str) -> bool:
-    """把轮换后的 refresh_token 原子写回静态 config.json。返回是否写成功。"""
+    """把轮换后的 refresh_token 原子写回静态 config.json。返回是否写成功。
+
+    临时文件与最终文件都强制 0600，避免 os.replace 把原本私有的凭据文件替换成
+    受进程 umask 影响的 0644 文件。
+    """
+    tmp_path = f"{config_path}.tmp"
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
@@ -35,24 +45,31 @@ def rewrite_config_refresh_token(config_path: str, account_id: str, new_refresh_
         else:
             log.warning("persist refresh_token: account %s not found in %s", account_id, config_path)
             return False
-        tmp_path = f"{config_path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
+
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)
             f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, config_path)
+        os.chmod(config_path, 0o600)
         log.info("rotated refresh_token persisted to config for account %s", account_id)
         return True
     except Exception as e:
         log.error("persist refresh_token to config failed for account %s: %r", account_id, e)
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
         return False
 
 
 def report_refresh_token_to_worker(worker_base_url: str, admin_token: str,
                                    account_id: str, new_refresh_token: str) -> bool:
-    """把轮换后的 refresh_token 回写 Worker（重加密落 D1）。返回是否成功。
-
-    404 视为「账号已被删除」，静默放弃；其余非 2xx 仅告警。
-    """
+    """把轮换后的 refresh_token 回写 Worker（重加密落 D1）。返回是否成功。"""
     url = f"{worker_base_url}/admin/unified/mail_accounts/{account_id}/refresh_token"
     headers = {"x-admin-auth": admin_token}
     try:
@@ -73,26 +90,33 @@ def report_refresh_token_to_worker(worker_base_url: str, admin_token: str,
 
 
 def persist_rotated_refresh_token(config: Config, account, new_refresh_token: str) -> None:
-    """按账号归属选择持久化通道。绝 不抛错（见模块 docstring）。"""
+    """按账号归属选择持久化通道；失败时抛 TokenPersistenceError。"""
     if not new_refresh_token:
         return
-    try:
-        if getattr(account, "user_managed", False):
-            report_refresh_token_to_worker(config.worker_base_url, config.admin_token,
-                                           account.id, new_refresh_token)
-        else:
-            config_path = getattr(config, "config_path", None)
-            if config_path:
-                rewrite_config_refresh_token(config_path, account.id, new_refresh_token)
-            else:
-                log.warning("rotated refresh_token for %s has nowhere to persist "
-                            "(no config_path, static account)", account.id)
-    except Exception as e:
-        log.error("persist_rotated_refresh_token failed for %s: %r", account.id, e)
+
+    if getattr(account, "user_managed", False):
+        ok = report_refresh_token_to_worker(
+            config.worker_base_url,
+            config.admin_token,
+            account.id,
+            new_refresh_token,
+        )
+        if not ok:
+            raise TokenPersistenceError(
+                f"failed to persist rotated refresh_token for user account {account.id}")
+        return
+
+    config_path = getattr(config, "config_path", None)
+    if not config_path:
+        raise TokenPersistenceError(
+            f"rotated refresh_token for static account {account.id} has no config_path")
+    if not rewrite_config_refresh_token(config_path, account.id, new_refresh_token):
+        raise TokenPersistenceError(
+            f"failed to persist rotated refresh_token for static account {account.id}")
 
 
 def make_rotated_callback(config: Config | None, account):
-    """给 token 函数用的 on_rotated 回调；config 为 None 时返回 None（不持久化）。"""
+    """给 token 函数用的 on_rotated 回调；config 为 None 时返回 None。"""
     if config is None:
         return None
 
