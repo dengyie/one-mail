@@ -70,12 +70,13 @@ def test_imap_delete_retry_uidvalidity_reset_is_not_false_success(monkeypatch):
         "attempts": 2,
     }
 
-    with pytest.raises(mutations.MutationIdentityError, match="UIDVALIDITY changed"):
+    with pytest.raises(mutations.MutationOutcomeUnknown, match="UIDVALIDITY changed") as caught:
         mutations.execute_mutation(_config(account), account, job)
 
     # A UIDVALIDITY reset invalidates the old UID namespace but does not prove
     # the message was deleted. Never mutate a UID from the reset mailbox and
-    # never report provider success from this state.
+    # preserve the retry barrier instead of reporting provider success.
+    assert mutations._retryable(caught.value) is True
     assert client.searches == []
     assert client.deleted == []
     assert client.uid_expunged == []
