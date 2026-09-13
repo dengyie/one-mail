@@ -343,7 +343,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { SearchRound, RefreshRound } from '@vicons/material'
 import { useScopedI18n } from '../i18n/app'
@@ -403,6 +403,7 @@ const activeTab = ref('list')
 
 // ---- 邮件列表 ----
 const PAGE_SIZE = 20
+const AUTO_REFRESH_MS = 5000
 const emails = ref([])
 const count = ref(0)
 const loading = ref(false)
@@ -447,13 +448,24 @@ const filterActive = computed(() => !!(
 let listRequestSeq = 0
 let codesRequestSeq = 0
 let statusRequestSeq = 0
-const loadList = async () => {
-  const requestId = ++listRequestSeq
+let backgroundListPending = false
+let autoRefreshTimer = null
+let componentDisposed = false
+
+const loadList = async ({ background = false } = {}) => {
   if (!hasAccess.value) return
+  if (background && backgroundListPending) return
+  const requestId = ++listRequestSeq
   const requestedPage = page.value
   const requestedParams = listParams.value
-  loading.value = true
-  listError.value = ''
+
+  if (background) {
+    backgroundListPending = true
+  } else {
+    loading.value = true
+    listError.value = ''
+  }
+
   try {
     const listRes = await api.unified.listEmails(requestedParams)
     if (requestId !== listRequestSeq) return
@@ -462,16 +474,23 @@ const loadList = async () => {
     if (requestedPage === 1 && typeof listRes.count === 'number') {
       count.value = listRes.count
     }
+    listError.value = ''
     connected.value = true
     lastLoaded.value = new Date()
   } catch (e) {
     if (requestId !== listRequestSeq) return
-    listError.value = e.message || 'error'
     connected.value = false
-    emails.value = []
-    count.value = 0
+    if (!background) {
+      listError.value = e.message || 'error'
+      emails.value = []
+      count.value = 0
+    }
   } finally {
-    if (requestId === listRequestSeq) loading.value = false
+    if (background) {
+      backgroundListPending = false
+    } else if (requestId === listRequestSeq) {
+      loading.value = false
+    }
   }
 }
 
@@ -480,6 +499,29 @@ const applySearch = () => { page.value = 1; loadList() }
 const applyFilter = () => { page.value = 1; loadList() }
 const setPage = (p) => { page.value = p; loadList() }
 const openDetail = (id) => router.push({ path: `/unified/${id}` })
+
+const autoRefreshList = () => {
+  if (!hasAccess.value || activeTab.value !== 'list' || loading.value || backgroundListPending) return
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+  void loadList({ background: true })
+}
+
+const startAutoRefresh = () => {
+  if (autoRefreshTimer != null || typeof window === 'undefined') return
+  autoRefreshTimer = window.setInterval(autoRefreshList, AUTO_REFRESH_MS)
+}
+
+const stopAutoRefresh = () => {
+  if (autoRefreshTimer == null || typeof window === 'undefined') return
+  window.clearInterval(autoRefreshTimer)
+  autoRefreshTimer = null
+}
+
+const handleVisibilityChange = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    autoRefreshList()
+  }
+}
 
 // 来源/账号筛选项
 const SOURCE_MAP = {
@@ -820,12 +862,27 @@ watch(authIdentity, (identity, previousIdentity) => {
 })
 
 onMounted(async () => {
+  componentDisposed = false
   if (userJwt.value && !userSettings.value.user_id) {
     await api.getUserSettings(message)
   }
   if (hasAccess.value) {
     await loadOptions()
     await loadList()
+  }
+  if (componentDisposed) return
+  startAutoRefresh()
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+  }
+})
+
+onBeforeUnmount(() => {
+  componentDisposed = true
+  listRequestSeq += 1
+  stopAutoRefresh()
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 })
 </script>
