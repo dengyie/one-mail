@@ -1,10 +1,16 @@
 """token_store 测试：RT 轮换持久化的双通道（静态 config 原子写回 / 用户账号回写 Worker）。"""
 import json
+import os
+
+import pytest
 
 from one_mail_agg import token_store
-from one_mail_agg.token_store import (make_rotated_callback,
-                                      persist_rotated_refresh_token,
-                                      rewrite_config_refresh_token)
+from one_mail_agg.token_store import (
+    TokenPersistenceError,
+    make_rotated_callback,
+    persist_rotated_refresh_token,
+    rewrite_config_refresh_token,
+)
 
 
 class _Resp:
@@ -29,6 +35,13 @@ def test_rewrite_config_refresh_token(tmp_path):
     assert saved["accounts"][0]["oauth"]["refresh_token"] == "NEW"
 
 
+def test_rewrite_config_refresh_token_keeps_credentials_private(tmp_path):
+    p = _cfg_file(tmp_path)
+    os.chmod(p, 0o644)
+    assert rewrite_config_refresh_token(str(p), "g1", "NEW") is True
+    assert (os.stat(p).st_mode & 0o777) == 0o600
+
+
 def test_rewrite_config_missing_account(tmp_path):
     p = _cfg_file(tmp_path)
     assert rewrite_config_refresh_token(str(p), "nope", "NEW") is False
@@ -43,6 +56,23 @@ def test_persist_routes_user_account_to_worker(tmp_path, monkeypatch):
         type("C", (), {"worker_base_url": "https://w", "admin_token": "t",
                        "config_path": None})(), acc, "NEW")
     assert called == {"aid": "uuid-9", "rt": "NEW"}
+
+
+def test_persist_user_account_failure_raises(monkeypatch):
+    monkeypatch.setattr(token_store, "report_refresh_token_to_worker", lambda *a, **k: False)
+    acc = type("A", (), {"id": "uuid-9", "user_managed": True})()
+    config = type("C", (), {"worker_base_url": "https://w", "admin_token": "t",
+                             "config_path": None})()
+    with pytest.raises(TokenPersistenceError, match="uuid-9"):
+        persist_rotated_refresh_token(config, acc, "NEW")
+
+
+def test_persist_static_without_config_path_raises():
+    acc = type("A", (), {"id": "static-1", "user_managed": False})()
+    config = type("C", (), {"worker_base_url": "https://w", "admin_token": "t",
+                             "config_path": None})()
+    with pytest.raises(TokenPersistenceError, match="static-1"):
+        persist_rotated_refresh_token(config, acc, "NEW")
 
 
 def test_report_refresh_token_to_worker_statuses(monkeypatch):
