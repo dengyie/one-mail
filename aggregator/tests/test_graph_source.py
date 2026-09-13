@@ -31,6 +31,13 @@ class _FakeResp:
         return self._payload
 
 
+@pytest.fixture(autouse=True)
+def _isolate_folder_catalog_network(monkeypatch):
+    """Folder discovery has dedicated tests; Graph message tests must stay network-free."""
+    import one_mail_agg.graph_source as gs
+    monkeypatch.setattr(gs, "maybe_sync_graph_folder_catalog", lambda *a, **k: 0)
+
+
 def test_graph_uid_key_keeps_legacy_account_and_folder_dimensions():
     acc = SimpleNamespace(id="acc1")
     key = graph_uid_key(acc, "INBOX", "msg-1")
