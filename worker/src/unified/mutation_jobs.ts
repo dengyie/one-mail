@@ -578,7 +578,12 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
             ).bind(error, now, now, job.id).run();
             return c.json({ ok: true, status: "superseded" });
         }
-        if (job.attempts >= MAX_ATTEMPTS) {
+        // Location changes are not allowed to age out of the ordering barrier.
+        // A fifth timeout does not make an ambiguous MOVE/DELETE safe: provider
+        // state may already have changed. Keep retrying with capped backoff until
+        // recovery proves success or the provider returns a definite terminal
+        // failure. Desired-state read/star jobs retain the bounded retry budget.
+        if (job.attempts >= MAX_ATTEMPTS && !isLocationOperation(job.operation)) {
             await c.env.DB.prepare(
                 `UPDATE mail_mutation_jobs
                     SET status = 'failed', last_error = ?, lease_token = NULL,
