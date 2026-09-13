@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 from typing import Callable
 
 from imapclient import IMAPClient
@@ -11,15 +12,20 @@ from .oauth import oauth_client_factory, normalize_provider
 
 log = logging.getLogger("one-mail-agg")
 
+_IDLE_FAILURE_THRESHOLD = 5
+_IDLE_RETRY_COOLDOWN_SECONDS = 300
+
 # 活跃长连接表：account_id -> ImapIdleWorker
 _active_idle_workers: dict[str, "ImapIdleWorker"] = {}
 # 服务端明确不支持 IDLE 时，记住当前连接配置并交回 daemon 轮询；只有配置变化才重试。
 _idle_unsupported: dict[str, tuple] = {}
+# IDLE 连续不稳定时临时回落轮询；值为 (connection fingerprint, monotonic retry timestamp)。
+_idle_retry_after: dict[str, tuple[tuple, float]] = {}
 _lock = threading.Lock()
 
 
 def _idle_fingerprint(acc: AccountConfig) -> tuple:
-    """决定一个 IDLE capability 结论是否仍适用于当前账号配置。"""
+    """决定一个 IDLE capability / cooldown 结论是否仍适用于当前账号配置。"""
     return (
         str(acc.host or "").strip().lower(),
         int(acc.port),
@@ -31,6 +37,15 @@ def _idle_fingerprint(acc: AccountConfig) -> tuple:
 def _mark_idle_unsupported(acc: AccountConfig) -> None:
     with _lock:
         _idle_unsupported[acc.id] = _idle_fingerprint(acc)
+        _idle_retry_after.pop(acc.id, None)
+
+
+def _mark_idle_cooldown(acc: AccountConfig, seconds: int = _IDLE_RETRY_COOLDOWN_SECONDS) -> None:
+    with _lock:
+        _idle_retry_after[acc.id] = (
+            _idle_fingerprint(acc),
+            time.monotonic() + max(0, seconds),
+        )
 
 
 def _reconnect_backoff(consecutive_errors: int) -> int:
@@ -42,7 +57,8 @@ class ImapIdleWorker(threading.Thread):
     """常驻后台线程：为一个 IMAP 账号保持长连接并挂起 IDLE。
 
     收到服务端事件后立即同步；每 4 分钟主动退出 IDLE 做一次保底增量检查。
-    连接异常自动重连。服务端明确不支持 IDLE 时退出线程，由 daemon 的常规轮询兜底。
+    短暂连接异常自动重连；连续异常则暂时交回 daemon 轮询，冷却后自动重试 IDLE。
+    服务端明确不支持 IDLE 时直接长期使用 daemon 轮询，直到连接配置发生变化。
     """
 
     def __init__(
@@ -93,7 +109,7 @@ class ImapIdleWorker(threading.Thread):
                         pass
                     return
 
-                # 注意：仅仅 TCP/auth 建连成功不代表 IDLE 稳定，不能在这里清零错误计数。
+                # 仅仅 TCP/auth 建连成功不代表 IDLE 稳定，不能在这里清零错误计数。
                 # 否则“每次都能连上但一进 IDLE 就断”的服务端会永久以 2 秒频率重连。
                 log.info("Account %s connected for IDLE monitoring", self.account.id)
 
@@ -135,13 +151,23 @@ class ImapIdleWorker(threading.Thread):
             except Exception as e:
                 consecutive_errors += 1
                 backoff = _reconnect_backoff(consecutive_errors)
-                log.warning("Account %s IDLE connection lost (%s), reconnecting in %ds...",
-                            self.account.id, e, backoff)
                 if client is not None:
                     try:
                         client.logout()
                     except Exception:
                         pass
+
+                if consecutive_errors >= _IDLE_FAILURE_THRESHOLD:
+                    _mark_idle_cooldown(self.account)
+                    log.warning(
+                        "Account %s IDLE repeatedly unstable (%s); falling back to daemon polling "
+                        "for %ds before retrying IDLE",
+                        self.account.id, e, _IDLE_RETRY_COOLDOWN_SECONDS,
+                    )
+                    return
+
+                log.warning("Account %s IDLE connection lost (%s), reconnecting in %ds...",
+                            self.account.id, e, backoff)
                 if self._stop_event.wait(backoff):
                     break
 
@@ -190,7 +216,7 @@ def _resolve_client_factory(acc: AccountConfig, config: Config | None = None):
 
 
 def ensure_idle_workers(config: Config, state: SyncState, accounts: list[AccountConfig]) -> None:
-    """为可用 IMAP 账号维持 IDLE worker；不支持 IDLE 的账号交给 daemon 轮询。"""
+    """为可用 IMAP 账号维持 IDLE worker；不支持/暂不稳定的账号交给 daemon 轮询。"""
     with _lock:
         current_ids = {a.id for a in accounts}
 
@@ -199,10 +225,11 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                 worker.stop()
                 _active_idle_workers.pop(aid, None)
 
-        # 删除已移除账号的 capability 记忆，避免 registry 长期增长。
-        for aid in list(_idle_unsupported):
-            if aid not in current_ids:
-                _idle_unsupported.pop(aid, None)
+        # 删除已移除账号的 capability / cooldown 记忆，避免 registry 长期增长。
+        for registry in (_idle_unsupported, _idle_retry_after):
+            for aid in list(registry):
+                if aid not in current_ids:
+                    registry.pop(aid, None)
 
         for acc in accounts:
             if acc.source == "graph_outlook":
@@ -213,6 +240,7 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                 continue
 
             fingerprint = _idle_fingerprint(acc)
+
             unsupported_fingerprint = _idle_unsupported.get(acc.id)
             if unsupported_fingerprint == fingerprint:
                 # 无常驻 worker -> main daemon 会按 poll_interval（默认 60s）同步。
@@ -220,6 +248,17 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
             if unsupported_fingerprint is not None:
                 # host/port/SSL/username 改过，允许重新探测 IDLE capability。
                 _idle_unsupported.pop(acc.id, None)
+
+            cooldown = _idle_retry_after.get(acc.id)
+            if cooldown is not None:
+                cooldown_fingerprint, retry_at = cooldown
+                if cooldown_fingerprint != fingerprint:
+                    _idle_retry_after.pop(acc.id, None)
+                elif time.monotonic() < retry_at:
+                    # 连续 IDLE 异常期间由 daemon polling 保证准实时收信。
+                    continue
+                else:
+                    _idle_retry_after.pop(acc.id, None)
 
             if acc.id not in _active_idle_workers or not _active_idle_workers[acc.id].is_alive():
                 worker = ImapIdleWorker(config, acc, state, client_factory=_resolve_client_factory(acc, config))
