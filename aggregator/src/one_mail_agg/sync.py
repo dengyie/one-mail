@@ -10,6 +10,7 @@ from .normalize import normalize_message
 from .uploader import upload_emails
 from .pop3_source import connect_pop3, fetch_new_pop3_messages, uidl_to_key
 from .proxy_client import ProxiedIMAPClient, create_imap_client
+from .folder_catalog import maybe_sync_imap_folder_catalog
 
 log = logging.getLogger("one-mail-agg")
 
@@ -60,8 +61,10 @@ def _account_result(synced: int, dropped: int, protocol: str,
 def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) -> dict:
     """IMAP 增量同步一整个账号（全部 folders），返回 `{"synced", "dropped"}`。
 
-    dropped = 超大单封被跳过（fetch 层 water mark 推过）＋归一化失败被跳过。
+    同一连接顺带做节流后的 LIST catalog 同步，使没有邮件的空文件夹也能成为
+    move target。catalog 失败是 best-effort，不会阻断正常邮件同步。
     """
+    maybe_sync_imap_folder_catalog(client, config, account)
     total = 0
     dropped = 0
     for folder in account.folders:
