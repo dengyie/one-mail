@@ -79,7 +79,7 @@ def run_once(config_path: str) -> dict:
                 if is_user:
                     report_sync_status(config.worker_base_url, config.admin_token, account.id, None)
                 continue
-            factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
+            factory = oauth_client_factory(account, config) if account.oauth is not None else default_client_factory
         except (KeyError, AttributeError, TypeError):
             provider = normalize_provider(
                 account.oauth.get("provider")
@@ -156,7 +156,7 @@ def run_daemon(config_path: str, poll_interval: int = 60) -> int:
                     if account.source == "graph_outlook":
                         r = sync_graph(account, config, state)
                     else:
-                        factory = oauth_client_factory(account) if account.oauth is not None else default_client_factory
+                        factory = oauth_client_factory(account, config) if account.oauth is not None else default_client_factory
                         r = sync_account(factory, config, account, state)
                     if r.get("synced", 0) > 0:
                         log.info("poll synced %s: protocol=%s synced=%d dropped=%d",

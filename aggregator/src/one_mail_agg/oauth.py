@@ -2,6 +2,7 @@ import requests
 from imapclient import IMAPClient
 
 from .config import AccountConfig
+from .proxy_client import create_imap_client
 from .token_store import make_rotated_callback
 
 
@@ -10,6 +11,7 @@ def _handle_rotated(oauth: dict, data: dict, on_rotated) -> None:
 
     MSA/consumers 兑换必然轮换 RT：丢掉 = 下轮兑换 400、账号永久失联
     （2026-09-11 烧卡事故根因）。内存立即替换 + on_rotated 回调落盘。
+    持久化失败由回调抛出，让当前 OAuth 建连失败而不是假装成功。
     """
     new_rt = data.get("refresh_token")
     if new_rt and new_rt != oauth.get("refresh_token"):
@@ -99,9 +101,10 @@ def normalize_provider(provider: str | None) -> str | None:
 
 
 def oauth_client_factory(account: AccountConfig, config=None):
-    """config 传入后，token 轮换自动持久化（静态写 config.json，用户账号回写 Worker）。
+    """构造 OAuth IMAP client factory。
 
-    IDLE 线程与同步主循环都会经此建连，落盘走原子替换 / Worker 回写，线程安全。
+    config 传入后，token 轮换自动持久化（静态写 config.json，用户账号回写 Worker）。
+    transport 与基础认证 IMAP 共用 create_imap_client，确保 direct / SOCKS 策略一致。
     """
     provider = normalize_provider((account.oauth or {}).get("provider"))
     token_fn = _TOKEN_FN[provider]
@@ -109,8 +112,7 @@ def oauth_client_factory(account: AccountConfig, config=None):
 
     def factory(acc: AccountConfig) -> IMAPClient:
         access = token_fn(acc.oauth or {}, on_rotated)
-        # 30s socket 超时与 POP3 / 默认 client 工厂一致（I3）：单账号挂死不拖垮整轮。
-        c = IMAPClient(acc.host, port=acc.port, ssl=acc.use_ssl, timeout=30)
+        c = create_imap_client(acc, timeout=30)
         c.oauth2_login(acc.username, access)
         return c
     return factory

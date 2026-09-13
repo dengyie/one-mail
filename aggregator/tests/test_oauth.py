@@ -1,7 +1,8 @@
+import json
+
 import responses
 import one_mail_agg.oauth as oauth_mod
 from one_mail_agg.config import AccountConfig, Config
-import json
 from one_mail_agg.oauth import (
     gmail_access_token,
     outlook_access_token,
@@ -33,18 +34,21 @@ def test_outlook_access_token():
 
 
 @responses.activate
-def test_oauth_factory_uses_30s_timeout(monkeypatch):
-    """I3：OAuth IMAP 客户端工厂同样带 30s socket 超时。"""
+def test_oauth_factory_uses_shared_transport_with_30s_timeout(monkeypatch):
+    """OAuth IMAP 必须经共享 transport 工厂，并保留 30s socket timeout。"""
     calls = []
+
     class _FakeClient:
-        def __init__(self, *a, **kw):
-            calls.append((a, kw))
         def oauth2_login(self, u, token):
-            pass
+            calls.append(("oauth2_login", u, token))
+
+    def _fake_transport(account, *, timeout=0, **_kwargs):
+        calls.append(("transport", account.host, timeout))
+        return _FakeClient()
 
     responses.add(responses.POST, "https://oauth2.googleapis.com/token",
                   json={"access_token": "g-tok", "expires_in": 3600}, status=200)
-    monkeypatch.setattr(oauth_mod, "IMAPClient", _FakeClient)
+    monkeypatch.setattr(oauth_mod, "create_imap_client", _fake_transport)
 
     acc = AccountConfig(id="g", source="imap_gmail", host="imap.gmail.com", port=993,
                         username="u@gmail.com", password="rt",
@@ -53,7 +57,10 @@ def test_oauth_factory_uses_30s_timeout(monkeypatch):
     factory = oauth_mod.oauth_client_factory(acc)
     client = factory(acc)
     assert isinstance(client, _FakeClient)
-    assert calls == [(("imap.gmail.com",), {"port": 993, "ssl": True, "timeout": 30})]
+    assert calls == [
+        ("transport", "imap.gmail.com", 30),
+        ("oauth2_login", "u@gmail.com", "g-tok"),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -137,10 +144,8 @@ def test_token_fn_registration():
     assert _TOKEN_FN["msa"] is msa_access_token
     assert _TOKEN_FN["outlook"] is outlook_access_token
     assert _TOKEN_FN["gmail"] is gmail_access_token
-    # 别名不另行注册，交给 normalize_provider
     assert "hotmail" not in _TOKEN_FN
     assert "outlook_personal" not in _TOKEN_FN
-    # 双向确认：别名的 canonical 目标是 msa
     assert _TOKEN_FN[normalize_provider("hotmail")] is msa_access_token
     assert _TOKEN_FN[normalize_provider("outlook_personal")] is msa_access_token
 
@@ -149,15 +154,18 @@ def test_token_fn_registration():
 def test_msa_factory_routes_through_consumers_and_xoauth2(monkeypatch):
     """msa provider 的 factory 应走 /consumers 取 token 后做 OAuth2 login。"""
     calls = []
+
     class _FakeClient:
-        def __init__(self, *a, **kw):
-            calls.append((a, kw))
         def oauth2_login(self, u, token):
             calls.append(("oauth2_login", u, token))
 
+    monkeypatch.setattr(
+        oauth_mod,
+        "create_imap_client",
+        lambda account, *, timeout=0, **_kwargs: calls.append(("transport", account.host, timeout)) or _FakeClient(),
+    )
     responses.add(responses.POST, MSA_TOKEN_URL,
                   json={"access_token": "msa-acc"}, status=200)
-    monkeypatch.setattr(oauth_mod, "IMAPClient", _FakeClient)
 
     acc = AccountConfig(id="h", source="imap_outlook", host="outlook.office365.com",
                         port=993, username="someone@hotmail.com", password="placeholder",
@@ -166,8 +174,7 @@ def test_msa_factory_routes_through_consumers_and_xoauth2(monkeypatch):
     factory = oauth_mod.oauth_client_factory(acc)
     client = factory(acc)
     assert isinstance(client, _FakeClient)
-    # 第一次构造 + 一次 oauth2_login
-    assert calls[0] == (("outlook.office365.com",), {"port": 993, "ssl": True, "timeout": 30})
+    assert calls[0] == ("transport", "outlook.office365.com", 30)
     assert calls[1] == ("oauth2_login", "someone@hotmail.com", "msa-acc")
     assert responses.calls[0].request.url.startswith("https://login.microsoftonline.com/consumers/")
 
@@ -176,20 +183,22 @@ def test_msa_factory_routes_through_consumers_and_xoauth2(monkeypatch):
 def test_alias_hotmail_uses_msa(monkeypatch):
     """配置写 provider=hotmail（别名）应归一化为 msa 并正常认证。"""
     called = {}
+
     def _fake_msa(oauth, on_rotated=None):
         called["provider"] = oauth.get("provider")
         return "alias-tok"
-    # 单一事实来源：factory 先 normalize_provider(hotmail)->msa，再索引 _TOKEN_FN["msa"]。
-    # 所以只 patch canonical 键即可证明别名归一路径。
+
     monkeypatch.setitem(oauth_mod._TOKEN_FN, "msa", _fake_msa)
 
     class _FakeClient:
-        def __init__(self, *a, **kw):
-            pass
         def oauth2_login(self, u, token):
             called["tok"] = token
 
-    monkeypatch.setattr(oauth_mod, "IMAPClient", _FakeClient)
+    monkeypatch.setattr(
+        oauth_mod,
+        "create_imap_client",
+        lambda account, *, timeout=0, **_kwargs: _FakeClient(),
+    )
 
     acc = AccountConfig(id="h", source="imap_outlook", host="outlook.office365.com",
                         port=993, username="x@hotmail.com", password="p",
@@ -198,6 +207,7 @@ def test_alias_hotmail_uses_msa(monkeypatch):
     client = oauth_mod.oauth_client_factory(acc)(acc)
     assert isinstance(client, _FakeClient)
     assert called.get("tok") == "alias-tok"
+
 
 @responses.activate
 def test_msa_rotated_refresh_token_triggers_callback():
@@ -245,12 +255,14 @@ def test_oauth_client_factory_wires_persister(tmp_path, monkeypatch):
                   json={"access_token": "acc", "refresh_token": "ROTATED-NEW"}, status=200)
 
     class _FakeClient:
-        def __init__(self, *a, **kw):
-            pass
         def oauth2_login(self, u, token):
             pass
 
-    monkeypatch.setattr(oauth_mod, "IMAPClient", _FakeClient)
+    monkeypatch.setattr(
+        oauth_mod,
+        "create_imap_client",
+        lambda account, *, timeout=0, **_kwargs: _FakeClient(),
+    )
 
     config = Config(worker_base_url="https://w", admin_token="t", accounts=[],
                     config_path=str(cfg_file))

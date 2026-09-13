@@ -151,16 +151,15 @@ def _is_msa_like(acc: AccountConfig) -> bool:
     return provider == "msa"
 
 
-def _resolve_client_factory(acc: AccountConfig):
+def _resolve_client_factory(acc: AccountConfig, config: Config | None = None):
     """OAuth 账号走 oauth_client_factory（XOAUTH2/用户 token），否则默认基础登录。
 
-    未知/畸形 provider 不在此处抛异常（与 sync 路径一致：账号级隔离，不拖垮整轮）。
-    MSA（Hotmail/Outlook 个人号）账号若 token 工厂无法解析 = 当前 token 基本确定吊销，
-    给出明确的「需重新授权」告警；对非 MSA 账号仍回退基础登录（qq/163 行为不变）。
+    config 会传入 OAuth factory，使 IDLE 建连过程中发生的 refresh_token rotation
+    能写回静态 config 或 Worker。未知/畸形 provider 仍做账号级隔离。
     """
     if acc.oauth is not None:
         try:
-            return oauth_client_factory(acc)
+            return oauth_client_factory(acc, config)
         except (KeyError, AttributeError, TypeError) as e:
             if _is_msa_like(acc):
                 log.error(
@@ -200,6 +199,6 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                 continue
 
             if acc.id not in _active_idle_workers or not _active_idle_workers[acc.id].is_alive():
-                worker = ImapIdleWorker(config, acc, state, client_factory=_resolve_client_factory(acc))
+                worker = ImapIdleWorker(config, acc, state, client_factory=_resolve_client_factory(acc, config))
                 worker.start()
                 _active_idle_workers[acc.id] = worker

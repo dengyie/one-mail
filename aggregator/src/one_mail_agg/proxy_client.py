@@ -80,3 +80,21 @@ class ProxiedIMAPClient(IMAPClient):
             proxy_port = self.proxy_port
 
         return _CustomSOCKS5(self.host, self.port, ssl_context=self.ssl_context, timeout=self._timeout)
+
+
+def create_imap_client(
+    account,
+    *,
+    timeout: float = 30.0,
+    direct_client_cls=IMAPClient,
+    proxied_client_cls=ProxiedIMAPClient,
+) -> IMAPClient:
+    """创建统一 IMAP transport；认证方式由调用方决定。
+
+    password、OAuth、IDLE 和 mutation 都应复用此入口，使同一邮箱 host 在
+    direct / SOCKS 之间采用一致的网络策略。client class 参数主要用于测试和
+    调用方保持现有注入能力。
+    """
+    host = str(account.host).strip()
+    client_cls = proxied_client_cls if host.lower() in OVERSEAS_IMAP_HOSTS else direct_client_cls
+    return client_cls(host, port=account.port, ssl=account.use_ssl, timeout=timeout)
