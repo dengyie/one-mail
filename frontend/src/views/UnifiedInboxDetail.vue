@@ -63,6 +63,10 @@
         </div>
       </div>
 
+      <div class="flex justify-end">
+        <UnifiedMailboxActions :email="email" />
+      </div>
+
       <!-- AI 智能分析卡片 -->
       <div
         v-if="showAiPanel"
@@ -153,7 +157,7 @@
             >
               <span>📎</span>
               <span class="max-w-[220px] truncate font-medium">{{ att.name || att.id || ('attachment-' + (i + 1)) }}</span>
-              <span v-if="att.size" class="text-zinc-400 font-mono">({{ fmtSize(att.size) }})</span>
+              <span v-if="att.size" class="text-zinc-400 font-mono">({{ att.size ? fmtSize(att.size) : '' }})</span>
               <span v-if="att.mimeType" class="text-zinc-400">{{ att.mimeType }}</span>
               <span class="text-zinc-400" :title="t('detail.attachmentNoDownload')">· {{ t('detail.metadataOnly') }}</span>
             </div>
@@ -173,6 +177,7 @@ import { blockRemoteContent } from '../utils/remote-content-policy'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
 import { useGlobalState } from '../store'
+import UnifiedMailboxActions from '../components/UnifiedMailboxActions.vue'
 import ThinkingBlock from '../components/ai/ThinkingBlock.vue'
 import StreamMarkdown from '../components/ai/StreamMarkdown.vue'
 import MessageActionToolbar from '../components/ai/MessageActionToolbar.vue'

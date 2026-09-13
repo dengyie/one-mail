@@ -4,12 +4,16 @@ import { ingestHandler } from "./ingest";
 import { countEmails, statsEmails, verifCodes, getMetaOptions } from "./extra_endpoints";
 import {
     claimMutationJobs,
+    deleteEmail,
     getMutationStatus,
     markRead,
     markUnread,
+    moveEmail,
     reportMutationResult,
     toggleStar,
 } from "./mutation_jobs";
+import { claimLegacyMutationJobs } from "./mutation_claim_legacy.ts";
+import { listFolders } from "./folders.ts";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess } from "./api_keys";
 import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
@@ -177,6 +181,7 @@ const getEmail = async (c: Context<HonoCustomType>) => {
 
 api.get("/api/unified/emails", listEmails);
 api.get("/api/unified/meta", getMetaOptions);
+api.get("/api/unified/folders", listFolders);
 api.get("/api/unified/emails/:id", getEmail);
 api.get("/api/unified/count", countEmails);
 api.get("/api/unified/stats", statsEmails);
@@ -185,11 +190,16 @@ api.get("/api/unified/mutations/:id", getMutationStatus);
 api.post("/api/unified/emails/:id/read", markRead);     // external providers return 202 queued
 api.post("/api/unified/emails/:id/unread", markUnread); // desired-state operation, retry-safe
 api.post("/api/unified/emails/:id/star", toggleStar);   // readonly API keys are blocked by canAccess
+api.post("/api/unified/emails/:id/move", moveEmail);    // folder_id must belong to the same account/provider
+api.delete("/api/unified/emails/:id", deleteEmail);     // external delete completes only after provider success
 api.post("/admin/unified/ingest", ingestHandler);
 api.get("/admin/unified/mail_accounts", mail_accounts.exportForAggregator);  // x-admin-auth 保护
 api.post("/admin/unified/mail_accounts/:id/status", mail_accounts.reportStatus);  // 聚合器 sync 回写
 api.post("/admin/unified/mail_accounts/:id/refresh_token", mail_accounts.reportRefreshToken);  // 聚合器 RT 轮换回写
-api.post("/admin/unified/mutations/claim", claimMutationJobs); // 聚合器短租约领取外部写任务
+// v1 is intentionally read/star-only for old aggregators during rolling deploys.
+api.post("/admin/unified/mutations/claim", claimLegacyMutationJobs);
+// v2 may lease move/delete and is used by the current aggregator.
+api.post("/admin/unified/mutations/v2/claim", claimMutationJobs);
 api.post("/admin/unified/mutations/:id/result", reportMutationResult); // 聚合器回写 provider 结果
 // User-facing dispatch contracts live under /user_api; these admin routes are intentionally not exposed here.
 api.post("/admin/unified/keys", createKey);           // x-admin-auth 保护

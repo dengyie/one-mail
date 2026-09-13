@@ -1,4 +1,9 @@
-CREATE TABLE IF NOT EXISTS mail_mutation_jobs (
+-- Upgrade the original read/star-only durable mutation queue without losing
+-- in-flight jobs. Deployment renders this file only when target_folder is
+-- missing, so this destructive table rebuild is never replayed on an upgraded DB.
+DROP TABLE IF EXISTS mail_mutation_jobs_v2;
+
+CREATE TABLE mail_mutation_jobs_v2 (
     id TEXT PRIMARY KEY,
     email_id TEXT NOT NULL,
     account_id TEXT NOT NULL,
@@ -26,6 +31,24 @@ CREATE TABLE IF NOT EXISTS mail_mutation_jobs (
     updated_at INTEGER NOT NULL,
     completed_at INTEGER
 );
+
+INSERT INTO mail_mutation_jobs_v2 (
+    id, email_id, account_id, source, to_addr, provider, operation, desired_value,
+    source_folder, source_folder_id, target_folder, target_folder_id,
+    provider_message_id, source_key, message_id_header,
+    status, attempts, next_attempt_at, lease_token, lease_until, last_error,
+    created_at, updated_at, completed_at
+)
+SELECT
+    id, email_id, account_id, NULL, NULL, provider, operation, desired_value,
+    source_folder, source_folder_id, NULL, NULL,
+    provider_message_id, source_key, NULL,
+    status, attempts, next_attempt_at, lease_token, lease_until, last_error,
+    created_at, updated_at, completed_at
+FROM mail_mutation_jobs;
+
+DROP TABLE mail_mutation_jobs;
+ALTER TABLE mail_mutation_jobs_v2 RENAME TO mail_mutation_jobs;
 
 CREATE INDEX IF NOT EXISTS idx_mail_mutation_jobs_ready
     ON mail_mutation_jobs(status, next_attempt_at, created_at);
