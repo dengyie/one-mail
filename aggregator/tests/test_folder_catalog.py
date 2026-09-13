@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 import one_mail_agg.folder_catalog as catalog
+import one_mail_agg.sync as sync_mod
 from one_mail_agg.config import AccountConfig, Config
 
 
@@ -54,6 +55,39 @@ def test_discover_imap_folder_special_use_types():
 
     rows = catalog.discover_imap_folders(_Client(), _imap_account())
     assert [row["folder_type"] for row in rows] == ["drafts", "trash", "spam", "archive"]
+
+
+def test_sync_imap_discovers_catalog_only_after_first_select_succeeds(monkeypatch):
+    calls = []
+
+    class _Client:
+        def select_folder(self, folder, readonly=True):
+            calls.append(("select", folder))
+            return {b"UIDVALIDITY": 7}
+
+    monkeypatch.setattr(sync_mod, "maybe_sync_imap_folder_catalog",
+                        lambda client, config, account: calls.append(("catalog", account.id)) or 1)
+    monkeypatch.setattr(sync_mod, "fetch_new_messages",
+                        lambda client, account, folder, state, oversize=None: [])
+
+    result = sync_mod.sync_imap(_Client(), _config(), _imap_account(), SimpleNamespace())
+    assert result == {"synced": 0, "dropped": 0, "protocol": "imap"}
+    assert calls == [("select", "INBOX"), ("catalog", "imap-1")]
+
+
+def test_sync_imap_select_failure_does_not_register_catalog(monkeypatch):
+    catalog_calls = []
+
+    class _Client:
+        def select_folder(self, folder, readonly=True):
+            raise OSError("select failed")
+
+    monkeypatch.setattr(sync_mod, "maybe_sync_imap_folder_catalog",
+                        lambda *args, **kwargs: catalog_calls.append(True))
+
+    with pytest.raises(OSError, match="select failed"):
+        sync_mod.sync_imap(_Client(), _config(), _imap_account(), SimpleNamespace())
+    assert catalog_calls == []
 
 
 class _Resp:
