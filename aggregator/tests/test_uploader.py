@@ -38,8 +38,9 @@ def test_upload_folders_uses_same_ingest_endpoint():
     assert out == {"folders_upserted": 1}
     req = responses.calls[0].request
     assert req.headers["x-admin-auth"] == "tok"
-    assert b'"folders"' in req.body
-    assert b'"canonical_name": "Empty"' in req.body
+    body = req.body.decode("utf-8") if isinstance(req.body, bytes) else str(req.body)
+    assert '"folders"' in body
+    assert '"canonical_name": "Empty"' in body
 
 
 @responses.activate
