@@ -5,8 +5,8 @@ import time
 # 连续失败 N 轮后进入退避；退避时长（秒）
 FAILBACK_MAX_FAILS = 3
 FAILBACK_BACKOFF_SEC = 900      # 15 分钟起步
-# POP3 seen 集合单账号(FIFO)上限：POP3 没有 IMAP 的水印删档，已见 UIDL 无限
-# 增长会让 state 文件越滚越大；超出时裁剪最旧（set 保序 → 掐头）。
+# POP3/Graph seen 单账号上限：POP3 没有 IMAP 的水印删档，Graph 也沿用历史 seen
+# namespace 兼容旧 state。磁盘里保持“首次 seen 的写入顺序”，超出时从头裁剪最旧。
 POP3_SEEN_MAX = 2000
 
 
@@ -67,26 +67,51 @@ class SyncState:
         self._data["uidvalidity"][self._key(account_id, folder)] = int(v)
         self.save()
 
-    # --- POP3 专用命名空间 ---
-    # POP3 没有 IMAP 的 UIDVALIDITY/UID，只有服务端维持的 UIDL 字符串。
-    # 存"已见过"的 UIDL 集合来推进水印；未成功上传的 UIDL 不标记、留到下一轮重试。
-    # 与 last_uid/uidvalidity（IMAP 命名空间）完全隔离，避免两类 int 互相污染。
+    # --- POP3 / Graph seen 命名空间 ---
+    # 历史字段名保留为 pop3_seen，避免升级时 Graph/POP3 现有水印全部失效。
+    # 对外读取仍返回 set 以保持调用方 API；磁盘内部必须保存有序 list，才能做真实 FIFO。
 
     def get_pop3_seen(self, account_id: str, folder: str) -> set[str]:
         return set(self._data["pop3_seen"].get(self._key(account_id, folder), []))
 
-    def _trim_pop3_seen(self, seen: set[str]) -> list[str]:
-        """FIFO 裁剪：保留最近 POP3_SEEN_MAX 条；老数据兼容（超限旧集合首次 add 时裁剪）。"""
-        ordered = sorted(seen)
+    def _ordered_pop3_seen(self, key: str) -> list[str]:
+        """读取并去重历史 seen list，同时保留磁盘中的首次出现顺序。"""
+        raw = self._data["pop3_seen"].get(key, [])
+        if not isinstance(raw, list):
+            # 正常 JSON state 只能是 list；手工损坏的其他类型 fail-soft，不把字符串按字符拆开。
+            raw = []
+        ordered: list[str] = []
+        membership: set[str] = set()
+        for value in raw:
+            uid = str(value)
+            if uid in membership:
+                continue
+            membership.add(uid)
+            ordered.append(uid)
+        return ordered
+
+    def _append_pop3_seen(self, key: str, uidls: list[str]) -> None:
+        """按首次写入顺序追加 seen key，并从头裁剪真正最旧的条目。
+
+        不能用 set + sorted：POP3 UIDL 和 Graph message ID 都不是时间有序字符串，
+        字典序裁剪会随机丢掉近期 key，导致后续轮询把已同步邮件重新抓取。
+        重复 key 是 no-op，不会因为重复标记而“续命”。
+        """
+        ordered = self._ordered_pop3_seen(key)
+        membership = set(ordered)
+        for value in uidls:
+            uid = str(value)
+            if uid in membership:
+                continue
+            membership.add(uid)
+            ordered.append(uid)
         if len(ordered) > POP3_SEEN_MAX:
             ordered = ordered[-POP3_SEEN_MAX:]
-        return ordered
+        self._data["pop3_seen"][key] = ordered
 
     def add_pop3_seen(self, account_id: str, folder: str, uidl: str) -> None:
         key = self._key(account_id, folder)
-        seen = set(self._data["pop3_seen"].get(key, []))
-        seen.add(uidl)
-        self._data["pop3_seen"][key] = self._trim_pop3_seen(seen)
+        self._append_pop3_seen(key, [uidl])
         self.save()
 
     def add_pop3_seen_many(self, account_id: str, folder: str, uidls: list[str]) -> None:
@@ -94,9 +119,7 @@ class SyncState:
         if not uidls:
             return
         key = self._key(account_id, folder)
-        seen = set(self._data["pop3_seen"].get(key, []))
-        seen.update(uidls)
-        self._data["pop3_seen"][key] = self._trim_pop3_seen(seen)
+        self._append_pop3_seen(key, uidls)
         self.save()
 
     # --- 降级固定（fallback pin）---
@@ -110,7 +133,7 @@ class SyncState:
         self._data["fallback"][account_id] = bool(pinned)
         self.save()
 
-    # --- 账号级失败管理（连续失败退避）---
+    # --- 账号级失败管理（连续失败退避） ---
     # 每账号维护连续失败计数与「跳过到刻」。连续 FAILBACK_MAX=3 轮失败后进入
     # 退避（skip_until_ts），期间不再尝试该账号，避免无意义重连轰炸目标服务器
     # 触发封 IP；成功（或上传任意一条）即清零。老 state 文件缺字段视为 0/None
