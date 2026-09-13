@@ -17,6 +17,7 @@ from .token_store import make_rotated_callback
 from .normalize import normalize_message
 from .uploader import upload_emails
 from .imap_base import BATCH_SIZE, MAX_SINGLE_BYTES
+from .folder_catalog import maybe_sync_graph_folder_catalog
 
 log = logging.getLogger("one-mail-agg")
 
@@ -248,6 +249,8 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
         account.oauth,
         make_rotated_callback(config if config.config_path or account.user_managed else None, account),
     )
+    # 独立发现空文件夹；best-effort 且 5 分钟节流，不影响正常 Graph 邮件轮询。
+    maybe_sync_graph_folder_catalog(access_token, config, account)
     folders = account.folders or ["INBOX"]
     total_synced = 0
     total_dropped = 0

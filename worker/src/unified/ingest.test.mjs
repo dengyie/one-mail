@@ -148,3 +148,98 @@ test("provider identity replay refreshes folder metadata without counting a new 
   assert.equal(folder.params[2], "folder-2");
   assert.equal(folder.params[3], "Archive");
 });
+
+test("folder-only catalog upsert registers empty IMAP folders", async () => {
+  const { upsertFolders } = await import("./ingest.ts");
+  const batches = [];
+  const fakeEnv = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...params) {
+            return { sql, params };
+          },
+        };
+      },
+      async batch(stmts) {
+        batches.push(stmts);
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    },
+  };
+
+  const count = await upsertFolders({ env: fakeEnv }, [{
+    account_id: "imap-1",
+    provider: "imap",
+    canonical_name: "Archive/Empty",
+    display_name: "Archive/Empty",
+    folder_type: "archive",
+  }]);
+
+  assert.equal(count, 1);
+  assert.equal(batches.length, 1);
+  const stmt = batches[0][0];
+  assert.match(stmt.sql, /INSERT INTO mail_account_folders/);
+  assert.match(stmt.sql, /COALESCE\(excluded\.uidvalidity, mail_account_folders\.uidvalidity\)/);
+  assert.equal(stmt.params[0], "imap-1");
+  assert.equal(stmt.params[1], "imap");
+  assert.equal(stmt.params[2], "Archive/Empty");
+  assert.equal(stmt.params[3], "Archive/Empty");
+  assert.equal(stmt.params[4], "archive");
+  assert.equal(stmt.params[5], null);
+});
+
+test("folder-only catalog uses Graph provider folder id as stable identity", async () => {
+  const { upsertFolders } = await import("./ingest.ts");
+  const batches = [];
+  const fakeEnv = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...params) {
+            return { sql, params };
+          },
+        };
+      },
+      async batch(stmts) {
+        batches.push(stmts);
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    },
+  };
+
+  const count = await upsertFolders({ env: fakeEnv }, [{
+    account_id: "graph-1",
+    provider: "graph",
+    provider_folder_id: "folder-stable-id",
+    canonical_name: "Projects",
+    display_name: "Projects",
+  }]);
+
+  assert.equal(count, 1);
+  const stmt = batches[0][0];
+  assert.match(stmt.sql, /ON CONFLICT\(mail_account_id, provider, provider_folder_id\)/);
+  assert.equal(stmt.params[2], "folder-stable-id");
+  assert.equal(stmt.params[3], "Projects");
+});
+
+test("folder catalog rejects malformed provider or uidvalidity", async () => {
+  const { upsertFolders } = await import("./ingest.ts");
+  const fakeEnv = {
+    DB: {
+      prepare() {
+        return { bind() { return {}; } };
+      },
+      async batch() { return []; },
+    },
+  };
+
+  await assert.rejects(
+    () => upsertFolders({ env: fakeEnv }, [{ account_id: "a", provider: "smtp", canonical_name: "X" }]),
+    /invalid folder catalog entry/,
+  );
+  await assert.rejects(
+    () => upsertFolders({ env: fakeEnv }, [{ account_id: "a", provider: "imap", canonical_name: "X", uidvalidity: 0 }]),
+    /invalid folder catalog entry/,
+  );
+});

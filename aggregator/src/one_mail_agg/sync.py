@@ -10,6 +10,7 @@ from .normalize import normalize_message
 from .uploader import upload_emails
 from .pop3_source import connect_pop3, fetch_new_pop3_messages, uidl_to_key
 from .proxy_client import ProxiedIMAPClient, create_imap_client
+from .folder_catalog import maybe_sync_imap_folder_catalog
 
 log = logging.getLogger("one-mail-agg")
 
@@ -60,13 +61,19 @@ def _account_result(synced: int, dropped: int, protocol: str,
 def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) -> dict:
     """IMAP 增量同步一整个账号（全部 folders），返回 `{"synced", "dropped"}`。
 
-    dropped = 超大单封被跳过（fetch 层 water mark 推过）＋归一化失败被跳过。
+    首个配置 mailbox SELECT 成功后，复用同一连接做节流后的 LIST catalog 同步；
+    这样 empty folder 可成为 move target，同时 auto 账号若 SELECT 失败并降级 POP3，
+    不会提前登记无效的 IMAP move target。catalog 失败不会阻断邮件同步。
     """
     total = 0
     dropped = 0
+    catalog_attempted = False
     for folder in account.folders:
         sel = client.select_folder(folder, readonly=True)
         uidvalidity = int(sel[b"UIDVALIDITY"])
+        if not catalog_attempted:
+            maybe_sync_imap_folder_catalog(client, config, account)
+            catalog_attempted = True
         oversize = []                                   # 本窗口被 MAX_SINGLE_BYTES 跳过的大封 uid
         msgs = fetch_new_messages(client, account, folder, state, oversize=oversize)
         dropped += len(oversize)    # 先计入大封跳过，再判断有无健康邮件
@@ -133,11 +140,6 @@ def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> dict:
                        + ", ".join(non_inbox)) if non_inbox else None
             return _account_result(0, len(oversize) + len(non_inbox), "pop3",
                                    dropped_folders=non_inbox, warning=warning)
-        # 逐封归一化，单封畸形绝不卡死整批（C3 hardening）：
-        # 归一化失败的 UIDL 跳过上传、**不标记 seen**，下一轮 fetch 会重试；
-        # 成功归一化的照常批量 mark seen。POP3 的 watermark 就是 seen 集合，
-        # 所以跳过的 UIDL 不得标记，留给下一轮（IMAP 多 folder 窗口可以推进
-        # last_uid 放弃，POP3 没有对称概念）。
         batch, uploaded_uidls = [], []
         dropped = len(oversize) + len(non_inbox)
         for m in msgs:
@@ -152,19 +154,12 @@ def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> dict:
                 log.warning("skip pop3 message uidl=%s account=%s: %r",
                             m.uidl, account.id, e)
         if not batch:
-            # 全部归一化失败且无任何已成功上传的邮件：不能静默返回 0。
-            # `_fallback_to_pop3` 将任何 <=0 返回值当「POP3 同步成功」并永久钉住
-            # 账号到 POP3；这里抛出表示「POP3 本轮失败」——auto 账号下轮重试 IMAP，
-            # 显式 pop3 账号由 run_once 捕获、下轮重试同批未 seen 的 UIDL（review
-            # Important-1 回归：改动前整批 list-comprehension 崩到这里不执行钉住）。
             n_pending = len(msgs)
             raise RuntimeError(
                 f"pop3 {account.id}: all {n_pending} pending messages failed to "
                 f"normalize (dropped={dropped}), nothing uploaded and nothing marked seen")
         result = upload_emails(config, batch)
         inserted = result.get("inserted", len(batch))
-        # 上传成功（200）后批量 seen——只标记**成功归一化的这批**，被跳过的坏
-        # UIDL 不在此列。如果上传失败会抛出，此处不执行，留到下一轮。
         state.add_pop3_seen_many(account.id, "INBOX", uploaded_uidls)
         warning = ("POP3 only supports INBOX; non-INBOX folders were dropped: "
                    + ", ".join(non_inbox)) if non_inbox else None
@@ -192,7 +187,6 @@ def sync_account(client_factory, config: Config, account: AccountConfig, state: 
     if account.protocol == "pop3":
         return sync_pop3(account, config, state)
 
-    # 已被钉住到 POP3 的账号直接走 POP3（不再试 IMAP）
     if state.is_fallback_pinned(account.id):
         return sync_pop3(account, config, state)
 
@@ -200,8 +194,6 @@ def sync_account(client_factory, config: Config, account: AccountConfig, state: 
     try:
         client = client_factory(account)
     except (IMAPClientError, OSError) as error:
-        # 连接 / 登录阶段（factory 内部）同样允许降级；仅 transport abort
-        # （及已知服务器 abort 文案）可降级，认证/协议错误必须原样抛出。
         if account.protocol == "auto" and not account.oauth and _imap_fallback_allowed(error):
             return _fallback_to_pop3(config, account, state, error=error)
         raise
@@ -234,9 +226,6 @@ def _fallback_to_pop3(config: Config, account: AccountConfig, state: SyncState,
       SELECT 即挂（零 IMAP upload），现实中快速收敛；多文件夹混合场景跨协议
       去重留待后续（见 CHANGELOG 注释）。
     """
-    # A POP3 account can represent INBOX only.  With no INBOX there is no
-    # safe fallback operation: report every requested folder as dropped and
-    # leave the account eligible to retry IMAP next round.
     if "INBOX" not in account.folders:
         dropped = len(account.folders)
         log.warning("account=%s fallback to POP3 dropped %d non-INBOX folder(s): %s",

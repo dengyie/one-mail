@@ -71,7 +71,12 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
     ];
 }
 
-const folderType = (folder: string): "inbox" | "sent" | "drafts" | "archive" | "trash" | "spam" | "custom" => {
+type FolderType = "inbox" | "sent" | "drafts" | "archive" | "trash" | "spam" | "custom";
+const VALID_FOLDER_TYPES = new Set<FolderType>([
+    "inbox", "sent", "drafts", "archive", "trash", "spam", "custom",
+]);
+
+const folderType = (folder: string): FolderType => {
     const normalized = folder.trim().toLowerCase();
     if (normalized === "inbox") return "inbox";
     if (["sent", "sent items", "sent messages"].includes(normalized)) return "sent";
@@ -86,8 +91,10 @@ interface FolderState {
     accountId: string;
     provider: string;
     folder: string;
+    displayName: string;
     providerFolderId: string | null;
     uidvalidity: number | null;
+    folderType: FolderType;
 }
 
 const collectFolders = (emails: Record<string, unknown>[]): FolderState[] => {
@@ -105,11 +112,40 @@ const collectFolders = (emails: Record<string, unknown>[]): FolderState[] => {
             accountId,
             provider,
             folder,
+            displayName: folder,
             providerFolderId,
             uidvalidity: nullableInteger(e.source_uidvalidity),
+            folderType: folderType(folder),
         });
     }
     return [...byKey.values()];
+};
+
+const parseCatalogFolder = (value: unknown): FolderState | null => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    const accountId = nullableText(row.account_id)?.trim() || null;
+    const provider = nullableText(row.provider)?.trim().toLowerCase() || null;
+    const folder = nullableText(row.canonical_name)?.trim() || null;
+    if (!accountId || !folder || !provider || !["imap", "pop3", "graph"].includes(provider)) return null;
+
+    const providerFolderId = nullableText(row.provider_folder_id)?.trim() || null;
+    const displayName = nullableText(row.display_name)?.trim() || folder;
+    const rawType = nullableText(row.folder_type)?.trim().toLowerCase() as FolderType | null;
+    const resolvedType = rawType && VALID_FOLDER_TYPES.has(rawType) ? rawType : folderType(folder);
+    const rawUidvalidity = row.uidvalidity;
+    const uidvalidity = rawUidvalidity == null ? null : nullableInteger(rawUidvalidity);
+    if (rawUidvalidity != null && (uidvalidity == null || uidvalidity <= 0)) return null;
+
+    return {
+        accountId,
+        provider,
+        folder,
+        displayName,
+        providerFolderId,
+        uidvalidity,
+        folderType: resolvedType,
+    };
 };
 
 const buildIdentityRefreshStatements = (
@@ -154,7 +190,6 @@ const buildFolderStatement = (
     folder: FolderState,
     nowMs: number,
 ) => {
-    const type = folderType(folder.folder);
     if (folder.providerFolderId) {
         // Stable provider identity is the conflict target. A rename updates the
         // same row instead of colliding on (or duplicating by) canonical_name.
@@ -168,8 +203,11 @@ const buildFolderStatement = (
              DO UPDATE SET
                 canonical_name = excluded.canonical_name,
                 display_name = excluded.display_name,
-                folder_type = excluded.folder_type,
-                uidvalidity = excluded.uidvalidity,
+                folder_type = CASE
+                    WHEN excluded.folder_type = 'custom' THEN mail_account_folders.folder_type
+                    ELSE excluded.folder_type
+                END,
+                uidvalidity = COALESCE(excluded.uidvalidity, mail_account_folders.uidvalidity),
                 last_sync_at = excluded.last_sync_at,
                 last_error = NULL,
                 updated_at = excluded.updated_at`
@@ -178,8 +216,8 @@ const buildFolderStatement = (
             folder.provider,
             folder.providerFolderId,
             folder.folder,
-            folder.folder,
-            type,
+            folder.displayName,
+            folder.folderType,
             folder.uidvalidity,
             nowMs,
             nowMs,
@@ -198,8 +236,11 @@ const buildFolderStatement = (
          WHERE provider_folder_id IS NULL
          DO UPDATE SET
             display_name = excluded.display_name,
-            folder_type = excluded.folder_type,
-            uidvalidity = excluded.uidvalidity,
+            folder_type = CASE
+                WHEN excluded.folder_type = 'custom' THEN mail_account_folders.folder_type
+                ELSE excluded.folder_type
+            END,
+            uidvalidity = COALESCE(excluded.uidvalidity, mail_account_folders.uidvalidity),
             last_sync_at = excluded.last_sync_at,
             last_error = NULL,
             updated_at = excluded.updated_at`
@@ -207,14 +248,28 @@ const buildFolderStatement = (
         folder.accountId,
         folder.provider,
         folder.folder,
-        folder.folder,
-        type,
+        folder.displayName,
+        folder.folderType,
         folder.uidvalidity,
         nowMs,
         nowMs,
         nowMs,
     );
 };
+
+export async function upsertFolders(c: Context<HonoCustomType>, folders: unknown[]): Promise<number> {
+    if (!folders.length) return 0;
+    const normalized = folders.map(parseCatalogFolder);
+    if (normalized.some((folder) => folder == null)) {
+        throw new Error("invalid folder catalog entry");
+    }
+    const nowMs = Date.now();
+    const statements = (normalized as FolderState[]).map((folder) => buildFolderStatement(c, folder, nowMs));
+    for (let start = 0; start < statements.length; start += 100) {
+        await c.env.DB.batch(statements.slice(start, start + 100));
+    }
+    return statements.length;
+}
 
 export async function insertEmails(c: Context<HonoCustomType>, emails: Record<string, unknown>[]): Promise<{ inserted: number; skipped: number }> {
     let inserted = 0, skipped = 0;
@@ -254,14 +309,35 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
 }
 
 export const ingestHandler = async (c: Context<HonoCustomType>) => {
-    const body = await c.req.json<{ emails?: Record<string, unknown>[] }>().catch(() => ({}));
+    const body = await c.req.json<{
+        emails?: Record<string, unknown>[];
+        folders?: unknown[];
+    }>().catch(() => ({}));
     const emails = body?.emails;
-    if (!Array.isArray(emails) || emails.length === 0) {
-        return c.json({ error: "emails array required" }, 400);
+    const folders = body?.folders;
+
+    if (emails != null && !Array.isArray(emails)) {
+        return c.json({ error: "emails must be an array" }, 400);
     }
-    if (emails.length > 200) {
-        return c.json({ error: "max 200 emails per request" }, 400);
+    if (folders != null && !Array.isArray(folders)) {
+        return c.json({ error: "folders must be an array" }, 400);
     }
-    const result = await insertEmails(c, emails);
-    return c.json(result);
+
+    const emailRows = emails || [];
+    const folderRows = folders || [];
+    if (emailRows.length === 0 && folderRows.length === 0) {
+        return c.json({ error: "emails or folders array required" }, 400);
+    }
+    if (emailRows.length > 200 || folderRows.length > 200) {
+        return c.json({ error: "max 200 emails or folders per request" }, 400);
+    }
+
+    const result = await insertEmails(c, emailRows);
+    let foldersUpserted = 0;
+    try {
+        foldersUpserted = await upsertFolders(c, folderRows);
+    } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : "invalid folder catalog" }, 400);
+    }
+    return c.json({ ...result, folders_upserted: foldersUpserted });
 };
