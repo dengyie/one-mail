@@ -108,7 +108,7 @@ test('attempted move remains an ordering barrier when a newer delete exists', as
   expect(deleteRes.status()).toBe(202);
   const deleteJob = await deleteRes.json() as { job_id: string };
 
-  const retryRes = await request.post(
+  const firstRetryRes = await request.post(
     WORKER_URL + `/admin/unified/mutations/${encodeURIComponent(moveJob.job_id)}/result`,
     {
       headers: ADMIN_HEADERS,
@@ -120,15 +120,8 @@ test('attempted move remains an ordering barrier when a newer delete exists', as
       },
     },
   );
-  expect(retryRes.ok()).toBe(true);
-  expect(await retryRes.json()).toMatchObject({ status: 'pending' });
-
-  const moveStatusRes = await request.get(
-    WORKER_URL + `/api/unified/mutations/${encodeURIComponent(moveJob.job_id)}`,
-    { headers: authHeaders },
-  );
-  expect(moveStatusRes.ok()).toBe(true);
-  expect(await moveStatusRes.json()).toMatchObject({ status: 'pending', attempts: 1 });
+  expect(firstRetryRes.ok()).toBe(true);
+  expect(await firstRetryRes.json()).toMatchObject({ status: 'pending' });
 
   const deleteStatusRes = await request.get(
     WORKER_URL + `/api/unified/mutations/${encodeURIComponent(deleteJob.job_id)}`,
@@ -137,8 +130,51 @@ test('attempted move remains an ordering barrier when a newer delete exists', as
   expect(deleteStatusRes.ok()).toBe(true);
   expect(await deleteStatusRes.json()).toMatchObject({ status: 'pending', attempts: 0 });
 
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  // Exercise the old MAX_ATTEMPTS boundary explicitly. Location mutations with
+  // an unknown provider outcome must remain pending even at attempt 5; otherwise
+  // the newer delete could lease with the stale INBOX UID after the retry cap.
+  for (let attempt = 2; attempt <= 5; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const lease = `location-retry-${attempt}-${suffix}`;
+    const claimRes = await request.post(WORKER_URL + '/admin/unified/mutations/v2/claim', {
+      headers: ADMIN_HEADERS,
+      data: { lease_token: lease, limit: 50 },
+    });
+    expect(claimRes.ok()).toBe(true);
+    const claim = await claimRes.json() as {
+      jobs: Array<{ id: string; attempts: number; source_folder: string; source_key: string }>;
+    };
+    expect(claim.jobs.find((job) => job.id === moveJob.job_id)).toMatchObject({
+      attempts: attempt,
+      source_folder: 'INBOX',
+      source_key: originalSourceKey,
+    });
+    expect(claim.jobs.some((job) => job.id === deleteJob.job_id)).toBe(false);
 
+    const retryRes = await request.post(
+      WORKER_URL + `/admin/unified/mutations/${encodeURIComponent(moveJob.job_id)}/result`,
+      {
+        headers: ADMIN_HEADERS,
+        data: {
+          lease_token: lease,
+          status: 'retry',
+          error: `simulated unresolved move outcome attempt ${attempt}`,
+          retry_after_ms: 1000,
+        },
+      },
+    );
+    expect(retryRes.ok()).toBe(true);
+    expect(await retryRes.json()).toMatchObject({ status: 'pending' });
+  }
+
+  const moveStatusRes = await request.get(
+    WORKER_URL + `/api/unified/mutations/${encodeURIComponent(moveJob.job_id)}`,
+    { headers: authHeaders },
+  );
+  expect(moveStatusRes.ok()).toBe(true);
+  expect(await moveStatusRes.json()).toMatchObject({ status: 'pending', attempts: 5 });
+
+  await new Promise((resolve) => setTimeout(resolve, 1100));
   const recoveryLease = `location-recovery-${suffix}`;
   const recoveryClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/v2/claim', {
     headers: ADMIN_HEADERS,
@@ -149,7 +185,7 @@ test('attempted move remains an ordering barrier when a newer delete exists', as
     jobs: Array<{ id: string; attempts: number; source_folder: string; source_key: string }>;
   };
   expect(recoveryClaim.jobs.find((job) => job.id === moveJob.job_id)).toMatchObject({
-    attempts: 2,
+    attempts: 6,
     source_folder: 'INBOX',
     source_key: originalSourceKey,
   });
