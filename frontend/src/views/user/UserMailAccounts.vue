@@ -16,12 +16,18 @@ const loading = ref(false)
 const showModal = ref(false)
 const submitting = ref(false)
 
+// Provider presets intentionally reuse the existing backend sources. 126 / iCloud /
+// Yahoo are standard IMAP providers and therefore use imap_custom instead of adding
+// provider-specific backend branches. The preset only fills safe connection defaults.
 const sourceOptions = computed(() => ([
-    { label: t('gmail'), value: 'imap_gmail', host: 'imap.gmail.com', port: 993, pop3Host: 'pop.gmail.com', pop3Port: 995 },
-    { label: t('outlook'), value: 'imap_outlook', host: 'outlook.office365.com', port: 993, pop3Host: 'outlook.office365.com', pop3Port: 995 },
-    { label: t('qq'), value: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995 },
-    { label: t('163'), value: 'imap_163', host: 'imap.163.com', port: 993, pop3Host: 'pop.163.com', pop3Port: 995 },
-    { label: t('custom'), value: 'imap_custom', host: '', port: 993, pop3Host: '', pop3Port: 995 },
+    { label: t('gmail'), value: 'gmail', source: 'imap_gmail', host: 'imap.gmail.com', port: 993, pop3Host: 'pop.gmail.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('outlook'), value: 'outlook', source: 'imap_outlook', host: 'outlook.office365.com', port: 993, pop3Host: 'outlook.office365.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('qq'), value: 'qq', source: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('163'), value: '163', source: 'imap_163', host: 'imap.163.com', port: 993, pop3Host: 'pop.163.com', pop3Port: 995, protocol: 'auto' },
+    { label: '网易 126', value: '126', source: 'imap_custom', host: 'imap.126.com', port: 993, pop3Host: 'pop.126.com', pop3Port: 995, protocol: 'auto' },
+    { label: 'iCloud Mail', value: 'icloud', source: 'imap_custom', host: 'imap.mail.me.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
+    { label: 'Yahoo Mail', value: 'yahoo', source: 'imap_custom', host: 'imap.mail.yahoo.com', port: 993, pop3Host: 'pop.mail.yahoo.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('custom'), value: 'custom', source: 'imap_custom', host: '', port: 993, pop3Host: '', pop3Port: 995, protocol: 'auto' },
 ]))
 const protocolOptions = computed(() => ([
     { label: t('auto') || '自动', value: 'auto' },
@@ -33,7 +39,7 @@ const form = ref(emptyForm())
 
 function emptyForm() {
     return {
-        label: '', source: 'imap_gmail', protocol: 'auto',
+        provider: 'gmail', label: '', source: 'imap_gmail', protocol: 'auto',
         host: 'imap.gmail.com', port: 993, use_ssl: true,
         pop3_host: 'pop.gmail.com', pop3_port: 995, pop3_ssl: true, pop3_use_stls: false,
         username: '', cred: '', folders: ''
@@ -53,13 +59,18 @@ const validPort = (value) => Number.isInteger(Number(value)) && Number(value) >=
 const onSourceChange = (v) => {
     const opt = sourceOptions.value.find(o => o.value === v)
     if (!opt) return
-    // A provider switch is a complete endpoint preset switch. Do not retain a
-    // previous provider's POP3 endpoint (or port), especially when changing
-    // between IMAP and POP3 modes.
+    // A provider switch is a complete endpoint preset switch. The UI keeps a
+    // distinct provider selector while `source` remains the backend-compatible
+    // identity (new standard providers intentionally map to imap_custom).
+    form.value.source = opt.source
     form.value.host = opt.host
     form.value.port = opt.port
     form.value.pop3_host = opt.pop3Host
     form.value.pop3_port = opt.pop3Port
+    form.value.protocol = opt.protocol
+    form.value.use_ssl = true
+    form.value.pop3_ssl = true
+    form.value.pop3_use_stls = false
 }
 
 const onProtocolChange = (v) => {
@@ -211,7 +222,7 @@ onMounted(async () => {
         <n-modal v-model:show="showModal" preset="card" :title="t('modalTitle') || '添加外部邮箱归集 (IMAP/POP3)'" class="rounded-3xl max-w-lg">
             <n-form :model="form" label-placement="top" class="space-y-3">
                 <n-form-item :label="t('emailType') || '邮箱服务商'">
-                    <n-select v-model:value="form.source" :options="sourceOptions" @update:value="onSourceChange" class="rounded-xl" />
+                    <n-select v-model:value="form.provider" :options="sourceOptions" @update:value="onSourceChange" class="rounded-xl" />
                 </n-form-item>
                 <n-form-item :label="t('protocol') || '协议'">
                     <n-select v-model:value="form.protocol" :options="protocolOptions" @update:value="onProtocolChange" class="rounded-xl" />
