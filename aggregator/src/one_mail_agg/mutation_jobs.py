@@ -44,6 +44,10 @@ class MutationIdentityError(RuntimeError):
     pass
 
 
+class MutationOutcomeUnknown(RuntimeError):
+    """A location-changing provider call may have committed but cannot be proven yet."""
+
+
 def _claim_response(config: Config, path: str, lease_token: str, limit: int):
     return requests.post(
         f"{config.worker_base_url}{path}",
@@ -201,6 +205,10 @@ def _imap_move_projection(
     }
 
 
+def _imap_move_outcome_unknown(error: Exception) -> MutationOutcomeUnknown:
+    return MutationOutcomeUnknown(f"IMAP MOVE outcome is unknown: {error}")
+
+
 def _apply_imap_mutation(config: Config, account: AccountConfig, job: dict) -> dict | None:
     if str(job.get("provider") or "").lower() == "pop3" or account.protocol == "pop3":
         raise MutationUnsupported("POP3 has no safe provider write-back semantics")
@@ -233,44 +241,67 @@ def _apply_imap_mutation(config: Config, account: AccountConfig, job: dict) -> d
             selected = client.select_folder(folder, readonly=False)
             current_uidvalidity = int(selected[b"UIDVALIDITY"])
             if current_uidvalidity != expected_uidvalidity:
-                # UIDVALIDITY reset invalidates the entire source UID namespace.
-                # Never infer prior success from Message-ID alone after that reset.
-                raise MutationIdentityError(
-                    f"IMAP UIDVALIDITY changed: expected={expected_uidvalidity} current={current_uidvalidity}")
+                message = (
+                    f"IMAP UIDVALIDITY changed: expected={expected_uidvalidity} "
+                    f"current={current_uidvalidity}"
+                )
+                if attempts > 1:
+                    # A prior MOVE may already have committed. Once the old UID
+                    # namespace resets, neither the old source UID nor a target
+                    # Message-ID alone can prove the post-move identity safely.
+                    raise MutationOutcomeUnknown(f"IMAP MOVE outcome is unknown: {message}")
+                raise MutationIdentityError(message)
 
             if uid not in client.search(["UID", str(uid)], charset=None):
                 if attempts > 1:
-                    recovered = _imap_recover_moved_message(client, job, target_folder)
+                    try:
+                        recovered = _imap_recover_moved_message(client, job, target_folder)
+                    except (MutationIdentityError, IMAPClientError, OSError) as error:
+                        raise _imap_move_outcome_unknown(error) from error
                     return _imap_move_projection(account, target_folder, *recovered)
                 raise MutationIdentityError(f"IMAP UID {uid} no longer exists in folder {folder!r}")
 
-            response = client.move([uid], target_folder)
-            mapped = _parse_copyuid(response, uid)
-            if mapped is None:
-                # UIDPLUS servers SHOULD return COPYUID for UID MOVE, but safe
-                # interoperability still needs a deterministic fallback when a
-                # server omits it. Message-ID recovery is deliberately strict.
-                mapped = _imap_recover_moved_message(client, job, target_folder)
-            else:
-                destination_uidvalidity, destination_uid = mapped
-                selected_target = client.select_folder(target_folder, readonly=False)
-                actual_target_uidvalidity = int(selected_target[b"UIDVALIDITY"])
-                if actual_target_uidvalidity != destination_uidvalidity:
-                    raise MutationIdentityError(
-                        "IMAP MOVE COPYUID target UIDVALIDITY does not match selected destination")
-                if destination_uid not in client.search(["UID", str(destination_uid)], charset=None):
-                    raise MutationIdentityError("IMAP MOVE destination UID does not exist after MOVE")
+            try:
+                response = client.move([uid], target_folder)
+            except (IMAPClientError, OSError) as error:
+                # Once MOVE is issued, a lost/ambiguous command result cannot be
+                # classified as a safe terminal failure. Recovery must run first.
+                raise _imap_move_outcome_unknown(error) from error
+
+            try:
+                mapped = _parse_copyuid(response, uid)
+                if mapped is None:
+                    # UIDPLUS servers SHOULD return COPYUID for UID MOVE, but safe
+                    # interoperability still needs a deterministic fallback when a
+                    # server omits it. Message-ID recovery is deliberately strict.
+                    mapped = _imap_recover_moved_message(client, job, target_folder)
+                else:
+                    destination_uidvalidity, destination_uid = mapped
+                    selected_target = client.select_folder(target_folder, readonly=False)
+                    actual_target_uidvalidity = int(selected_target[b"UIDVALIDITY"])
+                    if actual_target_uidvalidity != destination_uidvalidity:
+                        raise MutationIdentityError(
+                            "IMAP MOVE COPYUID target UIDVALIDITY does not match selected destination")
+                    if destination_uid not in client.search(["UID", str(destination_uid)], charset=None):
+                        raise MutationIdentityError("IMAP MOVE destination UID does not exist after MOVE")
+            except (MutationIdentityError, IMAPClientError, OSError) as error:
+                raise _imap_move_outcome_unknown(error) from error
             return _imap_move_projection(account, target_folder, *mapped)
 
         selected = client.select_folder(folder, readonly=False)
         current_uidvalidity = int(selected[b"UIDVALIDITY"])
         if current_uidvalidity != expected_uidvalidity:
-            # A UIDVALIDITY reset invalidates the old UID namespace but does not
-            # prove the message disappeared. Even on a delete retry, treating
-            # this as success could delete the local row while the provider still
-            # contains the same message under a new UID. Fail closed instead.
-            raise MutationIdentityError(
-                f"IMAP UIDVALIDITY changed: expected={expected_uidvalidity} current={current_uidvalidity}")
+            message = (
+                f"IMAP UIDVALIDITY changed: expected={expected_uidvalidity} "
+                f"current={current_uidvalidity}"
+            )
+            if operation == "delete" and attempts > 1:
+                # A prior exact delete may have committed, but a UIDVALIDITY reset
+                # only invalidates the old UID namespace; it does not prove that
+                # the message disappeared. Preserve the ordering barrier and retry
+                # recovery rather than deleting the local row on an assumption.
+                raise MutationOutcomeUnknown(f"IMAP DELETE outcome is unknown: {message}")
+            raise MutationIdentityError(message)
         exists = uid in client.search(["UID", str(uid)], charset=None)
         if not exists:
             if operation == "delete" and attempts > 1:
@@ -299,8 +330,11 @@ def _apply_imap_mutation(config: Config, account: AccountConfig, job: dict) -> d
             # already marked \\Deleted. UID EXPUNGE is the required exact-delete
             # primitive for this durable job.
             _require_imap_capability(client, "UIDPLUS")
-            client.delete_messages([uid], silent=True)
-            client.uid_expunge([uid])
+            try:
+                client.delete_messages([uid], silent=True)
+                client.uid_expunge([uid])
+            except (IMAPClientError, OSError) as error:
+                raise MutationOutcomeUnknown(f"IMAP DELETE outcome is unknown: {error}") from error
             return None
         raise MutationUnsupported(f"unsupported IMAP mutation operation: {operation!r}")
     finally:
@@ -411,17 +445,34 @@ def _apply_graph_mutation(config: Config, account: AccountConfig, job: dict) -> 
         # lets us prove the message is already in the requested destination and
         # avoid issuing a second move.
         if max(1, int(job.get("attempts") or 1)) > 1:
-            current = requests.get(
-                f"https://graph.microsoft.com/v1.0/me/messages/{encoded_id}?$select=id,parentFolderId",
-                headers=headers,
-                timeout=30,
-            )
-            current.raise_for_status()
-            current_body = current.json()
-            if not isinstance(current_body, dict):
-                raise MutationIdentityError("Graph move recovery returned invalid message payload")
-            if str(current_body.get("parentFolderId") or "") == target_folder_id:
-                return _graph_move_projection(account, job, current_body)
+            try:
+                current = requests.get(
+                    f"https://graph.microsoft.com/v1.0/me/messages/{encoded_id}?$select=id,parentFolderId",
+                    headers=headers,
+                    timeout=30,
+                )
+                current.raise_for_status()
+                current_body = current.json()
+                if not isinstance(current_body, dict):
+                    raise MutationIdentityError("Graph move recovery returned invalid message payload")
+                if str(current_body.get("parentFolderId") or "") == target_folder_id:
+                    try:
+                        return _graph_move_projection(account, job, current_body)
+                    except MutationIdentityError as error:
+                        raise MutationOutcomeUnknown(
+                            f"Graph MOVE outcome is unknown: {error}") from error
+            except MutationOutcomeUnknown:
+                raise
+            except requests.HTTPError as error:
+                status = error.response.status_code if error.response is not None else 0
+                if status == 408 or status == 429 or status >= 500:
+                    raise
+                raise MutationOutcomeUnknown(
+                    f"Graph MOVE recovery cannot prove current provider identity: HTTP {status}") from error
+            except (requests.Timeout, requests.ConnectionError):
+                raise
+            except (ValueError, MutationIdentityError) as error:
+                raise MutationOutcomeUnknown(f"Graph MOVE outcome is unknown: {error}") from error
 
         response = requests.post(
             f"https://graph.microsoft.com/v1.0/me/messages/{encoded_id}/move",
@@ -430,10 +481,16 @@ def _apply_graph_mutation(config: Config, account: AccountConfig, job: dict) -> 
             timeout=30,
         )
         response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise MutationIdentityError("Graph move returned invalid message payload")
-        return _graph_move_projection(account, job, payload)
+        try:
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise MutationIdentityError("Graph move returned invalid message payload")
+            return _graph_move_projection(account, job, payload)
+        except (ValueError, MutationIdentityError) as error:
+            # A successful HTTP MOVE response means the side effect may already
+            # be committed. Invalid/missing proof fields are recovery work, not a
+            # safe terminal failure that lets later stale-identity jobs run.
+            raise MutationOutcomeUnknown(f"Graph MOVE outcome is unknown: {error}") from error
     if operation == "delete":
         response = requests.delete(
             f"https://graph.microsoft.com/v1.0/me/messages/{encoded_id}",
@@ -464,6 +521,8 @@ def execute_mutation(config: Config, account: AccountConfig, job: dict) -> dict 
 
 
 def _retryable(error: Exception) -> bool:
+    if isinstance(error, MutationOutcomeUnknown):
+        return True
     if isinstance(error, (requests.Timeout, requests.ConnectionError, OSError, IMAPClientAbortError)):
         return True
     if isinstance(error, requests.HTTPError):
