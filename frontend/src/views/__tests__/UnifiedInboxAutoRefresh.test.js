@@ -35,6 +35,13 @@ describe('unified inbox quiet auto refresh contract', () => {
     expect(catchBlock).toContain('count.value = 0')
   })
 
+  it('cannot register a timer after an async mount has already been disposed', () => {
+    expect(view).toContain('let componentDisposed = false')
+    expect(view).toContain('if (componentDisposed) return')
+    expect(view).toContain('componentDisposed = true')
+    expect(view).toContain('listRequestSeq += 1')
+  })
+
   it('keeps the existing manual refresh path', () => {
     expect(view).toContain('const refreshList = () => loadList()')
     expect(view).toContain('@click="refreshList"')
