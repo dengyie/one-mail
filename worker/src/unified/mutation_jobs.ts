@@ -155,6 +155,7 @@ const supersedeOlderPendingIntent = async (
             `UPDATE mail_mutation_jobs
                 SET status = 'superseded', completed_at = ?, updated_at = ?
               WHERE email_id = ? AND operation IN ('move', 'delete') AND status = 'pending'
+                AND attempts = 0
                 AND id != ?
                 AND rowid < (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)`,
         ).bind(now, now, row.id, id, id).run();
@@ -208,8 +209,9 @@ const queueExternalMutation = async (
     ).run();
 
     // Desired-state intents collapse while still pending. Location-changing
-    // intents share one group: a newer delete supersedes a pending move and a
-    // newer move supersedes an earlier move/delete that has not started yet.
+    // intents may collapse only before their first provider attempt. Once a
+    // move/delete has started, its outcome can be unknown after a timeout, so it
+    // must remain an ordering barrier until recovery reaches a terminal result.
     await supersedeOlderPendingIntent(c, row, operation, id, now);
 
     return c.json({
@@ -388,6 +390,7 @@ const collapseDuplicatePendingIntents = async (c: Context<HonoCustomType>, now: 
             SET status = 'superseded', completed_at = ?, updated_at = ?
           WHERE current.status = 'pending'
             AND current.operation IN ('move', 'delete')
+            AND current.attempts = 0
             AND EXISTS (
                 SELECT 1 FROM mail_mutation_jobs newer
                  WHERE newer.email_id = current.email_id
@@ -562,7 +565,11 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
     const newer = await newerIntentExists(c, job);
 
     if (requestedStatus === "retry") {
-        if (newer) {
+        // Read/star are absolute desired-state writes, so a newer intent can
+        // safely replace an older retry. Location mutations are different: once
+        // attempted, a timeout can mean the provider move/delete already happened.
+        // Keep them as an ordering barrier until retry recovery resolves outcome.
+        if (newer && !isLocationOperation(job.operation)) {
             await c.env.DB.prepare(
                 `UPDATE mail_mutation_jobs
                     SET status = 'superseded', last_error = ?, lease_token = NULL,
