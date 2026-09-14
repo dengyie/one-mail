@@ -16,6 +16,7 @@
 import json
 import logging
 import os
+import threading
 
 import requests
 
@@ -28,43 +29,51 @@ class TokenPersistenceError(RuntimeError):
     """A rotated refresh token could not be durably persisted."""
 
 
+# 多个 IDLE worker 可能同时刷新不同静态 OAuth 账号。config.json 是一个共享的
+# read-modify-write 文档；若不把「读取最新文件 → 修改一个账号 → fsync/replace」
+# 整段串行化，后写线程会用自己的旧快照覆盖先写线程的新 refresh_token。
+_CONFIG_REWRITE_LOCK = threading.RLock()
+
+
 def rewrite_config_refresh_token(config_path: str, account_id: str, new_refresh_token: str) -> bool:
     """把轮换后的 refresh_token 原子写回静态 config.json。返回是否写成功。
 
-    临时文件与最终文件都强制 0600，避免 os.replace 把原本私有的凭据文件替换成
-    受进程 umask 影响的 0644 文件。
+    临时文件与最终文件都强制 0600。整个 read-modify-replace 在进程级锁内完成，
+    保证多个 OAuth 账号同时轮换时不会发生 lost update。
     """
-    tmp_path = f"{config_path}.tmp"
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        for acc in raw.get("accounts", []):
-            if acc.get("id") == account_id and isinstance(acc.get("oauth"), dict):
-                acc["oauth"]["refresh_token"] = new_refresh_token
-                break
-        else:
-            log.warning("persist refresh_token: account %s not found in %s", account_id, config_path)
-            return False
-
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(raw, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, config_path)
-        os.chmod(config_path, 0o600)
-        log.info("rotated refresh_token persisted to config for account %s", account_id)
-        return True
-    except Exception as e:
-        log.error("persist refresh_token to config failed for account %s: %r", account_id, e)
+    with _CONFIG_REWRITE_LOCK:
+        tmp_path = f"{config_path}.{os.getpid()}.{threading.get_ident()}.tmp"
         try:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-        except OSError:
-            pass
-        return False
+            # 必须在锁内重新读取最新文件，不能使用调用方早先加载的 Config 快照。
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            for acc in raw.get("accounts", []):
+                if acc.get("id") == account_id and isinstance(acc.get("oauth"), dict):
+                    acc["oauth"]["refresh_token"] = new_refresh_token
+                    break
+            else:
+                log.warning("persist refresh_token: account %s not found in %s", account_id, config_path)
+                return False
+
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(raw, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, config_path)
+            os.chmod(config_path, 0o600)
+            log.info("rotated refresh_token persisted to config for account %s", account_id)
+            return True
+        except Exception as e:
+            log.error("persist refresh_token to config failed for account %s: %r", account_id, e)
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
+            return False
 
 
 def report_refresh_token_to_worker(worker_base_url: str, admin_token: str,
