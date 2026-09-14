@@ -18,10 +18,11 @@ const submitting = ref(false)
 
 // Provider presets intentionally reuse the existing backend sources. 126 / iCloud /
 // Yahoo are standard IMAP providers and therefore use imap_custom instead of adding
-// provider-specific backend branches. The preset only fills safe connection defaults.
+// provider-specific backend branches. Outlook is IMAP-only here because Microsoft
+// Basic Auth is disabled; its credential is supplied through the existing OAuth JSON.
 const sourceOptions = computed(() => ([
     { label: t('gmail'), value: 'gmail', source: 'imap_gmail', host: 'imap.gmail.com', port: 993, pop3Host: 'pop.gmail.com', pop3Port: 995, protocol: 'auto' },
-    { label: t('outlook'), value: 'outlook', source: 'imap_outlook', host: 'outlook.office365.com', port: 993, pop3Host: 'outlook.office365.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('outlook'), value: 'outlook', source: 'imap_outlook', host: 'outlook.office365.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
     { label: t('qq'), value: 'qq', source: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995, protocol: 'auto' },
     { label: t('163'), value: '163', source: 'imap_163', host: 'imap.163.com', port: 993, pop3Host: 'pop.163.com', pop3Port: 995, protocol: 'auto' },
     { label: '网易 126', value: '126', source: 'imap_custom', host: 'imap.126.com', port: 993, pop3Host: 'pop.126.com', pop3Port: 995, protocol: 'auto' },
@@ -42,7 +43,7 @@ function emptyForm() {
         provider: 'gmail', label: '', source: 'imap_gmail', protocol: 'auto',
         host: 'imap.gmail.com', port: 993, use_ssl: true,
         pop3_host: 'pop.gmail.com', pop3_port: 995, pop3_ssl: true, pop3_use_stls: false,
-        username: '', cred: '', folders: ''
+        username: '', cred: '', oauth_json: '', folders: ''
     }
 }
 
@@ -53,15 +54,36 @@ function emptyForm() {
 // an invisible required field.
 const showImap = computed(() => true)
 const showPop3 = computed(() => form.value.protocol !== 'imap')
+const isOutlook = computed(() => form.value.provider === 'outlook')
 
 const validPort = (value) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535
+const OUTLOOK_OAUTH_PROVIDERS = new Set(['msa', 'hotmail', 'outlook_personal', 'outlook'])
+const OAUTH_CRED_PLACEHOLDER = '__oauth_managed__'
+
+const parseOutlookOauth = (raw) => {
+    const text = String(raw || '').trim()
+    if (!text) return null
+    let value
+    try {
+        value = JSON.parse(text)
+    } catch {
+        return null
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const provider = String(value.provider || '').trim().toLowerCase()
+    const clientId = String(value.client_id || '').trim()
+    const refreshToken = String(value.refresh_token || '').trim()
+    if (!OUTLOOK_OAUTH_PROVIDERS.has(provider) || !clientId || !refreshToken) return null
+    // Organizational Outlook/M365 uses the confidential-client path in oauth.py.
+    if (provider === 'outlook' && !String(value.client_secret || '').trim()) return null
+    return { text, provider }
+}
 
 const onSourceChange = (v) => {
     const opt = sourceOptions.value.find(o => o.value === v)
     if (!opt) return
-    // A provider switch is a complete endpoint preset switch. The UI keeps a
-    // distinct provider selector while `source` remains the backend-compatible
-    // identity (new standard providers intentionally map to imap_custom).
+    // A provider switch is a complete endpoint/auth preset switch. Never carry a
+    // refresh token into a different provider by accident.
     form.value.source = opt.source
     form.value.host = opt.host
     form.value.port = opt.port
@@ -71,6 +93,8 @@ const onSourceChange = (v) => {
     form.value.use_ssl = true
     form.value.pop3_ssl = true
     form.value.pop3_use_stls = false
+    form.value.oauth_json = ''
+    if (v === 'outlook') form.value.cred = ''
 }
 
 const onProtocolChange = (v) => {
@@ -110,9 +134,16 @@ const submit = async () => {
     const effectivePop3Host = f.protocol === 'pop3' ? (f.pop3_host || f.host) : f.pop3_host
     const effectivePop3Port = f.protocol === 'pop3' ? (f.pop3_port || f.port) : f.pop3_port
 
+    const outlookOauth = isOutlook.value ? parseOutlookOauth(f.oauth_json) : null
+    if (isOutlook.value && !outlookOauth) {
+        message.error('Outlook / Hotmail 需要有效的 OAuth JSON（个人账号使用 msa，组织账号使用 outlook）')
+        return
+    }
+
     const imapValid = effectiveHost && validPort(effectivePort)
     const pop3Valid = f.protocol !== 'pop3' || (effectivePop3Host && validPort(effectivePop3Port))
-    if (!f.username || !f.cred || !imapValid || !pop3Valid) {
+    const effectiveCred = outlookOauth ? OAUTH_CRED_PLACEHOLDER : f.cred
+    if (!f.username || !effectiveCred || !imapValid || !pop3Valid) {
         message.error('请填写有效的邮箱服务器、端口与授权信息')
         return
     }
@@ -126,8 +157,8 @@ const submit = async () => {
         await api.userMailAccounts.create({
             label: f.label, source: f.source, host: effectiveHost, port: Number(effectivePort), use_ssl: f.use_ssl,
             pop3_host: effectivePop3Host || null, pop3_port: effectivePop3Port ? Number(effectivePop3Port) : null,
-            pop3_ssl: f.pop3_ssl, pop3_use_stls: f.pop3_use_stls, username: f.username, cred: f.cred,
-            protocol: f.protocol, folders,
+            pop3_ssl: f.pop3_ssl, pop3_use_stls: f.pop3_use_stls, username: f.username, cred: effectiveCred,
+            protocol: f.protocol, folders, oauth: outlookOauth?.text,
         })
         message.success(t('addSuccessTip') || '添加外部邮箱成功')
         showModal.value = false
@@ -225,7 +256,7 @@ onMounted(async () => {
                     <n-select v-model:value="form.provider" :options="sourceOptions" @update:value="onSourceChange" class="rounded-xl" />
                 </n-form-item>
                 <n-form-item :label="t('protocol') || '协议'">
-                    <n-select v-model:value="form.protocol" :options="protocolOptions" @update:value="onProtocolChange" class="rounded-xl" />
+                    <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook" @update:value="onProtocolChange" class="rounded-xl" />
                 </n-form-item>
                 <n-form-item :label="t('customLabel') || '自定义标签（选填）'">
                     <n-input v-model:value="form.label" placeholder="如：我的个人 QQ 邮箱" class="rounded-xl" />
@@ -233,7 +264,21 @@ onMounted(async () => {
                 <n-form-item :label="t('emailUsername') || '邮箱地址 / 用户名'">
                     <n-input v-model:value="form.username" placeholder="user@example.com" class="rounded-xl" />
                 </n-form-item>
-                <n-form-item :label="t('credential') || '授权码 / 应用专用密码'">
+                <template v-if="isOutlook">
+                    <n-alert type="info" :show-icon="false" class="rounded-xl">
+                        Outlook / Hotmail / Microsoft 365 使用 OAuth2。个人账号可粘贴 msa_authorize.py 生成的 JSON；组织账号使用 provider=outlook，并包含 client_secret。
+                    </n-alert>
+                    <n-form-item label="OAuth 配置 JSON">
+                        <n-input
+                            v-model:value="form.oauth_json"
+                            type="password"
+                            show-password-on="click"
+                            placeholder='{"provider":"msa","client_id":"...","refresh_token":"..."}'
+                            class="rounded-xl"
+                        />
+                    </n-form-item>
+                </template>
+                <n-form-item v-else :label="t('credential') || '授权码 / 应用专用密码'">
                     <n-input v-model:value="form.cred" type="password" show-password-on="click" placeholder="应用专用密码或授权码" class="rounded-xl" />
                 </n-form-item>
                 <p v-if="form.protocol === 'auto'" class="text-xs text-slate-500 dark:text-slate-400">
