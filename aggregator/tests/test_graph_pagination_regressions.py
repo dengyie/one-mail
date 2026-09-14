@@ -3,13 +3,14 @@ from types import SimpleNamespace
 import pytest
 
 import one_mail_agg.graph_source as gs
+from one_mail_agg.config import Config
 
 
 class _Resp:
-    def __init__(self, payload, status=200):
+    def __init__(self, payload, status=200, content=b""):
         self._payload = payload
         self.status_code = status
-        self.content = b""
+        self.content = content
         self.text = str(payload)
 
     def raise_for_status(self):
@@ -93,6 +94,77 @@ def test_graph_message_pagination_rejects_unexpected_nextlink_host(monkeypatch):
     }))
     with pytest.raises(RuntimeError, match="unexpected host"):
         gs._collect_pending_graph_items("AT", account, "INBOX", state, "inbox")
+
+
+def test_graph_mime_retryable_hole_stops_before_newer_messages(monkeypatch):
+    account = _account()
+    state = _State()
+    pending = [
+        {"id": "oldest", "receivedDateTime": "2026-09-14T00:00:01Z"},
+        {"id": "retry-me", "receivedDateTime": "2026-09-14T00:00:02Z"},
+        {"id": "newer", "receivedDateTime": "2026-09-14T00:00:03Z"},
+    ]
+    monkeypatch.setattr(gs, "_collect_pending_graph_items", lambda *a, **k: pending)
+    monkeypatch.setattr(gs, "_resolve_immutable_metadata", lambda token, items: {
+        row["id"]: {
+            "id": f"immutable-{row['id']}",
+            "conversationId": None,
+            "parentFolderId": "inbox-id",
+        }
+        for row in items
+    })
+    mime_calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        message_id = url.split("/messages/", 1)[1].split("/", 1)[0]
+        mime_calls.append(message_id)
+        if message_id == "retry-me":
+            return _Resp({}, status=503)
+        return _Resp({}, content=b"From: a@b\r\nSubject: ok\r\n\r\nbody\r\n")
+
+    monkeypatch.setattr(gs.requests, "get", fake_get)
+    fetched, oversize = gs.fetch_graph_messages("AT", account, "INBOX", state)
+
+    assert [meta.legacy_id for meta, _raw in fetched] == ["oldest"]
+    assert mime_calls == ["oldest", "retry-me"]
+    assert oversize == []
+
+
+def test_graph_normalize_drop_is_marked_seen_to_keep_boundary_contiguous(monkeypatch):
+    account = SimpleNamespace(
+        id="g1",
+        oauth={"provider": "graph"},
+        folders=["INBOX"],
+        user_managed=False,
+    )
+    state = _State()
+    config = Config(worker_base_url="https://worker.example", admin_token="t", accounts=[])
+    good = gs.GraphMessageMeta("immutable-good", "good", None, "good", None, "inbox-id")
+    bad = gs.GraphMessageMeta("immutable-bad", "bad", None, "bad", None, "inbox-id")
+
+    monkeypatch.setattr(gs, "graph_access_token", lambda *a, **k: "AT")
+    monkeypatch.setattr(gs, "maybe_sync_graph_folder_catalog", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        gs,
+        "fetch_graph_messages",
+        lambda *a, **k: ([(good, b"good"), (bad, b"bad")], []),
+    )
+
+    def fake_normalize(raw, *args, **kwargs):
+        if raw == b"bad":
+            raise ValueError("permanent parse failure")
+        return {"imap_uid": kwargs["imap_uid_override"]}
+
+    monkeypatch.setattr(gs, "normalize_message", fake_normalize)
+    monkeypatch.setattr(gs, "upload_emails", lambda config, batch: {"inserted": len(batch)})
+
+    result = gs.sync_graph(account, config, state)
+
+    assert result == {"synced": 1, "dropped": 1, "protocol": "graph"}
+    assert state.seen == {
+        gs.graph_uid_key(account, "INBOX", "good"),
+        gs.graph_uid_key(account, "INBOX", "bad"),
+    }
 
 
 def test_custom_graph_folder_name_resolves_to_provider_folder_id(monkeypatch):
