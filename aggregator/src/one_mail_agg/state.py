@@ -47,10 +47,7 @@ class SyncState:
                     try:
                         self._data = json.load(f)
                     except (json.JSONDecodeError, OSError):
-                        # 半截 JSON（旧版非原子写被写坏）：降级为全新状态、
-                        # 构造不抛错——否则一个坏文件就让所有账号的同步状态清零。
                         self._data = {}
-            # 旧/手工编辑的 state 可能缺键，补默认，避免 KeyError
             self._data.setdefault("last_uid", {})
             self._data.setdefault("uidvalidity", {})
             self._data.setdefault("pop3_seen", {})
@@ -70,12 +67,7 @@ class SyncState:
             self._save_locked()
 
     def set_last_uid_max(self, account_id: str, folder: str, uid: int) -> None:
-        """水印单调推进：只接受更大的值，绝不回落。
-
-        fetch 层把超限单封推进过水印后，sync 层不能拿「已挑出邮件」的较小 max
-        把水位拉回来，否则下轮会重拉含超限封的整个窗口。比较与写入必须在同一
-        锁内，否则两个 IDLE 线程/调用方交错时会破坏 compare-and-set 语义。
-        """
+        """水印单调推进：只接受更大的值，绝不回落。"""
         with self._lock:
             key = self._key(account_id, folder)
             current = int(self._data["last_uid"].get(key, 0))
@@ -93,16 +85,24 @@ class SyncState:
             self._data["uidvalidity"][self._key(account_id, folder)] = int(v)
             self._save_locked()
 
+    def has_imap_history(self, account_id: str) -> bool:
+        """账号是否曾成功建立过 IMAP mailbox identity。
+
+        UIDVALIDITY 只在 SELECT 成功后写入，因此它是判断该账号是否已经进入 IMAP
+        命名空间的可靠持久证据。存在该证据后绝不能再自动切到 POP3：两种协议的
+        source key 命名空间不同，跨协议会把同一 INBOX 邮件作为新记录再次入库。
+        """
+        prefix = f"{account_id}|"
+        with self._lock:
+            return any(str(key).startswith(prefix) for key in self._data["uidvalidity"])
+
     # --- POP3 / Graph seen 命名空间 ---
-    # 历史字段名保留为 pop3_seen，避免升级时 Graph/POP3 现有水印全部失效。
-    # 对外读取仍返回 set 以保持调用方 API；磁盘内部必须保存有序 list，才能做真实 FIFO。
 
     def get_pop3_seen(self, account_id: str, folder: str) -> set[str]:
         with self._lock:
             return set(self._data["pop3_seen"].get(self._key(account_id, folder), []))
 
     def _ordered_pop3_seen_locked(self, key: str) -> list[str]:
-        """调用方已持锁：读取并去重 seen list，保留首次出现顺序。"""
         raw = self._data["pop3_seen"].get(key, [])
         if not isinstance(raw, list):
             raw = []
@@ -117,7 +117,6 @@ class SyncState:
         return ordered
 
     def _append_pop3_seen_locked(self, key: str, uidls: list[str]) -> None:
-        """调用方已持锁：按首次写入顺序追加 seen key，并裁剪真正最旧条目。"""
         ordered = self._ordered_pop3_seen_locked(key)
         membership = set(ordered)
         for value in uidls:
@@ -137,7 +136,6 @@ class SyncState:
             self._save_locked()
 
     def add_pop3_seen_many(self, account_id: str, folder: str, uidls: list[str]) -> None:
-        """批量标记已见（一次 save，避免每封一整盘 JSON）。"""
         if not uidls:
             return
         with self._lock:
@@ -159,7 +157,6 @@ class SyncState:
     # --- 账号级失败管理（连续失败退避） ---
 
     def get_fail_state(self, account_id: str) -> tuple[int, float]:
-        """返回 `(fail_count, skip_until_ts)`；缺失视为 `(0, 0)`。"""
         with self._lock:
             pa = self._data["per_account"].get(account_id) or {}
             return int(pa.get("fail_count", 0) or 0), float(pa.get("skip_until", 0) or 0)
@@ -167,7 +164,6 @@ class SyncState:
     def record_failure(self, account_id: str, max_fail: int = FAILBACK_MAX_FAILS,
                        backoff_sec: int = FAILBACK_BACKOFF_SEC,
                        now: float | None = None) -> float:
-        """原子地记一次失败，并在达到阈值后开启退避。"""
         now = float(now) if now is not None else time.time()
         with self._lock:
             pa = dict(self._data["per_account"].get(account_id) or {})
@@ -182,7 +178,6 @@ class SyncState:
             return float(skip_until)
 
     def record_success(self, account_id: str) -> None:
-        """同步成功（含上传任意一条）：清零失败计数，解除退避。"""
         with self._lock:
             if account_id not in self._data["per_account"]:
                 return
@@ -198,7 +193,6 @@ class SyncState:
             self._save_locked()
 
     def should_skip_account(self, account_id: str, now: float | None = None) -> bool:
-        """当前是否处于退避窗口（返回 True 则本轮跳过该账号）。"""
         now = float(now) if now is not None else time.time()
         with self._lock:
             pa = self._data["per_account"].get(account_id) or {}
@@ -206,9 +200,6 @@ class SyncState:
             return skip_until > now
 
     def _save_locked(self) -> None:
-        """调用方已持锁：原子持久化当前内存快照。"""
-        # 每线程独立临时文件，防止未来出现第二进程/异常重入时共享 `.tmp`
-        # 名称互相 truncate；同进程内正常路径仍由 path RLock 串行化。
         tmp = f"{self.path}.{os.getpid()}.{threading.get_ident()}.tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as f:
