@@ -33,12 +33,14 @@ describe('external mailbox provider form contract', () => {
         expect(view).toContain('msa_authorize.py')
     })
 
-    it('validates the Outlook OAuth shapes already supported by the aggregator', () => {
+    it('validates and canonicalizes the Outlook OAuth shapes already supported by the aggregator', () => {
         expect(view).toContain("new Set(['msa', 'hotmail', 'outlook_personal', 'outlook'])")
+        expect(view).toContain("String(value.provider || '').trim().toLowerCase()")
         expect(view).toContain("String(value.client_id || '').trim()")
         expect(view).toContain("String(value.refresh_token || '').trim()")
         expect(view).toContain("provider === 'outlook'")
         expect(view).toContain("String(value.client_secret || '').trim()")
+        expect(view).toContain('JSON.stringify({ ...value, provider })')
     })
 
     it('submits OAuth through the existing mail-account API without using Basic Auth', () => {
