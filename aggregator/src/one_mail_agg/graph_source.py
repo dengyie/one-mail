@@ -374,14 +374,20 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
         else:
             fetched, oversize = fetch_graph_messages(
                 access_token, account, folder, state, folder_ref=folder_ref)
-        if oversize:
-            state.add_pop3_seen_many(account.id, folder, oversize)
-            total_dropped += len(oversize)
+
+        # fetched + oversize together form one contiguous processed prefix because
+        # fetch_graph_messages stops at the first retryable MIME hole. Do not commit
+        # any seen key from that prefix until its upload boundary has succeeded:
+        # otherwise a newer oversize key could become an anchor across an older
+        # normal message whose Worker upload failed.
+        total_dropped += len(oversize)
+        processed_ids = list(oversize)
         if not fetched:
+            if processed_ids:
+                state.add_pop3_seen_many(account.id, folder, processed_ids)
             continue
 
         batch = []
-        processed_ids = []
         for meta, raw_bytes in fetched:
             legacy_key = graph_uid_key(account, folder, meta.legacy_id)
             try:
@@ -410,9 +416,9 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
         if batch:
             result = upload_emails(config, batch)
             total_synced += result.get("inserted", len(batch))
-        # If upload_emails raises, execution never reaches here, so successful items
-        # remain unseen and are retried. All-normalize-failed batches still advance as
-        # intentional dropped items, preventing a permanent seen-state hole.
+        # If upload_emails raises, execution never reaches here, so neither successful
+        # messages nor interleaved oversize drops advance seen. An all-drop prefix has
+        # no upload boundary and can commit immediately here.
         if processed_ids:
             state.add_pop3_seen_many(account.id, folder, processed_ids)
 
