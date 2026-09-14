@@ -9,6 +9,7 @@ OVERSEAS_IMAP_HOSTS = {
     "outlook.office365.com",
     "imap-mail.outlook.com",
     "imap.mail.yahoo.com",
+    "imap.mail.me.com",
 }
 
 DEFAULT_SOCKS5_PROXY = ("127.0.0.1", 1080)
