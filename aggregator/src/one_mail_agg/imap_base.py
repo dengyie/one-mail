@@ -48,11 +48,15 @@ def _to_ms(dt) -> int | None:
 
 def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncState,
                        oversize: list[int] | None = None) -> list[RawMessage]:
-    """`oversize`（可选）：记录被 MAX_SINGLE_BYTES 跳过的大封 **以及未知 SIZE
-    （RFC822.SIZE 缺失）被 fail-closed 跳过**的 uid 的可变计数器。由 sync 层传入，
-    把「本该在批次里的邮件为何缺席」从隐式 warning 提升为可聚合观测值
-    （review Important-2 / 聚合器 dropped）。注意两者水印语义不同：真大封推过
-    水印（永久放弃），未知 SIZE 不推水印（下轮重试，绝不丢信，见 H1）。
+    """按 UID 单调窗口拉取新邮件。
+
+    `oversize` 同时记录真正超限和 RFC822.SIZE 未知的 UID，供上层计入 dropped。
+    两者水位语义不同：真正超限可永久放弃并推进水位；SIZE 未知必须保留重试。
+
+    关键不变量：**绝不跨过一个需要重试的未知 SIZE UID 继续处理更大的 UID**。
+    单一 last_uid 水位无法表达“2 未处理但 3 已提交”这种洞；若继续处理 3，sync
+    层最终推进到 3 就会永久丢掉 2。因此遇到第一个未知 SIZE 时截断当前窗口，
+    只返回它之前已安全挑出的邮件；下轮从这个洞继续尝试。
     """
     sel = client.select_folder(folder, readonly=True)
     uidvalidity = int(sel[b"UIDVALIDITY"])
@@ -81,13 +85,11 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
                  account.id, len(uids), len(skipped_uids))
         if skipped_uids:
             state.set_last_uid_max(account.id, folder, max(skipped_uids))
-    # 大批量收件箱：一次只取一个"窗口"。数量上限 BATCH_SIZE，
-    # 另有累计字节上限 BATCH_BYTES——超大附件邮箱（几十 MB 单封）若按数量
-    # 取满会把整批 RFC822 全塞内存触发 OOM。先探测 SIZE 再挑最小的 uid
-    # 填充窗口；单封超过预算也会被包含（宁慢勿永久卡死）。
+
+    # 先探测 SIZE 再挑窗口，防止把大附件全部拉入内存。
     sizes = client.fetch(uids, [b"RFC822.SIZE"])
     budget = BATCH_BYTES
-    picked = []
+    picked: list[int] = []
     total = 0
     for u in uids:
         if len(picked) >= BATCH_SIZE:
@@ -95,43 +97,43 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
         raw_size = sizes.get(u, {})
         size = 0
         size_known = False
-        if isinstance(raw_size, dict):            # imapclient: {b"RFC822.SIZE": int}
+        if isinstance(raw_size, dict):
             v = raw_size.get(b"RFC822.SIZE")
             if isinstance(v, int):
                 size, size_known = v, True
-        elif isinstance(raw_size, int):           # 其他服务器/库直接返回 int
+        elif isinstance(raw_size, int):
             size, size_known = raw_size, True
-        if (not size_known) or size > MAX_SINGLE_BYTES:
-            # 单封超限：跳过（连同把 water mark 推过该封），否则每轮窗口都卡在这封
-            # （该封极可能是超大附件，会拉取顶爆容器内存）。
-            if not size_known:
-                # SIZE 缺失（服务器不支持 RFC822.SIZE，如部分 imap_custom）：
-                # 按「未知 = 超限」fail-closed 跳过、绝不把未知大小的邮件整条塞进
-                # 内存（与 POP3 LIST 缺失口径一致）；但**不推进 water mark**——
-                # 一旦推过，`last_uid+1:*` 永不重试这批，整批新邮件静默丢失
-                # （H1）。下一轮仍在原起点重试（repeated attempts 只会多拉
-                # SIZE 列表，绝不丢邮件）；待服务器恢复返回 SIZE（或邮件进了
-                # size 探测成功的窗口）即自愈。
-                if oversize is not None:
-                    oversize.append(u)  # H1：unknown-size 同样计入 dropped，synced=0 时有可见计数
-                log.warning("unknown-size skip uid=%s folder=%s account=%s "
-                            "(RFC822.SIZE missing -> fail-closed, watermark not advanced, will retry)",
-                            u, folder, account.id)
-                continue                # 关键是：这里不 set_last_uid(u)
+
+        if not size_known:
+            # 未知 SIZE 不能安全读取正文，也不能跨洞处理后续 UID。记录本 UID 后
+            # 立即截断窗口；如果前面已有 picked，它们仍可上传并把水位推进到洞前。
             if oversize is not None:
                 oversize.append(u)
-            if u > state.get_last_uid(account.id, folder):
-                state.set_last_uid(account.id, folder, u)
+            log.warning(
+                "unknown-size boundary uid=%s folder=%s account=%s "
+                "(RFC822.SIZE missing -> stop window, watermark cannot cross this UID)",
+                u, folder, account.id,
+            )
+            break
+
+        if size > MAX_SINGLE_BYTES:
+            # SIZE 已知且真的超限：这是明确的永久放弃，可安全推进到该 UID 并继续。
+            if oversize is not None:
+                oversize.append(u)
+            state.set_last_uid_max(account.id, folder, u)
             continue
+
         total += size
-        # 超出预算即截断；但若窗口尚空（首封就超大）仍收下，避免永久卡死
         if total > budget and picked:
             break
         picked.append(u)
-    uids = picked
-    data = client.fetch(uids, [b"RFC822", b"INTERNALDATE"])
+
+    if not picked:
+        return []
+
+    data = client.fetch(picked, [b"RFC822", b"INTERNALDATE"])
     out = []
-    for u in uids:
+    for u in picked:
         body = data.get(u, {})
         raw = body.get(b"RFC822", b"")
         out.append(RawMessage(uid=u, raw_bytes=raw, internal_date_ms=_to_ms(body.get(b"INTERNALDATE"))))
