@@ -13,7 +13,6 @@ describe('external mailbox provider form contract', () => {
     it('defines IMAP and POP3 defaults for providers that support both', () => {
         for (const [imapHost, pop3Host] of [
             ['imap.gmail.com', 'pop.gmail.com'],
-            ['outlook.office365.com', 'outlook.office365.com'],
             ['imap.qq.com', 'pop.qq.com'],
             ['imap.163.com', 'pop.163.com'],
             ['imap.126.com', 'pop.126.com'],
@@ -22,6 +21,33 @@ describe('external mailbox provider form contract', () => {
             expect(view).toContain(`host: '${imapHost}'`)
             expect(view).toContain(`pop3Host: '${pop3Host}', pop3Port: 995`)
         }
+    })
+
+    it('makes Outlook an IMAP-only OAuth preset', () => {
+        expect(view).toContain("value: 'outlook', source: 'imap_outlook'")
+        expect(view).toContain("host: 'outlook.office365.com'")
+        expect(view).toContain("pop3Host: '', pop3Port: 995, protocol: 'imap'")
+        expect(view).toContain("const isOutlook = computed(() => form.value.provider === 'outlook')")
+        expect(view).toContain(':disabled="isOutlook"')
+        expect(view).toContain('v-model:value="form.oauth_json"')
+        expect(view).toContain('msa_authorize.py')
+    })
+
+    it('validates and canonicalizes the Outlook OAuth shapes already supported by the aggregator', () => {
+        expect(view).toContain("new Set(['msa', 'hotmail', 'outlook_personal', 'outlook'])")
+        expect(view).toContain("String(value.provider || '').trim().toLowerCase()")
+        expect(view).toContain("String(value.client_id || '').trim()")
+        expect(view).toContain("String(value.refresh_token || '').trim()")
+        expect(view).toContain("provider === 'outlook'")
+        expect(view).toContain("String(value.client_secret || '').trim()")
+        expect(view).toContain('JSON.stringify({ ...value, provider })')
+    })
+
+    it('submits OAuth through the existing mail-account API without using Basic Auth', () => {
+        expect(view).toContain("const OAUTH_CRED_PLACEHOLDER = '__oauth_managed__'")
+        expect(view).toContain('const effectiveCred = outlookOauth ? OAUTH_CRED_PLACEHOLDER : f.cred')
+        expect(view).toContain('cred: effectiveCred')
+        expect(view).toContain('oauth: outlookOauth?.text')
     })
 
     it('adds iCloud as an IMAP-only standard provider preset', () => {
