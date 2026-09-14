@@ -76,7 +76,7 @@ const parseOutlookOauth = (raw) => {
     if (!OUTLOOK_OAUTH_PROVIDERS.has(provider) || !clientId || !refreshToken) return null
     // Organizational Outlook/M365 uses the confidential-client path in oauth.py.
     if (provider === 'outlook' && !String(value.client_secret || '').trim()) return null
-    return { text, provider }
+    return { text: JSON.stringify({ ...value, provider }), provider }
 }
 
 const onSourceChange = (v) => {
