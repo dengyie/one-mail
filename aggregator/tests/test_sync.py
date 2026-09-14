@@ -336,7 +336,7 @@ def test_sync_pop3_skips_bad_uidl_retries_next_round(tmp_path, monkeypatch):
 
 
 def test_sync_auto_non_inbox_does_not_silently_pin_pop3_after_imap_failure(tmp_path, monkeypatch):
-    """IMAP 失败时，非 INBOX 账号不能被 POP3 空成功钉住并静默丢邮件。"""
+    """非 INBOX auto 账号遇到 IMAP 故障必须保留 IMAP 错误，绝不跨协议伪成功。"""
     _stub_upload(monkeypatch)
     pop_f = _PopFactory([])
     monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
@@ -344,10 +344,9 @@ def test_sync_auto_non_inbox_does_not_silently_pin_pop3_after_imap_failure(tmp_p
     acc = _acc(protocol="auto")
     acc.folders = ["Archive"]
 
-    result = sync_mod.sync_account(_imap_factory(raised=IMAPClientError("Unsafe Login")),
-                                   _cfg([acc]), acc, state)
-    assert result["synced"] == 0 and result["dropped"] == 1
-    assert result["dropped_folders"] == ["Archive"]
+    with pytest.raises(IMAPClientError, match="Unsafe Login"):
+        sync_mod.sync_account(_imap_factory(raised=IMAPClientError("Unsafe Login")),
+                              _cfg([acc]), acc, state)
     assert pop_f.made == 0
     assert not state.is_fallback_pinned("163-main")
 
@@ -382,7 +381,7 @@ def test_sync_explicit_pop3_rejects_non_inbox_folder(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("phase", ["factory", "read"])
 def test_sync_auto_falls_back_on_network_oserror(tmp_path, monkeypatch, phase):
-    """auto 仅把 IMAP 网络边界 OSError 当作可降级故障；多文件夹时避免永久钉住。"""
+    """auto 仅把首次、INBOX-only 的 IMAP 网络边界 OSError 当作可降级故障。"""
     _stub_upload(monkeypatch)
     pop_f = _PopFactory([])
     monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
@@ -407,7 +406,7 @@ def test_sync_auto_falls_back_on_network_oserror(tmp_path, monkeypatch, phase):
 
 
 def test_sync_auto_multi_folder_does_not_pin_on_transient_oserror(tmp_path, monkeypatch):
-    """多文件夹账号在遇到临时 OSError 时，不作持久化钉住以保留下轮重试 IMAP。"""
+    """多文件夹账号遇到临时 OSError 也必须留在 IMAP 命名空间，不得临时 POP3。"""
     _stub_upload(monkeypatch)
     pop_f = _PopFactory([])
     monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
@@ -418,13 +417,14 @@ def test_sync_auto_multi_folder_does_not_pin_on_transient_oserror(tmp_path, monk
     def failing_factory(_account):
         raise OSError("connection reset")
 
-    result = sync_mod.sync_account(failing_factory, _cfg([acc]), acc, state)
-    assert result["protocol"] == "pop3"
+    with pytest.raises(OSError, match="connection reset"):
+        sync_mod.sync_account(failing_factory, _cfg([acc]), acc, state)
+    assert pop_f.made == 0
     assert not state.is_fallback_pinned("163-main")
 
 
 def test_sync_auto_falls_back_to_pop3_on_select_failure(tmp_path, monkeypatch):
-    """IMAP 的 EXAMINE/SELECT 返回 Unsafe Login（163）→ auto 降级 POP3。"""
+    """首次 INBOX-only 的 IMAP EXAMINE/SELECT Unsafe Login（163）→ auto 降级 POP3。"""
     calls = _stub_upload(monkeypatch)
     pop_f = _PopFactory([("UL-1", b"From: a@b\r\nSubject: hi\r\n\r\nbody\r\n")])
     monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
@@ -678,4 +678,3 @@ def test_run_once_unknown_oauth_provider_only_affects_that_account(tmp_path, mon
     assert synced == ["user-good"]
     # last_error 只回写坏用户账号；good 是 admin config 账号（非 user），不写回
     assert status == [("user-bad", "provider unsupported: some_unknown_provider")]
-

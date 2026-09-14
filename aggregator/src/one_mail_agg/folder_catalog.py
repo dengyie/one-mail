@@ -1,10 +1,4 @@
-"""Provider folder discovery for move-target catalog population.
-
-Message ingest naturally discovers folders only after at least one message is seen.
-This module fills the missing case: selectable but empty folders. Discovery is
-best-effort and throttled per account/provider so realtime IDLE events do not
-produce repeated LIST/Graph traffic.
-"""
+"""Provider folder discovery for move-target catalog population."""
 from __future__ import annotations
 
 import logging
@@ -47,11 +41,6 @@ def _imap_folder_type(flags, name: str) -> str:
 
 
 def discover_imap_folders(client, account: AccountConfig) -> list[dict]:
-    """Return selectable IMAP folders from LIST without selecting them.
-
-    LIST can discover empty folders without changing mailbox state. ``\\Noselect``
-    hierarchy placeholders are excluded because they cannot be valid move targets.
-    """
     rows: list[dict] = []
     seen: set[str] = set()
     for item in client.list_folders():
@@ -135,11 +124,8 @@ def discover_graph_folders(access_token: str, account: AccountConfig) -> list[di
             url = _validated_graph_next_link(payload.get("@odata.nextLink")) if isinstance(payload, dict) else None
 
     if queue or len(rows) >= _MAX_GRAPH_FOLDERS:
-        log.warning(
-            "graph folder discovery account=%s reached safety cap=%d",
-            account.id,
-            _MAX_GRAPH_FOLDERS,
-        )
+        log.warning("graph folder discovery account=%s reached safety cap=%d",
+                    account.id, _MAX_GRAPH_FOLDERS)
     return rows
 
 
@@ -158,7 +144,6 @@ def maybe_sync_imap_folder_catalog(
     force: bool = False,
     now: float | None = None,
 ) -> int:
-    """Best-effort IMAP catalog sync; failures never block mail ingestion."""
     current = time.monotonic() if now is None else float(now)
     if not _due("imap", account.id, current, force):
         return 0
@@ -178,16 +163,22 @@ def maybe_sync_graph_folder_catalog(
     config: Config,
     account: AccountConfig,
     *,
+    discovered_rows: list[dict] | None = None,
     force: bool = False,
     now: float | None = None,
 ) -> int:
-    """Best-effort Graph catalog sync; failures never block message polling."""
+    """Best-effort Graph catalog sync.
+
+    `discovered_rows` lets Graph message sync reuse the same recursive discovery it
+    already had to perform to resolve custom display names to provider folder IDs.
+    This avoids making a second Graph tree walk in the same polling iteration.
+    """
     current = time.monotonic() if now is None else float(now)
     if not _due("graph", account.id, current, force):
         return 0
     _last_attempt[("graph", account.id)] = current
     try:
-        rows = discover_graph_folders(access_token, account)
+        rows = discovered_rows if discovered_rows is not None else discover_graph_folders(access_token, account)
         if rows:
             upload_folders(config, rows)
         return len(rows)
