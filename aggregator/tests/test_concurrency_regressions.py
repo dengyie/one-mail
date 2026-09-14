@@ -92,7 +92,7 @@ def test_static_refresh_token_rewrites_preserve_both_concurrent_updates(tmp_path
     t1.join()
     t2.join()
 
-    assert results == [True, True] or results == [True, True][::-1]
+    assert len(results) == 2 and all(results)
     saved = json.loads(path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in saved["accounts"]}
     assert by_id["a"]["oauth"]["refresh_token"] == "NEW-A"
