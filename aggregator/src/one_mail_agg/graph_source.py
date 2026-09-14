@@ -314,9 +314,12 @@ def fetch_graph_messages(
         mime_url = f"https://graph.microsoft.com/v1.0/me/messages/{quote(legacy_id, safe='')}/$value"
         res = requests.get(mime_url, headers=headers, timeout=30)
         if res.status_code != 200:
-            log.warning("graph fetch mime failed account=%s msg_id=%s status=%s",
+            # A MIME GET failure is retryable. Stop at the first hole so this run can
+            # never mark any newer key as seen across it; otherwise the next newest→oldest
+            # scan could hit that newer seen key and strand this failed message forever.
+            log.warning("graph fetch mime failed account=%s msg_id=%s status=%s; stopping batch at retryable hole",
                         account.id, legacy_id, res.status_code)
-            continue
+            break
 
         raw_bytes = res.content
         if len(raw_bytes) > MAX_SINGLE_BYTES:
@@ -378,7 +381,7 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
             continue
 
         batch = []
-        uploaded_ids = []
+        processed_ids = []
         for meta, raw_bytes in fetched:
             legacy_key = graph_uid_key(account, folder, meta.legacy_id)
             try:
@@ -394,15 +397,23 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
                     source_key_override=graph_source_key(account, meta.id),
                 )
                 batch.append(norm)
-                uploaded_ids.append(legacy_key)
+                processed_ids.append(legacy_key)
             except Exception as e:
+                # A deterministic parse/normalize failure is an intentional permanent
+                # drop, not a retryable transport hole. Mark it processed so the seen
+                # boundary remains contiguous and later messages cannot strand it.
                 total_dropped += 1
+                processed_ids.append(legacy_key)
                 log.warning("skip graph message id=%s account=%s: %r",
                             meta.legacy_id, account.id, e)
 
         if batch:
             result = upload_emails(config, batch)
             total_synced += result.get("inserted", len(batch))
-            state.add_pop3_seen_many(account.id, folder, uploaded_ids)
+        # If upload_emails raises, execution never reaches here, so successful items
+        # remain unseen and are retried. All-normalize-failed batches still advance as
+        # intentional dropped items, preventing a permanent seen-state hole.
+        if processed_ids:
+            state.add_pop3_seen_many(account.id, folder, processed_ids)
 
     return {"synced": total_synced, "dropped": total_dropped, "protocol": "graph"}
