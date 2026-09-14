@@ -76,23 +76,26 @@ class ImapIdleWorker(threading.Thread):
         return self._stop_event.is_set()
 
     def _report_status(self, error: Exception | str | None) -> None:
-        """Mirror daemon polling status semantics for user-managed IDLE accounts."""
+        """Mirror daemon polling status semantics without ever affecting mail sync."""
         if not self.account.user_managed:
             return
         text = str(error) if error is not None else None
-        # report_sync_status is itself fail-soft; status telemetry must never kill IDLE.
-        report_sync_status(
-            self.config.worker_base_url,
-            self.config.admin_token,
-            self.account.id,
-            text,
-        )
+        try:
+            report_sync_status(
+                self.config.worker_base_url,
+                self.config.admin_token,
+                self.account.id,
+                text,
+            )
+        except Exception as status_error:  # defensive: telemetry must never kill IDLE
+            log.warning("Account %s IDLE status report failed: %s",
+                        self.account.id, status_error)
 
     def do_sync(self, client: IMAPClient) -> dict:
         with self._sync_lock:
             result = sync_imap(client, self.config, self.account, self.state)
-            # Active IDLE workers bypass main.run_daemon's polling success path, so
-            # they must clear account backoff and refresh Worker last_sync_at here.
+            # Active IDLE accounts bypass the daemon polling success path. Keep
+            # failure backoff and Worker last_sync_at/last_error semantics identical.
             self.state.record_success(self.account.id)
             self._report_status(None)
             return result
