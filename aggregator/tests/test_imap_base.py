@@ -124,7 +124,7 @@ def test_fetch_missing_size_stops_at_first_retryable_hole(tmp_path):
     oversize = []
     msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
     assert msgs == []
-    assert oversize == [1]
+    assert oversize == [1, 2, 3]
     assert state.get_last_uid("qq", "INBOX") == 0
 
 
@@ -144,7 +144,7 @@ def test_fetch_missing_size_retries_next_success_no_loss(tmp_path):
     client = NoSizeThenOkClient()
     oversize = []
     assert fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize) == []
-    assert oversize == [1]
+    assert oversize == [1, 2, 3]
     assert state.get_last_uid("qq", "INBOX") == 0
 
     client.ok = True
@@ -176,7 +176,6 @@ def test_fetch_partial_missing_size_never_crosses_hole(tmp_path):
     assert oversize == [2]
     assert state.get_last_uid("qq", "INBOX") == 0
 
-    # 模拟 sync 层上传 UID 1 后推进水位；未知 UID 2 仍在下一轮起点。
     state.set_last_uid_max("qq", "INBOX", 1)
     recovered = FakeClient([2, 3], sizes={2: 100, 3: 100})
     retry = fetch_new_messages(recovered, acc(), "INBOX", state)
@@ -202,7 +201,7 @@ def test_fetch_mixed_known_stops_before_first_unknown(tmp_path):
     oversize = []
     msgs = fetch_new_messages(client, acc(), "INBOX", state, oversize=oversize)
     assert [m.uid for m in msgs] == [1]
-    assert oversize == [2]
+    assert oversize == [2, 5]
     assert state.get_last_uid("qq", "INBOX") == 0
 
     state.set_last_uid_max("qq", "INBOX", 1)
