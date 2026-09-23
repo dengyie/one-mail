@@ -1,40 +1,20 @@
 #!/bin/bash
-# one-mail 聚合器常驻循环：完整收信同步与 provider mutation 串行执行。
-# pxed 无 systemd/cron，由 supervisord 托管本脚本常驻循环（见 deploy/one-mail-agg.supervisor.conf）。
+# one-mail 聚合器常驻入口（由 supervisord 托管，command 即本脚本）。
 #
-# 不能让 sync 与 mutation 并发：MSA / Graph refresh_token 可能在兑换时轮换，
-# 两个进程同时刷新会让其中一份旧 token 永久失效。完整同步完成后，在下一轮
-# sync 前每 5 秒处理一次 durable mutation queue，既保持低延迟又保留单写者语义。
+# 单进程单写者：直接 exec 聚合器的 --daemon 模式，而不是外层 300s 轮询 + 每次
+# 起子进程调 mutation_main 的循环。daemon 在同一进程内完成三件事：
+#   1. 为支持 IMAP IDLE 的账号拉起常驻监听线程 —— 服务器推送即秒级同步；
+#   2. 每 60s 兜底一轮完整增量拉取（POP3 / graph / 新用户账号 / IDLE 降级账号）；
+#   3. 其余每 5s 一个 tick 排空 provider mutation 队列（已读 / 星标 / 移动回写）。
+#
+# 收信、回写、以及所有 refresh_token 兑换都落在同一进程，由进程级
+# redemption_lock 串行化。MSA/Graph 的 refresh_token 每次兑换都轮换，并发兑换
+# 会让其中一份立刻失效——这正是 2026-09-11 烧卡事故的并发版本。
 set -uo pipefail
 LOG=/opt/one-mail-agg/agg-loop.log
-SYNC_INTERVAL=300
-SYNC_TIMEOUT_SEC=240
-MUTATION_INTERVAL=5
-MUTATION_TIMEOUT_SEC=45
 PY=/opt/one-mail-agg/aggregator/.venv/bin/python
 CONFIG=/opt/one-mail-agg/config.json
 TS() { date "+%Y-%m-%d %H:%M:%S"; }
-log() { echo "[$(TS)] $*" >> "$LOG"; }
 
-log "one-mail-agg loop start pid=$$ sync_interval=${SYNC_INTERVAL}s mutation_interval=${MUTATION_INTERVAL}s"
-while true; do
-  if timeout "$SYNC_TIMEOUT_SEC" "$PY" -m one_mail_agg.main "$CONFIG" >> "$LOG" 2>&1; then
-    log "sync OK (rc=0)"
-  else
-    rc=$?
-    log "sync FAILED rc=$rc"
-  fi
-
-  # Preserve the historical five-minute quiet window between full mailbox
-  # syncs, but use it for low-latency provider write-back. These calls are
-  # deliberately sequential with the sync above (no '&' / background worker).
-  elapsed=0
-  while [ "$elapsed" -lt "$SYNC_INTERVAL" ]; do
-    if ! timeout "$MUTATION_TIMEOUT_SEC" "$PY" -m one_mail_agg.mutation_main "$CONFIG" >> "$LOG" 2>&1; then
-      rc=$?
-      log "mutation poll FAILED rc=$rc"
-    fi
-    sleep "$MUTATION_INTERVAL"
-    elapsed=$((elapsed + MUTATION_INTERVAL))
-  done
-done
+echo "[$(TS)] one-mail-agg daemon start: IMAP IDLE realtime + 60s fallback poll + 5s mutation drain" >> "$LOG"
+exec "$PY" -m one_mail_agg.main "$CONFIG" --daemon >> "$LOG" 2>&1
