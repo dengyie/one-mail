@@ -27,7 +27,7 @@ from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .oauth import oauth_client_factory
 from .remote_accounts import fetch_user_accounts
 from .sync import default_client_factory
-from .token_store import make_rotated_callback
+from .token_store import make_rotated_callback, redemption_lock, refresh_rt_from_config
 
 log = logging.getLogger("one-mail-agg")
 
@@ -406,10 +406,12 @@ def _apply_graph_mutation(config: Config, account: AccountConfig, job: dict) -> 
     if not message_id:
         raise MutationIdentityError("Graph mutation missing ImmutableId")
 
-    access_token = graph_access_token(
-        account.oauth,
-        make_rotated_callback(config if config.config_path or account.user_managed else None, account),
-    )
+    with redemption_lock():
+        refresh_rt_from_config(config, account)
+        access_token = graph_access_token(
+            account.oauth,
+            make_rotated_callback(config if config.config_path or account.user_managed else None, account),
+        )
     headers = _graph_headers(access_token)
     encoded_id = quote(message_id, safe="")
     operation = job.get("operation")

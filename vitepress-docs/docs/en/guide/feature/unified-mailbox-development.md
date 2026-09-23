@@ -55,8 +55,8 @@ The accurate current product description is therefore “unified inbox aggregato
 | Attachment download | Missing | Mostly attachment metadata is stored |
 | Full HTML rendering | Degraded | Unified detail primarily displays text |
 | Full-text search | Basic | `LIKE` over a small set of fields |
-| Real-time receive | Missing | Aggregator runs approximately every 300 seconds |
-| Immediate sync/connection test | Missing | User waits for the next cycle |
+| Real-time receive | Available (IMAP IDLE) | Long-lived IDLE listeners push supported accounts within seconds; POP3 / graph fall back to 60s polling |
+| Immediate sync/connection test | Missing | User waits for the next fallback poll (most accounts already sync in real time via IDLE) |
 | Unified native/external operations | Missing | Separate data models, pages, and flows |
 
 ## 3. Non-goals and constraints
@@ -277,7 +277,7 @@ A new provider or schema migration requires corresponding tests and real-entry v
 
 ## 11. Known risks
 
-- The aggregator currently polls about every 300 seconds, which is slow for verification codes.
+- Accounts that support IMAP IDLE now receive mail in real time through long-lived listeners; accounts without IDLE (POP3 / graph) still rely on the 60s fallback poll, so verification-code latency for those remains seconds-to-minutes.
 - POP3 cannot provide complete folder, read-state, or thread semantics.
 - Existing D1 rows lack complete source identity and cannot be safely re-threaded without a migration policy.
 - Attachment support must not be advertised as complete while R2 is unbound and only metadata is stored.

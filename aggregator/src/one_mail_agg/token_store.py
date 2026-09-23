@@ -13,6 +13,7 @@
 轮换 RT 一旦出现，持久化就是 OAuth refresh 的一部分：写回失败必须抛错，避免
 当前进程继续假装成功、重启后却只剩已经失效的旧 refresh_token。
 """
+import contextlib
 import json
 import logging
 import os
@@ -33,6 +34,50 @@ class TokenPersistenceError(RuntimeError):
 # read-modify-write 文档；若不把「读取最新文件 → 修改一个账号 → fsync/replace」
 # 整段串行化，后写线程会用自己的旧快照覆盖先写线程的新 refresh_token。
 _CONFIG_REWRITE_LOCK = threading.RLock()
+
+# 进程内所有 OAuth/Graph refresh_token 兑换的排他锁（idle / poll / mutation 共用）。
+# MSA/Gmail refresh_token 每次兑换都轮换：两个线程并发为同一账号兑换时，后完成的
+# 响应带的是与先完成轮换结果冲突的旧 RT，两者之一即刻失效——这正是 2026-09-11
+# 烧卡事故的并发版本。锁住「兑换 + 用新 RT 建连」整段（锁内完成，嵌套安全）。
+_REDEMPTION_LOCK = threading.RLock()
+
+
+@contextlib.contextmanager
+def redemption_lock():
+    """进程内所有 OAuth/Graph token 兑换的排他锁（嵌套安全，RLock）。
+
+    用法：
+        with redemption_lock():
+            access = token_fn(acc.oauth, on_rotated)
+            client = factory(acc)
+    """
+    with _REDEMPTION_LOCK:
+        yield
+
+
+def refresh_rt_from_config(config: Config | None, account) -> None:
+    """锁内把 account 的 refresh_token 刷成 config.json 里的最新值。
+
+    静态账号的轮换结果只落在 config.json；调用方手里的 Config 快照可能已被 IDLE
+    线程的轮换甩在后面。拿旧 RT 去兑换就是 400 + 账号失效，所以兑换前必须回读。
+    用户自助账号的 RT 存 Worker/D1（每轮 fetch_user_accounts 已是最新），跳过。
+    """
+    config_path = getattr(config, "config_path", None)
+    if not config_path or getattr(account, "user_managed", False):
+        return
+    if not isinstance(getattr(account, "oauth", None), dict):
+        return
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return
+    for acc in raw.get("accounts", []):
+        if acc.get("id") == account.id and isinstance(acc.get("oauth"), dict):
+            latest = acc["oauth"].get("refresh_token")
+            if latest:
+                account.oauth["refresh_token"] = latest
+            return
 
 
 def rewrite_config_refresh_token(config_path: str, account_id: str, new_refresh_token: str) -> bool:

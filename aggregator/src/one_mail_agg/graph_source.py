@@ -8,7 +8,7 @@ import requests
 
 from .config import AccountConfig, Config
 from .state import SyncState
-from .token_store import make_rotated_callback
+from .token_store import make_rotated_callback, redemption_lock, refresh_rt_from_config
 from .normalize import normalize_message
 from .uploader import upload_emails
 from .imap_base import BATCH_SIZE, MAX_SINGLE_BYTES
@@ -77,6 +77,23 @@ def graph_access_token(oauth: dict, on_rotated=None) -> str:
         if on_rotated:
             on_rotated(new_rt)
     return data["access_token"]
+
+
+def graph_access_token_locked(account: AccountConfig, config: Config | None) -> str:
+    """锁内兑换 Graph access token：先回读 config.json 的最新 RT，再兑换。
+
+    Graph 卡没有 IMAP 长连（走 60s 轮询），但与 IDLE/轮询/mutation 同进程：并发
+    兑换同一 RT 会让其中一份立刻失效，故同样走进程级 redemption_lock。
+    """
+    with redemption_lock():
+        refresh_rt_from_config(config, account)
+        return graph_access_token(
+            account.oauth,
+            make_rotated_callback(
+                config if (config is not None and (config.config_path or account.user_managed)) else None,
+                account,
+            ),
+        )
 
 
 def graph_uid_key(account: AccountConfig, folder: str, msg_id: str) -> str:
@@ -356,10 +373,7 @@ def sync_graph(account: AccountConfig, config: Config, state: SyncState,
     if not account.oauth:
         raise ValueError(f"graph account {account.id} requires oauth configuration")
 
-    access_token = graph_access_token(
-        account.oauth,
-        make_rotated_callback(config if config.config_path or account.user_managed else None, account),
-    )
+    access_token = graph_access_token_locked(account, config)
     folders = account.folders or ["INBOX"]
     targets, discovered_rows = _resolve_graph_folder_targets(access_token, account, folders)
     maybe_sync_graph_folder_catalog(

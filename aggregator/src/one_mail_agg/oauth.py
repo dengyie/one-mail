@@ -3,7 +3,7 @@ from imapclient import IMAPClient
 
 from .config import AccountConfig
 from .proxy_client import create_imap_client
-from .token_store import make_rotated_callback
+from .token_store import make_rotated_callback, redemption_lock, refresh_rt_from_config
 
 
 def _handle_rotated(oauth: dict, data: dict, on_rotated) -> None:
@@ -105,14 +105,19 @@ def oauth_client_factory(account: AccountConfig, config=None):
 
     config 传入后，token 轮换自动持久化（静态写 config.json，用户账号回写 Worker）。
     transport 与基础认证 IMAP 共用 create_imap_client，确保 direct / SOCKS 策略一致。
+
+    整个「回读最新 RT → 兑换 → XOAUTH2 建连」在进程级 redemption_lock 内完成：
+    IDLE / 轮询 / mutation 三条路径同进程，并发兑换同一 RT 会让其中一份立刻失效。
     """
     provider = normalize_provider((account.oauth or {}).get("provider"))
     token_fn = _TOKEN_FN[provider]
     on_rotated = make_rotated_callback(config, account)
 
     def factory(acc: AccountConfig) -> IMAPClient:
-        access = token_fn(acc.oauth or {}, on_rotated)
-        c = create_imap_client(acc, timeout=30)
-        c.oauth2_login(acc.username, access)
-        return c
+        with redemption_lock():
+            refresh_rt_from_config(config, acc)
+            access = token_fn(acc.oauth or {}, on_rotated)
+            c = create_imap_client(acc, timeout=30)
+            c.oauth2_login(acc.username, access)
+            return c
     return factory
