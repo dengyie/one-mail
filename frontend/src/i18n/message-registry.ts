@@ -2834,6 +2834,14 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "unified": {
+    "autoRefresh": {
+      "en": "Auto refresh",
+      "zh": "自动刷新"
+    },
+    "autoRefreshInterval": {
+      "en": "Auto refresh (5s)",
+      "zh": "自动刷新 (5s)"
+    },
     "title": {
       "en": "Unified Inbox",
       "zh": "统一收件箱"

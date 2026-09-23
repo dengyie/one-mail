@@ -33,6 +33,16 @@ export const statsEmails = async (c: Context<HonoCustomType>) => {
     });
 };
 
+function stripHtmlToText(html: string): string {
+    if (!html) return "";
+    return html
+        .replace(/<\s*(script|style|head|svg)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
+        .replace(/<!--[\s\S]*?-->/g, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
     const addr = q.addr;
@@ -43,13 +53,20 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     try { freshMs = intOr400(c, q.fresh, freshMs); } catch { return c.json({ error: "invalid fresh" }, 400); }
     const since = Date.now() - freshMs;
     const { results } = await c.env.DB.prepare(
-        `SELECT subject, text_body, from_addr, received_at FROM emails
+        `SELECT subject, text_body, html_body, from_addr, received_at FROM emails
          WHERE ${where} AND to_addr = ? AND received_at >= ? ORDER BY received_at DESC LIMIT 50`
     ).bind(...params, addr, since).all();
-    const out = (results as Record<string, unknown>[]).map((r) => ({
-        from_addr: r.from_addr, subject: r.subject, received_at: r.received_at,
-        code: extractVerifCode(`${r.subject ?? ""}\n${r.text_body ?? ""}`),
-    })).filter((r) => r.code);
+    const out = (results as Record<string, unknown>[]).map((r) => {
+        const text = (typeof r.text_body === "string" && r.text_body.trim())
+            ? r.text_body
+            : stripHtmlToText(typeof r.html_body === "string" ? r.html_body : "");
+        return {
+            from_addr: r.from_addr,
+            subject: r.subject,
+            received_at: r.received_at,
+            code: extractVerifCode(`${r.subject ?? ""}\n${text}`),
+        };
+    }).filter((r) => r.code);
     return c.json({ results: out });
 };
 

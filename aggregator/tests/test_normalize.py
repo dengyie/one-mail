@@ -178,3 +178,17 @@ def test_attachments_guard_skips_part_whose_decode_raises():
 
     part.get_payload = bomb
     assert N._attachments(msg) == []
+
+
+def test_normalize_html_only_extracts_text_body():
+    """纯 HTML 邮件（如 Apple ID、Steam 等仅含 text/html 无 text/plain 的邮件）
+    应自动提取 HTML 纯文本作为 text_body 兜底，使统一接码 API、全文检索和通知均可直接获取内容。"""
+    raw = (b"From: Apple <appleid@id.apple.com>\r\nTo: me@qq.com\r\n"
+           b"Subject: Your Apple ID code\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+           b"<html><head><style>p { color: #333; }</style></head><body>"
+           b"<p>\xe8\xaf\xb7\xe5\x9c\xa8\xe9\xaa\x8c\xe8\xaf\x81\xe9\xa1\xb5\xe9\x9d\xa2\xe8\xbe\x93\xe5\x85\xa5\xe4\xbb\xa5\xe4\xb8\x8b\xe4\xbb\xa3\xe7\xa0\x81\xef\xbc\x9a 269204\xef\xbc\x8c\xe6\x9c\x89\xe6\x95\x88\xe6\x97\xb6\xe9\x97\xb410\xe5\x88\x86\xe9\x92\x9f</p>"
+           b"</body></html>\r\n")
+    e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1002, internal_date_ms=None)
+    assert "269204" in e["text_body"]
+    assert "appleid@id.apple.com" == e["from_addr"]
+    assert "<html>" in e["html_body"]

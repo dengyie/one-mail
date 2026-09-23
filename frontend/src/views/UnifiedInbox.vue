@@ -14,6 +14,14 @@
           <StatusIndicator :status="connStatus" :label="connLabel" />
           <span v-if="lastLoaded" class="text-[10px] text-zinc-400">{{ t('status.lastLoaded', { time: fmtTime(lastLoaded.getTime()) }) }}</span>
         </div>
+        <n-switch v-model:value="autoRefresh" size="small" :round="false">
+          <template #checked>
+            {{ t('autoRefreshInterval') }}
+          </template>
+          <template #unchecked>
+            {{ t('autoRefresh') }}
+          </template>
+        </n-switch>
         <n-button size="small" :loading="loading" @click="refreshList" quaternary circle>
           <template #icon><n-icon><RefreshRound /></n-icon></template>
         </n-button>
@@ -381,6 +389,10 @@ const handleSelectChip = (chip) => {
     applyFilter()
   } else if (chip.includes('提取验证码')) {
     activeTab.value = 'codes'
+    if (!codesAddr.value && (accountFilter.value || userAccounts.value[0]?.address)) {
+      codesAddr.value = accountFilter.value || userAccounts.value[0]?.address
+      loadCodes()
+    }
   } else if (chip.includes('刷新列表')) {
     refreshList()
   }
@@ -451,6 +463,7 @@ let statusRequestSeq = 0
 let backgroundListPending = false
 let autoRefreshTimer = null
 let componentDisposed = false
+const autoRefresh = ref(true)
 
 const loadList = async ({ background = false } = {}) => {
   if (!hasAccess.value) return
@@ -501,8 +514,15 @@ const setPage = (p) => { page.value = p; loadList() }
 const openDetail = (id) => router.push({ path: `/unified/${id}` })
 
 const autoRefreshList = () => {
-  if (!hasAccess.value || activeTab.value !== 'list' || loading.value || backgroundListPending) return
+  if (!autoRefresh.value || !hasAccess.value) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+  if (activeTab.value !== 'list') {
+    if (activeTab.value === 'codes' && codesAddr.value.trim() && !codesLoading.value) {
+      void loadCodes()
+    }
+    return
+  }
+  if (loading.value || backgroundListPending) return
   void loadList({ background: true })
 }
 
@@ -861,6 +881,22 @@ watch(authIdentity, (identity, previousIdentity) => {
   refreshCurrent()
 })
 
+watch(autoRefresh, (enabled) => {
+  if (enabled) {
+    startAutoRefresh()
+  } else {
+    stopAutoRefresh()
+  }
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'codes' && codesAddr.value.trim()) {
+    loadCodes()
+  } else if (tab === 'status') {
+    loadStatus()
+  }
+})
+
 onMounted(async () => {
   componentDisposed = false
   if (userJwt.value && !userSettings.value.user_id) {
@@ -871,7 +907,9 @@ onMounted(async () => {
     await loadList()
   }
   if (componentDisposed) return
-  startAutoRefresh()
+  if (autoRefresh.value) {
+    startAutoRefresh()
+  }
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', handleVisibilityChange)
   }

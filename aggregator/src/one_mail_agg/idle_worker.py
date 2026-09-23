@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from typing import Callable
+from typing import Any, Callable
 
 from imapclient import IMAPClient
 
@@ -49,6 +49,26 @@ def _reconnect_backoff(consecutive_errors: int) -> int:
     return min(30, 2 ** min(max(1, consecutive_errors), 5))
 
 
+def _enable_socket_keepalive(client: Any) -> None:
+    """为 IMAPClient 底层 socket 开启 TCP keepalive，防云端/NAT 网关 60~120s 静默老化"""
+    import socket
+    sock = getattr(getattr(client, "_imap", None), "sock", None)
+    if sock is None:
+        return
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "TCP_KEEPIDLE"):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+        if hasattr(socket, "TCP_KEEPINTVL"):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+        if hasattr(socket, "TCP_KEEPCNT"):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        if hasattr(socket, "TCP_KEEPALIVE"):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, 30)
+    except Exception as e:
+        log.debug("Failed to set SO_KEEPALIVE on client socket: %s", e)
+
+
 class ImapIdleWorker(threading.Thread):
     """One long-lived IDLE worker per IMAP account with polling fallback."""
 
@@ -58,7 +78,7 @@ class ImapIdleWorker(threading.Thread):
         account: AccountConfig,
         state: SyncState,
         client_factory: Callable[[AccountConfig], IMAPClient] = default_client_factory,
-        idle_refresh_seconds: int = 240,
+        idle_refresh_seconds: int = 60,  # 60 秒主动唤醒重进 IDLE，防长连接静默断开与 NAT 老化
     ):
         super().__init__(name=f"idle-{account.id}", daemon=True)
         self.config = config
@@ -110,6 +130,7 @@ class ImapIdleWorker(threading.Thread):
             client = None
             try:
                 client = self.client_factory(self.account)
+                _enable_socket_keepalive(client)
                 if not client.has_capability("IDLE"):
                     _mark_idle_unsupported(self.account)
                     log.warning("Account %s does not support IDLE; falling back to daemon polling",
