@@ -39,21 +39,32 @@ function stripHtmlToText(html: string): string {
         .replace(/<\s*(script|style|head|svg)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
         .replace(/<!--[\s\S]*?-->/g, " ")
         .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
         .replace(/\s+/g, " ")
         .trim();
 }
 
 export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
-    const addr = q.addr;
+    const addr = typeof q.addr === "string" ? q.addr.trim() : "";
     if (!addr) return c.json({ error: "addr required" }, 400);
     // 鉴权作用域直接进入 SQL；addr 仍作为业务过滤条件单独绑定。
     const { where, params } = await resolveScopedEmailFilter(c, { ...q, addr: undefined });
     let freshMs = 10 * 60 * 1000;                        // 默认 10 分钟内
     try { freshMs = intOr400(c, q.fresh, freshMs); } catch { return c.json({ error: "invalid fresh" }, 400); }
     const since = Date.now() - freshMs;
+    // 优化投影：仅当 text_body 为空时截取前 8000 字符 HTML，避免 50 封邮件全量传输大体积 HTML 造成 D1 吞吐浪费与内存抖动
     const { results } = await c.env.DB.prepare(
-        `SELECT subject, text_body, html_body, from_addr, received_at FROM emails
+        `SELECT subject, text_body,
+                CASE WHEN (text_body IS NULL OR trim(text_body) = '')
+                     THEN substr(html_body, 1, 8000)
+                     ELSE '' END AS html_body,
+                from_addr, received_at FROM emails
          WHERE ${where} AND to_addr = ? AND received_at >= ? ORDER BY received_at DESC LIMIT 50`
     ).bind(...params, addr, since).all();
     const out = (results as Record<string, unknown>[]).map((r) => {

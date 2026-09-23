@@ -317,6 +317,26 @@ def test_resolve_client_factory_basic_uses_default():
     assert _resolve_client_factory(acc) is default_client_factory
 
 
+def test_enable_socket_keepalive():
+    import socket
+    # 1. sock 为 None 时优雅返回不报错
+    idle_mod._enable_socket_keepalive(MagicMock(_imap=None))
+
+    # 2. 正常 socket 挂载 keepalive 选项
+    mock_sock = MagicMock()
+    mock_client = MagicMock()
+    mock_client._imap.sock = mock_sock
+    idle_mod._enable_socket_keepalive(mock_client)
+    mock_sock.setsockopt.assert_any_call(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+
+    # 3. setsockopt 抛异常时静默捕获不影响上层连接
+    bomb_sock = MagicMock()
+    bomb_sock.setsockopt.side_effect = OSError("setsockopt unsupported")
+    bomb_client = MagicMock()
+    bomb_client._imap.sock = bomb_sock
+    idle_mod._enable_socket_keepalive(bomb_client)
+
+
 def test_resolve_client_factory_unknown_provider_falls_back():
     acc = AccountConfig(
         id="bad", source="imap_custom", host="imap.example.com", port=993,

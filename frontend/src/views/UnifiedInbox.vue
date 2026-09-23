@@ -389,8 +389,9 @@ const handleSelectChip = (chip) => {
     applyFilter()
   } else if (chip.includes('提取验证码')) {
     activeTab.value = 'codes'
-    if (!codesAddr.value && (accountFilter.value || userAccounts.value[0]?.address)) {
-      codesAddr.value = accountFilter.value || userAccounts.value[0]?.address
+    const defaultAddr = accountFilter.value || userAccounts.value[0]?.username || boundAddresses.value[0]?.name || ''
+    if (!codesAddr.value && defaultAddr) {
+      codesAddr.value = defaultAddr
       loadCodes()
     }
   } else if (chip.includes('刷新列表')) {
@@ -518,7 +519,7 @@ const autoRefreshList = () => {
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   if (activeTab.value !== 'list') {
     if (activeTab.value === 'codes' && codesAddr.value.trim() && !codesLoading.value) {
-      void loadCodes()
+      void loadCodes({ background: true })
     }
     return
   }
@@ -697,35 +698,43 @@ const freshOptions = [
   { label: '24 h', value: 1440 },
 ]
 
-const loadCodes = async () => {
+const loadCodes = async ({ background = false } = {}) => {
   const requestId = ++codesRequestSeq
   const identity = authIdentity.value
   const isCurrent = () =>
-    requestId === codesRequestSeq && identity === authIdentity.value && hasAccess.value
+    !componentDisposed && requestId === codesRequestSeq && identity === authIdentity.value && hasAccess.value
   if (!identity) {
-    codesLoading.value = false
+    if (!background) codesLoading.value = false
     return
   }
   if (!codesAddr.value.trim()) {
-    codesError.value = t('codes.empty')
-    codes.value = []
-    codesLoading.value = false
+    if (!background) {
+      codesError.value = t('codes.empty')
+      codes.value = []
+      codesLoading.value = false
+    }
     return
   }
-  codesLoading.value = true
-  codesError.value = ''
+  if (!background) {
+    codesLoading.value = true
+    codesError.value = ''
+  }
   try {
     const res = await api.unified.verifcodes(codesAddr.value.trim(), codesFresh.value * 60 * 1000)
     if (!isCurrent()) return
     codes.value = res.results || []
     connected.value = true
+    codesError.value = ''
+    lastLoaded.value = new Date()
   } catch (e) {
     if (!isCurrent()) return
-    codesError.value = e.message || 'error'
     connected.value = false
-    codes.value = []
+    if (!background) {
+      codesError.value = e.message || 'error'
+      codes.value = []
+    }
   } finally {
-    if (isCurrent()) codesLoading.value = false
+    if (isCurrent() && !background) codesLoading.value = false
   }
 }
 
@@ -751,7 +760,7 @@ const loadStatus = async () => {
   const requestId = ++statusRequestSeq
   const identity = authIdentity.value
   const isCurrent = () =>
-    requestId === statusRequestSeq && identity === authIdentity.value && hasAccess.value
+    !componentDisposed && requestId === statusRequestSeq && identity === authIdentity.value && hasAccess.value
   if (!identity) {
     statusLoading.value = false
     return
@@ -918,6 +927,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   componentDisposed = true
   listRequestSeq += 1
+  codesRequestSeq += 1
+  statusRequestSeq += 1
   stopAutoRefresh()
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
