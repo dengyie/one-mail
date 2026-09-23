@@ -17,3 +17,11 @@ test("prefers code near keyword", () => {
   assert.equal(extractVerifCode("动态码: 654321"), "654321");
   assert.equal(extractVerifCode("您的授权码是 789012"), "789012");
 });
+
+test("does not truncate long numbers (phone numbers, order ids, timestamps) into codes", () => {
+  assert.equal(extractVerifCode("验证码已发送至手机: 13812345678"), null);
+  assert.equal(extractVerifCode("代码对应订单号: 202609240012"), null);
+  assert.equal(extractVerifCode("验证码已发送至 13812345678，验证码是 889900"), "889900");
+  assert.equal(extractVerifCode("安全码：99887766（8位安全码有效）"), "99887766");
+  assert.equal(extractVerifCode("安全码：998877665（9位长数字不应被截断）"), null);
+});

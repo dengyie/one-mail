@@ -192,3 +192,13 @@ def test_normalize_html_only_extracts_text_body():
     assert "269204" in e["text_body"]
     assert "appleid@id.apple.com" == e["from_addr"]
     assert "<html>" in e["html_body"]
+
+
+def test_normalize_html_entities_and_whitespace_fallback():
+    """验证包含 HTML 实体（如 &nbsp;, &#39;）及仅有空白字符的 text/plain 部分能正常解码并降级。"""
+    raw = (b"From: Service <service@example.com>\r\nTo: me@qq.com\r\n"
+           b"Subject: Code\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+           b"<html><body><p>\xe9\xaa\x8c\xe8\xaf\x81\xe7\xa0\x81:&nbsp;<strong>554433</strong></p></body></html>\r\n")
+    e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1003, internal_date_ms=None)
+    assert "验证码: 554433" in e["text_body"]
+    assert "&nbsp;" not in e["text_body"]
