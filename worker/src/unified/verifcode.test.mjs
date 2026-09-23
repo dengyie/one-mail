@@ -13,4 +13,7 @@ test("returns null when no code", () => {
 
 test("prefers code near keyword", () => {
   assert.equal(extractVerifCode("order 20260819 placed, code 445566"), "445566");
+  assert.equal(extractVerifCode("请在验证页面输入以下代码： 269204，有效时间10分钟"), "269204");
+  assert.equal(extractVerifCode("动态码: 654321"), "654321");
+  assert.equal(extractVerifCode("您的授权码是 789012"), "789012");
 });

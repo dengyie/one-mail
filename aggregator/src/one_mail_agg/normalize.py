@@ -54,6 +54,18 @@ def _references(msg) -> list[str] | None:
     return refs or None
 
 
+def _strip_html_to_text(html: str) -> str:
+    """提取 HTML 纯文本作为无 text/plain MIME 正文时的保底，供验证码提取与搜索使用。"""
+    import re
+    if not html:
+        return ""
+    clean = re.sub(r"(?is)<(script|style|head|svg).*?</\1>", " ", html)
+    clean = re.sub(r"(?s)<!--.*?-->", " ", clean)
+    clean = re.sub(r"<[^>]+>", " ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean
+
+
 def _bodies(msg) -> tuple[str, str]:
     text, html = "", ""
     parts = msg.walk() if msg.is_multipart() else [msg]
@@ -72,6 +84,8 @@ def _bodies(msg) -> tuple[str, str]:
             text = s
         elif ctype == "text/html" and not html:
             html = s
+    if not text and html:
+        text = _strip_html_to_text(html)
     return text, html
 
 
