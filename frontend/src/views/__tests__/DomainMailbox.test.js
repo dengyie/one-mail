@@ -70,12 +70,21 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('🎲 随机')
   })
 
-  it('displays to_addr and provides one-click recipient address filtering', () => {
+  it('displays to_addr and provides one-click recipient address filtering with domain validation', () => {
     expect(view).toContain('row.to_addr')
     expect(view).toContain('filterByAddress(row.to_addr)')
     expect(view).toContain('const filterByAddress = (targetAddr) => {')
     expect(view).toContain("const match = targetAddr.match(/([^<@\\s]+)@([^>@\\s]+)/)")
+    expect(view).toContain('const matchedOption = domainOptions.value.find(opt => opt.value.toLowerCase() === targetDomain)')
+    expect(view).toContain("message.warning('该邮箱后缀不属于当前站点已配置的域名')")
     expect(view).toContain('addressOnly.value = true')
+  })
+
+  it('implements defensive clipboard helper and delegates copy operations', () => {
+    expect(view).toContain("typeof navigator !== 'undefined' && navigator?.clipboard?.writeText")
+    expect(view).toContain("message.error('当前环境不支持剪贴板复制，请手动复制')")
+    expect(view).toContain("const copyAddress = () => copyText(fullAddress.value, '完整地址已复制')")
+    expect(view).toContain("const copyCode = (code) => copyText(code, '验证码已复制: ' + code)")
   })
 
   it('conforms to HTML5 interactive content model without button nesting and supports keyboard navigation', () => {
@@ -129,5 +138,11 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('if (!hasAccess.value || !domain.value || componentDisposed) return')
     expect(view).toContain('if (!hasAccess.value || componentDisposed) return')
     expect(view).toContain('if (!hasAccess.value) return')
+  })
+
+  it('implements self-healing domain selection preventing configuration drift', () => {
+    expect(view).toContain('const ensureValidDomain = (opts) => {')
+    expect(view).toContain('if (!domain.value || !opts.some(o => o.value === domain.value)) {')
+    expect(view).toContain('domain.value = opts[0].value')
   })
 })

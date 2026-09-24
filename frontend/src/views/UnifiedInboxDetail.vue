@@ -210,11 +210,13 @@ const marking = ref(false)
 const starring = ref(false)
 const authIdentity = computed(() => {
   const jwt = userJwt.value?.trim()
-  if (jwt) return `user:${jwt}`
   const admin = adminAuth.value?.trim()
-  if (admin) return `admin:${admin}`
   const key = unifiedApiKey.value?.trim()
-  return key ? `key:${key}` : ''
+  return [
+    jwt ? `user:${jwt}` : '',
+    admin ? `admin:${admin}` : '',
+    key ? `key:${key}` : '',
+  ].filter(Boolean).join('|')
 })
 const hasAccess = computed(() => !!authIdentity.value)
 

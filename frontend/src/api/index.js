@@ -115,6 +115,13 @@ const siteClient = createApiClient(() => {
 const handleUnifiedUnauthorized = (r) => {
     const usedUserChannel = Boolean(r?.config?.headers?.['x-user-token']);
     const usedAdminChannel = Boolean(r?.config?.headers?.['x-admin-auth']);
+    if (usedUserChannel && usedAdminChannel) {
+        // 复合提权通道：普通用户已登录并在全域工作台原地输入了管理密码。
+        // 若此时发生 401（管理密码错误/失效），仅剥离失效的管理密码 adminAuth，
+        // 保持普通用户账号会话 userJwt，由视图内状态机原地展示密码验证卡片，避免破坏用户正常会话并跳出。
+        adminAuth.value = '';
+        return;
+    }
     if (usedUserChannel) {
         userJwt.value = '';
     } else if (usedAdminChannel) {

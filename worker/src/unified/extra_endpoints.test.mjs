@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { verifCodes } from "./extra_endpoints.ts";
+import { verifCodes, getMetaOptions } from "./extra_endpoints.ts";
 
 // 端点级回归：verifCodes 的 addr / domain 双模式与 fail-closed 行为。
 // domain 子句经 buildEmailFilters 注入，这里重点锁 SQL 形状与 bind 顺序。
@@ -76,4 +76,44 @@ test("verifCodes domain wildcard injection fails closed", async () => {
     const res = await verifCodes(c);
     assert.deepEqual(res.body.results, []);
     assert.ok(captured().sql.includes("1=0"), "invalid domain must compile to 1=0");
+});
+
+test("getMetaOptions independently queries source, account_id and to_addr to prevent crowding out", async () => {
+    const capturedSqls = [];
+    const db = {
+        prepare(sql) {
+            capturedSqls.push(sql);
+            const stmt = {
+                bind(...args) { return stmt; },
+                async all() {
+                    if (sql.includes("DISTINCT source")) {
+                        return { results: [{ source: "cf_routing" }, { source: "imap" }] };
+                    }
+                    if (sql.includes("DISTINCT account_id")) {
+                        return { results: [{ account_id: "acc_1" }, { account_id: "acc_2" }] };
+                    }
+                    if (sql.includes("DISTINCT to_addr")) {
+                        return { results: [{ to_addr: "u1@example.com" }] };
+                    }
+                    return { results: [] };
+                },
+            };
+            return stmt;
+        },
+    };
+    const c = {
+        req: { query: () => ({}) },
+        env: { DB: db },
+        get: (key) => (key === "unifiedUserAuth" ? { isAdmin: true } : undefined),
+        json: (body, status) => ({ body, status }),
+    };
+
+    const res = await getMetaOptions(c);
+    assert.deepEqual(res.body.sources, ["cf_routing", "imap"]);
+    assert.deepEqual(res.body.accounts, ["acc_1", "acc_2"]);
+    assert.deepEqual(res.body.to_addrs, ["u1@example.com"]);
+    assert.equal(capturedSqls.length, 3);
+    assert.ok(capturedSqls.some(sql => sql.includes("DISTINCT source")));
+    assert.ok(capturedSqls.some(sql => sql.includes("DISTINCT account_id")));
+    assert.ok(capturedSqls.some(sql => sql.includes("DISTINCT to_addr")));
 });
