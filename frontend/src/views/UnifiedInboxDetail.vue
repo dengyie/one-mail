@@ -185,7 +185,7 @@ import MessageActionToolbar from '../components/ai/MessageActionToolbar.vue'
 import { useMessage } from 'naive-ui'
 
 const { t, locale } = useScopedI18n('unified')
-const { userJwt, unifiedApiKey, autoLoadRemoteImages } = useGlobalState()
+const { userJwt, unifiedApiKey, adminAuth, autoLoadRemoteImages } = useGlobalState()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -211,6 +211,8 @@ const starring = ref(false)
 const authIdentity = computed(() => {
   const jwt = userJwt.value?.trim()
   if (jwt) return `user:${jwt}`
+  const admin = adminAuth.value?.trim()
+  if (admin) return `admin:${admin}`
   const key = unifiedApiKey.value?.trim()
   return key ? `key:${key}` : ''
 })

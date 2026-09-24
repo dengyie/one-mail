@@ -22,12 +22,11 @@ const router = useRouter()
 const message = useMessage()
 const { locale } = useScopedI18n('views.Header')
 
-// 权限判定：仅限管理员使用（管理员账号/管理密码/免密开关/纯 API-Key）
+// 权限判定：仅限管理员使用（管理员账号/管理密码/纯 API-Key）
 const hasAccess = computed(() => Boolean(
     userSettings.value.is_admin === true ||
     adminAuth.value ||
-    (unifiedApiKey.value && !userJwt.value) ||
-    openSettings.value.disableAdminPasswordCheck === true
+    (unifiedApiKey.value && !userJwt.value)
 ))
 
 // 状态判定：
@@ -324,10 +323,23 @@ const refreshAll = ({ background = false } = {}) => {
     loadCodes({ background })
 }
 
-// 刷新只由请求参数签名驱动（见 listSignature），打字不触发无效刷新
+let refreshScheduled = false
+const scheduleRefreshAll = ({ background = false } = {}) => {
+    if (refreshScheduled) return
+    refreshScheduled = true
+    queueMicrotask(() => {
+        refreshScheduled = false
+        if (componentDisposed || !hasAccess.value || !domain.value) return
+        refreshAll({ background })
+    })
+}
+
+// 刷新由请求参数签名变化驱动，通过 scheduleRefreshAll 进行微任务去重，打字不触发无效刷新
 watch(listSignature, () => {
     nextCursor.value = ''
-    refreshAll()
+    if (hasAccess.value) {
+        scheduleRefreshAll()
+    }
 })
 
 // openSettings 原本由 Index/UserLogin 等页面按需加载；本页自持该依赖，
@@ -398,8 +410,10 @@ onMounted(async () => {
     if (!domain.value && domainOptions.value.length) {
         domain.value = domainOptions.value[0].value
     }
-    refreshAll()
-    startTimer()
+    if (domain.value) {
+        scheduleRefreshAll()
+        startTimer()
+    }
 })
 
 watch(hasAccess, (val) => {
@@ -407,8 +421,10 @@ watch(hasAccess, (val) => {
         if (!domain.value && domainOptions.value.length) {
             domain.value = domainOptions.value[0].value
         }
-        refreshAll()
-        startTimer()
+        if (domain.value) {
+            scheduleRefreshAll()
+            startTimer()
+        }
     } else if (!val) {
         stopTimer()
     }

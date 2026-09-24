@@ -119,6 +119,8 @@ const handleUnifiedUnauthorized = (r) => {
         userJwt.value = '';
     } else if (usedAdminChannel) {
         adminAuth.value = '';
+        // 管理密码失效时不跳转普通用户登录页，由视图内状态机原地展示密码卡片
+        return;
     } else {
         unifiedApiKey.value = '';
     }

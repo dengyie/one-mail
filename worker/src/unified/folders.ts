@@ -60,11 +60,13 @@ export async function listFolders(c: Context<HonoCustomType>) {
 
     if (userAuth) {
         if (!userAuth.isAdmin) {
+            const userId = userAuth.userPayload?.user_id;
+            if (!userId) return c.json({ results: [] });
             where.push(`EXISTS (
                 SELECT 1 FROM user_mail_accounts uma
                  WHERE uma.id = f.mail_account_id AND uma.user_id = ?
             )`);
-            params.push(userAuth.userPayload.user_id);
+            params.push(userId);
         }
         if (requestedAccount) {
             const accounts = csv(requestedAccount);
