@@ -27,6 +27,8 @@ export const resolveCorsOrigin = (origin: string, frontendUrl?: string): string 
             url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
             return origin;
         }
-    } catch {}
+    } catch {
+        // origin 非法（无法解析为 URL）时回落到空串 = 拒绝该跨域来源
+    }
     return '';
 };
