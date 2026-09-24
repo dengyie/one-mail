@@ -389,11 +389,6 @@ const handleSelectChip = (chip) => {
     applyFilter()
   } else if (chip.includes('提取验证码')) {
     activeTab.value = 'codes'
-    const defaultAddr = accountFilter.value || userAccounts.value[0]?.username || boundAddresses.value[0]?.name || ''
-    if (!codesAddr.value && defaultAddr) {
-      codesAddr.value = defaultAddr
-      loadCodes()
-    }
   } else if (chip.includes('刷新列表')) {
     refreshList()
   }
@@ -906,8 +901,16 @@ watch(autoRefresh, (enabled) => {
 })
 
 watch(activeTab, (tab) => {
-  if (tab === 'codes' && codesAddr.value.trim()) {
-    loadCodes()
+  if (tab === 'codes') {
+    if (!codesAddr.value.trim()) {
+      const defaultAddr = accountFilter.value || userAccounts.value[0]?.username || boundAddresses.value[0]?.name || ''
+      if (defaultAddr) {
+        codesAddr.value = defaultAddr
+      }
+    }
+    if (codesAddr.value.trim()) {
+      loadCodes()
+    }
   } else if (tab === 'status') {
     loadStatus()
   }
