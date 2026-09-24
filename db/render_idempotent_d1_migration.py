@@ -19,7 +19,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from wrangler_json import load_first_json_document
+# 兼容两种加载方式：直接执行（python3 db/render_x.py 时脚本目录自动进
+# sys.path）与 pytest 以 importlib 按文件路径加载（不会自动加）——显式补上。
+import sys as _sys
+
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+from wrangler_json import load_first_json_document  # noqa: E402
 
 ALTER_RE = re.compile(
     r"^\s*ALTER\s+TABLE\s+emails\s+ADD\s+COLUMN\s+"
