@@ -32,6 +32,25 @@ test("does not extract copyright years, street numbers or date components as cod
   assert.equal(extractVerifCode("code sent on 2026/09/24, passcode is 456789"), "456789");
 });
 
+test("extracts 3+3 hyphen/space split code and normalizes into 6 digits", () => {
+  assert.equal(extractVerifCode("Your verification code is 123-456"), "123456");
+  assert.equal(extractVerifCode("Your code is 123 456"), "123456");
+  assert.equal(extractVerifCode("动态码: 654-321"), "654321");
+  assert.equal(extractVerifCode("动态码: 654 321"), "654321");
+  assert.equal(extractVerifCode("Your Google verification code is G-123456"), "123456");
+  // 电话号码分段不得误判为分段验证码
+  assert.equal(extractVerifCode("Your verification code is 123-456-7890"), null);
+  assert.equal(extractVerifCode("Your verification code is 123 456 7890"), null);
+});
+
+test("skips inline date/time between single keyword and code", () => {
+  assert.equal(extractVerifCode("验证码已于 2026-09-24 10:00:00 生成，为 8899"), "8899");
+  assert.equal(extractVerifCode("验证码于 2026年09月24日 生成，为 8899"), "8899");
+  assert.equal(extractVerifCode("Verification code generated on 2026/09/24: 5678"), "5678");
+  assert.equal(extractVerifCode("Verification code generated at 2026/09/24: 123-456"), "123456");
+  assert.equal(extractVerifCode("code sent at 2026-09-24, code is 8899"), "8899");
+});
+
 test("does not truncate long numbers (phone numbers, order ids, timestamps) into codes", () => {
   assert.equal(extractVerifCode("验证码已发送至手机: 13812345678"), null);
   assert.equal(extractVerifCode("代码对应订单号: 202609240012"), null);

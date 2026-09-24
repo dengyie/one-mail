@@ -51,6 +51,13 @@ function stripHtmlToText(html: string): string {
         .trim();
 }
 
+/**
+ * 获取指定邮箱近期的验证码列表。
+ *
+ * Query 参数说明：
+ * - addr: 目标收件地址（必填）
+ * - fresh: 新鲜度窗口。支持毫秒（>=10000）或分钟（1~9999 自适应乘 60000，如 fresh=10 表示 10 分钟，fresh=1440 表示 24 小时）。默认 10 分钟。
+ */
 export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
     const addr = typeof q.addr === "string" ? q.addr.trim() : "";
