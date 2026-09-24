@@ -68,6 +68,55 @@ test("admin user keeps business filters without tenant ownership predicate", asy
   assert.doesNotMatch(filter.where, /user_mail_accounts/);
 });
 
+test("non-admin user querying domain catch-all fails closed", async () => {
+  const c = makeContext({ auth: userAuth(42, false) });
+  const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
+  assert.deepEqual(filter, { where: "0=1", params: [] });
+});
+
+test("admin user querying domain catch-all succeeds", async () => {
+  const c = makeContext({ auth: userAuth(1, true) });
+  const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
+  assert.match(filter.where, /source = 'cf_routing'/);
+  assert.match(filter.where, /to_addr LIKE \?/);
+  assert.deepEqual(filter.params, ["%@mangoqwq.com"]);
+  assert.doesNotMatch(filter.where, /user_mail_accounts/);
+});
+
+test("admin context without userPayload (x-admin-auth) querying domain catch-all succeeds", async () => {
+  const c = makeContext({ auth: { userPayload: null, isAdmin: true, userRole: "admin" } });
+  const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
+  assert.match(filter.where, /source = 'cf_routing'/);
+  assert.match(filter.where, /to_addr LIKE \?/);
+  assert.deepEqual(filter.params, ["%@mangoqwq.com"]);
+});
+
+test("readonly API key querying domain fails closed", async () => {
+  const c = makeContext({
+    apiKey: {
+      role: "readonly",
+      allowed_sources: null,
+      allowed_accounts: null,
+    },
+  });
+  const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
+  assert.deepEqual(filter, { where: "0=1", params: [] });
+});
+
+test("admin API key querying domain succeeds", async () => {
+  const c = makeContext({
+    apiKey: {
+      role: "admin",
+      allowed_sources: null,
+      allowed_accounts: null,
+    },
+  });
+  const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
+  assert.match(filter.where, /source = 'cf_routing'/);
+  assert.match(filter.where, /to_addr LIKE \?/);
+  assert.deepEqual(filter.params, ["%@mangoqwq.com"]);
+});
+
 test("readonly API key keeps source/account whitelist scoping", async () => {
   const c = makeContext({
     apiKey: {

@@ -43,9 +43,15 @@ const {
 const hasUserSession = computed(() => Boolean(userJwt.value))
 const hasAddressSession = computed(() => Boolean(jwt.value))
 const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value)
-// 域名邮箱工作台的访问条件与页面 hasAccess 保持一致（用户 JWT 或 unified API key），
-// 纯 admin 密码会话（无用户凭据）不显示入口，避免点进去只有登录提示
-const canUseDomainMailbox = computed(() => hasUserSession.value || Boolean(unifiedApiKey.value))
+// 域名邮箱工作台仅供管理员使用：需具备管理员身份（管理员账号/管理密码/管理员 API Key/免密开关）
+const canUseDomainMailbox = computed(() =>
+  Boolean(
+    userSettings.value.is_admin ||
+    adminAuth.value ||
+    (unifiedApiKey.value && !hasUserSession.value) ||
+    openSettings.value.disableAdminPasswordCheck
+  )
+)
 
 const handleNavigate = (path) => {
   router.push(getRouterPathWithLang(path, locale.value))

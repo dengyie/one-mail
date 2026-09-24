@@ -81,4 +81,31 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('const toggleStar = async (row, event) => {')
     expect(view).toContain('api.unified.toggleStar(row.id, nextVal)')
   })
+
+  it('enforces strict admin authorization and guards against non-admin access', () => {
+    // 权限计算：严格限定管理员角色、管理密码、免密开关或纯 API Key
+    expect(view).toContain('userSettings.value.is_admin === true')
+    expect(view).toContain('adminAuth.value')
+    expect(view).toContain('unifiedApiKey.value && !userJwt.value')
+    expect(view).toContain('openSettings.value.disableAdminPasswordCheck === true')
+
+    // 三态判定：鉴权中、普通用户拦截、未登录访客提示
+    expect(view).toContain('const isCheckingAuth = computed(')
+    expect(view).toContain('const isForbidden = computed(')
+    expect(view).toContain('const isUnauthenticated = computed(')
+
+    // 普通用户被拦截的明确 UI 提示
+    expect(view).toContain('暂无管理员权限')
+    expect(view).toContain('当前账号（{{ userSettings.user_email || \'普通用户\' }}）并非系统管理员')
+
+    // 访客未登录凭据引导
+    expect(view).toContain('系统管理员访问凭证')
+    expect(view).toContain('handleAdminPasswordLogin')
+    expect(view).toContain('/open_api/admin_login')
+
+    // 数据加载与轮询严格由 hasAccess 守卫
+    expect(view).toContain('if (!hasAccess.value || !domain.value || componentDisposed) return')
+    expect(view).toContain('if (!hasAccess.value || componentDisposed) return')
+    expect(view).toContain('if (!hasAccess.value) return')
+  })
 })
