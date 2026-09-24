@@ -183,6 +183,7 @@
                 clearable
                 style="width: 260px"
                 @keyup.enter="loadCodes"
+                @clear="loadCodes"
               />
             </div>
             <div class="flex flex-col gap-1">
@@ -216,7 +217,9 @@
                   {{ c.subject || t('list.noSubject') }}
                 </div>
                 <div class="text-xs text-zinc-400 truncate">
-                  {{ c.from_addr }} · {{ fmtTime(c.received_at) }}
+                  <span v-if="c.to_addr">{{ c.from_addr }} → {{ c.to_addr }}</span>
+                  <span v-else>{{ c.from_addr }}</span>
+                  · {{ fmtTime(c.received_at) }}
                 </div>
               </div>
               <button
@@ -514,7 +517,7 @@ const autoRefreshList = () => {
   if (!autoRefresh.value || !hasAccess.value) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   if (activeTab.value !== 'list') {
-    if (activeTab.value === 'codes' && codesAddr.value.trim() && !codesLoading.value && !backgroundCodesPending) {
+    if (activeTab.value === 'codes' && !codesLoading.value && !backgroundCodesPending) {
       void loadCodes({ background: true })
     }
     return
@@ -702,14 +705,6 @@ const loadCodes = async ({ background = false } = {}) => {
     !componentDisposed && requestId === codesRequestSeq && identity === authIdentity.value && hasAccess.value
   if (!identity) {
     if (!background) codesLoading.value = false
-    return
-  }
-  if (!codesAddr.value.trim()) {
-    if (!background) {
-      codesError.value = t('codes.empty')
-      codes.value = []
-      codesLoading.value = false
-    }
     return
   }
   if (background) {
@@ -900,17 +895,15 @@ watch(autoRefresh, (enabled) => {
   }
 })
 
+watch(codesFresh, () => {
+  if (activeTab.value === 'codes') {
+    loadCodes()
+  }
+})
+
 watch(activeTab, (tab) => {
   if (tab === 'codes') {
-    if (!codesAddr.value.trim()) {
-      const defaultAddr = accountFilter.value || userAccounts.value[0]?.username || boundAddresses.value[0]?.name || ''
-      if (defaultAddr) {
-        codesAddr.value = defaultAddr
-      }
-    }
-    if (codesAddr.value.trim()) {
-      loadCodes()
-    }
+    loadCodes()
   } else if (tab === 'status') {
     loadStatus()
   }

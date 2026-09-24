@@ -409,12 +409,12 @@ export const api = {
         },
         meta: () => unifiedAuthFetch('/api/unified/meta'),
         verifcodes: (addr, freshMs, domain) => {
-            // addr 与 domain 二选一：domain 为域名邮箱全域模式（后端按 cf_routing 后缀过滤）
+            // addr 与 domain 可选；若均未指定，则在当前租户范围内聚合全部可用邮箱的近期验证码
             const s = new URLSearchParams();
             if (addr) s.set('addr', addr);
             if (domain) s.set('domain', domain);
-            s.set('fresh', String(freshMs));
-            return unifiedAuthFetch(`/api/unified/verifcodes?${s.toString()}`);
+            if (freshMs) s.set('fresh', String(freshMs));
+            return unifiedAuthFetch(`/api/unified/verifcodes${s.toString() ? `?${s.toString()}` : ''}`);
         },
         markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
         markUnread: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/unread`, { method: 'POST' }),
