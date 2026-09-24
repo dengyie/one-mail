@@ -408,8 +408,14 @@ export const api = {
             return unifiedAuthFetch(`/api/unified/stats${s ? `?${s}` : ''}`);
         },
         meta: () => unifiedAuthFetch('/api/unified/meta'),
-        verifcodes: (addr, freshMs) =>
-            unifiedAuthFetch(`/api/unified/verifcodes?addr=${encodeURIComponent(addr)}&fresh=${freshMs}`),
+        verifcodes: (addr, freshMs, domain) => {
+            // addr 与 domain 二选一：domain 为域名邮箱全域模式（后端按 cf_routing 后缀过滤）
+            const s = new URLSearchParams();
+            if (addr) s.set('addr', addr);
+            if (domain) s.set('domain', domain);
+            s.set('fresh', String(freshMs));
+            return unifiedAuthFetch(`/api/unified/verifcodes?${s.toString()}`);
+        },
         markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
         toggleStar: (id, isStarred) =>
             unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/star`, {

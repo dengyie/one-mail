@@ -119,6 +119,11 @@ const router = createRouter({
             component: () => import('../views/telegram/Mail.vue')
         },
         {
+            path: '/domain-mailbox',
+            alias: '/:lang/domain-mailbox',
+            component: () => import('../views/DomainMailbox.vue')
+        },
+        {
             path: '/unified',
             alias: '/:lang/unified',
             component: () => import('../views/UnifiedInbox.vue')
