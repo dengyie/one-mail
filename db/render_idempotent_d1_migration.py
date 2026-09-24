@@ -15,10 +15,16 @@ schema later; deployment must not turn first install into a migration failure.
 from __future__ import annotations
 
 import argparse
-import json
 import re
 from pathlib import Path
 from typing import Any
+
+# 兼容两种加载方式：直接执行（python3 db/render_x.py 时脚本目录自动进
+# sys.path）与 pytest 以 importlib 按文件路径加载（不会自动加）——显式补上。
+import sys as _sys
+
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
+from wrangler_json import load_first_json_document  # noqa: E402
 
 ALTER_RE = re.compile(
     r"^\s*ALTER\s+TABLE\s+emails\s+ADD\s+COLUMN\s+"
@@ -94,7 +100,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
-    payload = json.loads(args.schema_json.read_text(encoding="utf-8"))
+    payload = load_first_json_document(args.schema_json.read_text(encoding="utf-8"))
     existing = parse_remote_columns(payload)
     canonical = args.migration.read_text(encoding="utf-8")
     rendered = render_migration(canonical, existing)
