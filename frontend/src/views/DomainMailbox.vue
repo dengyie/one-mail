@@ -5,18 +5,66 @@ import { useMessage } from 'naive-ui'
 import { useGlobalState } from '../store'
 import { api } from '../api'
 import { useScopedI18n } from '../i18n/app'
-import { getRouterPathWithLang } from '../utils'
+import { getRouterPathWithLang, hashPassword } from '../utils'
 
 // 域名邮箱全域工作台：任意拼一个前缀 + 选一个本站域名，即可查看该域名下
 // 所有收件（catch-all 入库的 cf_routing 邮件），无需预先注册地址。
-// 数据面走 /api/unified/emails 的 domain 过滤（管理员 JWT 不加租户收窄）。
+// 数据面走 /api/unified/emails 的 domain 过滤（仅限管理员访问）。
 
-const { openSettings, userJwt, unifiedApiKey } = useGlobalState()
+const {
+    openSettings,
+    userJwt,
+    unifiedApiKey,
+    adminAuth,
+    userSettings,
+} = useGlobalState()
 const router = useRouter()
 const message = useMessage()
 const { locale } = useScopedI18n('views.Header')
 
-const hasAccess = computed(() => Boolean(userJwt.value || unifiedApiKey.value))
+// 权限判定：仅限管理员使用（管理员账号/管理密码/免密开关/纯 API-Key）
+const hasAccess = computed(() => Boolean(
+    userSettings.value.is_admin === true ||
+    adminAuth.value ||
+    (unifiedApiKey.value && !userJwt.value) ||
+    openSettings.value.disableAdminPasswordCheck === true
+))
+
+// 状态判定：
+// 1. 凭据检验中：已存有 userJwt 但 userSettings 尚未拉取完毕，避免首帧闪烁拦截
+const isCheckingAuth = computed(() => Boolean(userJwt.value && !userSettings.value.fetched && !adminAuth.value))
+// 2. 普通登录用户拦截：已登录普通账号但并非管理员
+const isForbidden = computed(() => Boolean(userJwt.value && userSettings.value.fetched && !hasAccess.value))
+// 3. 未登录访客：没有任何登录凭据
+const isUnauthenticated = computed(() => Boolean(!isCheckingAuth.value && !hasAccess.value && !userJwt.value))
+
+// 后台管理密码快速验证
+const tmpAdminPassword = ref('')
+const adminLoggingIn = ref(false)
+
+const handleAdminPasswordLogin = async () => {
+    const pwd = tmpAdminPassword.value.trim()
+    if (!pwd) {
+        message.warning('请输入管理密码')
+        return
+    }
+    adminLoggingIn.value = true
+    try {
+        await api.fetch('/open_api/admin_login', {
+            method: 'POST',
+            body: JSON.stringify({
+                password: await hashPassword(pwd),
+            })
+        })
+        adminAuth.value = pwd
+        tmpAdminPassword.value = ''
+        message.success('管理员认证成功')
+    } catch (e) {
+        message.error(e.message || '管理密码错误')
+    } finally {
+        adminLoggingIn.value = false
+    }
+}
 
 // ---- 地址工坊 ----
 const name = ref('')
@@ -338,12 +386,32 @@ onMounted(async () => {
         document.addEventListener('visibilitychange', handleVisibilityChange)
     }
     await ensureSettings()
+    if (userJwt.value && !userSettings.value.user_id) {
+        try {
+            await api.getUserSettings(message)
+        } catch {
+            // 异常在 api 内已处理，保持 userSettings.fetched=true
+        }
+    }
     if (componentDisposed) return
+    if (!hasAccess.value) return
     if (!domain.value && domainOptions.value.length) {
         domain.value = domainOptions.value[0].value
     }
     refreshAll()
     startTimer()
+})
+
+watch(hasAccess, (val) => {
+    if (val && !componentDisposed) {
+        if (!domain.value && domainOptions.value.length) {
+            domain.value = domainOptions.value[0].value
+        }
+        refreshAll()
+        startTimer()
+    } else if (!val) {
+        stopTimer()
+    }
 })
 
 onBeforeUnmount(() => {
@@ -360,14 +428,73 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="domain-mailbox max-w-4xl mx-auto px-4 py-6 text-left space-y-5">
-    <!-- 未登录提示 -->
-    <n-alert v-if="!hasAccess" type="warning" :show-icon="false" class="rounded-2xl">
-      <div class="flex items-center justify-between gap-3">
-        <span>请先登录管理员账号后使用域名邮箱工作台</span>
-        <n-button size="small" type="primary" @click="goToLogin">去登录</n-button>
-      </div>
-    </n-alert>
+    <!-- 1. 凭据校验加载中状态 -->
+    <div v-if="isCheckingAuth" class="p-12 text-center text-slate-500 dark:text-slate-400 space-y-3">
+      <n-spin size="large" />
+      <p class="text-sm">正在验证管理员访问权限...</p>
+    </div>
 
+    <!-- 2. 普通登录用户直接拦截（非管理员禁止访问） -->
+    <div
+      v-else-if="isForbidden"
+      class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12 shadow-sm space-y-4"
+    >
+      <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto text-2xl font-bold">
+        🚫
+      </div>
+      <h3 class="text-lg font-bold text-slate-900 dark:text-white">暂无管理员权限</h3>
+      <p class="text-xs text-slate-500">
+        当前账号（{{ userSettings.user_email || '普通用户' }}）并非系统管理员。域名邮箱全域工作台目前仅供站长/管理员使用。
+      </p>
+      <div class="flex items-center justify-center gap-3 pt-2">
+        <n-button @click="router.push(getRouterPathWithLang('/mailbox', locale))" secondary class="rounded-xl">
+          返回收件箱
+        </n-button>
+        <n-button @click="goToLogin" type="primary" class="rounded-xl">
+          切换管理员账号
+        </n-button>
+      </div>
+    </div>
+
+    <!-- 3. 未登录访客拦截：引导登录管理员账号或输入管理密码 -->
+    <div
+      v-else-if="isUnauthenticated"
+      class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12 shadow-sm space-y-4"
+    >
+      <div class="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto text-2xl">
+        🔑
+      </div>
+      <h3 class="text-lg font-bold text-slate-900 dark:text-white">系统管理员访问凭证</h3>
+      <p class="text-xs text-slate-500">
+        域名邮箱全域工作台目前仅供站长/管理员使用。请登录管理员账号或输入后台管理密码。
+      </p>
+      <div class="space-y-3 pt-2 text-left">
+        <n-input
+          v-model:value="tmpAdminPassword"
+          type="password"
+          show-password-on="click"
+          placeholder="请输入后台管理密码"
+          @keyup.enter="handleAdminPasswordLogin"
+          class="rounded-xl"
+        />
+        <n-button
+          type="primary"
+          block
+          :loading="adminLoggingIn"
+          @click="handleAdminPasswordLogin"
+          class="rounded-xl font-medium"
+        >
+          验证密码并进入
+        </n-button>
+        <div class="text-center pt-2">
+          <n-button text size="small" type="primary" @click="goToLogin">
+            使用管理员账号登录 &rarr;
+          </n-button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 管理员授权通过，展示全域工作台 -->
     <template v-else>
       <!-- 后端未返回任何域名（DOMAINS 未配置/为空）时的显式告警 -->
       <n-alert v-if="noDomainsConfigured" type="warning" :show-icon="false" class="rounded-2xl">

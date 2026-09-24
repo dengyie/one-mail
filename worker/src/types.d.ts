@@ -158,7 +158,7 @@ type Variables = {
     // 用户登录通道（x-user-token）鉴权后的统一收件箱上下文。
     // 与 apiKey 并列：用户登录优先于 API-key（浏览器 UI 用），程序化访问仍走 apiKey。
     unifiedUserAuth?: {
-        userPayload: UserPayload,
+        userPayload?: UserPayload | null,
         isAdmin: boolean,
         // 已解析的用户角色，统一查询配额与管理员绕过均复用这一值，避免每个端点重复查角色。
         userRole?: string | null,

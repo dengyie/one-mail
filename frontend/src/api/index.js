@@ -114,8 +114,11 @@ const siteClient = createApiClient(() => {
 // 用动态 import 绕开 router→views→api 的静态环；hook 在运行时才触发，模块已缓存。
 const handleUnifiedUnauthorized = (r) => {
     const usedUserChannel = Boolean(r?.config?.headers?.['x-user-token']);
+    const usedAdminChannel = Boolean(r?.config?.headers?.['x-admin-auth']);
     if (usedUserChannel) {
         userJwt.value = '';
+    } else if (usedAdminChannel) {
+        adminAuth.value = '';
     } else {
         unifiedApiKey.value = '';
     }
@@ -133,11 +136,20 @@ const unifiedClient = createApiClient(() => {
     if (!b) throw new Error("unified api key not set");
     return { 'Authorization': b };
 }, { onUnauthorized: handleUnifiedUnauthorized });
-// unified user：x-user-token 单通道。
+// unified user：x-user-token 通道（若已有 adminAuth 则附带以提升全域权限）。
 const unifiedUserClient = createApiClient(() => {
     const t = safeHeaderValue(userJwt.value);
     if (!t) throw new Error("not logged in");
-    return { 'x-user-token': t };
+    const h = { 'x-user-token': t };
+    const a = safeHeaderValue(adminAuth.value);
+    if (a) h['x-admin-auth'] = a;
+    return h;
+}, { onUnauthorized: handleUnifiedUnauthorized });
+// unified admin：x-admin-auth 密码通道。
+const unifiedAdminClient = createApiClient(() => {
+    const a = safeHeaderValue(adminAuth.value);
+    if (!a) throw new Error("not logged in");
+    return { 'x-admin-auth': a };
 }, { onUnauthorized: handleUnifiedUnauthorized });
 
 const apiFetch = async (path, options = {}) => {
@@ -364,11 +376,16 @@ const unifiedFetch = (path, options = {}) => unifiedClient.request(path, options
 // （未登录 → throw "not logged in" 已迁进 unifiedUserClient 的 headerInjector。）
 const unifiedUserFetch = (path, options = {}) => unifiedUserClient.request(path, options);
 
-// 登录用户优先；没有用户登录时保留 Bearer API-key 兼容路径。
-const unifiedAuthFetch = (path, options = {}) =>
-    safeHeaderValue(userJwt.value)
-        ? unifiedUserFetch(path, options)
-        : unifiedFetch(path, options);
+// 登录用户优先；次选管理员管理密码；没有用户登录时保留 Bearer API-key 兼容路径。
+const unifiedAuthFetch = (path, options = {}) => {
+    if (safeHeaderValue(userJwt.value)) {
+        return unifiedUserFetch(path, options);
+    }
+    if (safeHeaderValue(adminAuth.value)) {
+        return unifiedAdminClient.request(path, options);
+    }
+    return unifiedFetch(path, options);
+};
 
 // 构造 /api/unified/emails 的查询串：source/account_id 逗号多值、未读标记、分页、关键词。
 const buildUnifiedQuery = (params = {}) => {

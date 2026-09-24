@@ -47,6 +47,10 @@ export const resolveScopedEmailFilter = async (
 ): Promise<EmailFilter> => {
     const userAuth = c.get("unifiedUserAuth");
     if (userAuth) {
+        // 全域域名邮箱查询(q.domain)仅限管理员使用，杜绝普通用户越权刺探全域 catch-all 邮件
+        if (q.domain && !userAuth.isAdmin) {
+            return { where: "0=1", params: [] };
+        }
         const base = buildEmailFilters(q);
         if (userAuth.isAdmin) return base;
         const userId = userAuth.userPayload?.user_id;
@@ -59,6 +63,9 @@ export const resolveScopedEmailFilter = async (
 
     const key = c.get("apiKey");
     if (!key) return { where: "0=1", params: [] };
+    if (q.domain && key.role !== "admin") {
+        return { where: "0=1", params: [] };
+    }
     return buildEmailFilters(scopeQuery(key, q));
 };
 

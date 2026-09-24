@@ -1,5 +1,6 @@
 import { Context, Hono } from "hono";
 import { handleListQuery, commonGetUserRole } from "../common";
+import { checkIsAdmin } from "../utils";
 import { ingestHandler } from "./ingest";
 import { countEmails, statsEmails, verifCodes, getMetaOptions } from "./extra_endpoints";
 import {
@@ -29,11 +30,13 @@ const api = new Hono<HonoCustomType>();
 const UNIFIED_EMAIL_SELECT = `SELECT id,source,account_id,from_addr,to_addr,subject,COALESCE(internal_date, received_at) as received_at,internal_date,is_read,is_starred,attachments_json FROM emails`;
 const UNIFIED_EMAIL_ORDER = `COALESCE(internal_date, received_at) DESC, id DESC`;
 
-// 双通道鉴权：
+// 多通道鉴权：
 //  1) x-user-token（用户登录，浏览器 UI 主路径）：解析 userPayload，按 ADMIN_USER_ROLE
 //     判定管理员；普通用户的租户边界在 SQL 中按 account/address ownership 强制执行。
-//  2) Authorization: Bearer <api-key>（程序化访问）：lookupKey + source/account 白名单。
-// 两者都缺 → 401。用户 token 优先（同时存在时，浏览器语义以登录身份为准）。
+//     若普通用户同时携带了有效 x-admin-auth 管理密码，同等赋予管理员全域权限。
+//  2) x-admin-auth（管理密码直接鉴权）：供管理面板与控制台直接访问全域视图。
+//  3) Authorization: Bearer <api-key>（程序化访问）：lookupKey + source/account 白名单。
+// 均不满足 → 401。
 api.use("/api/unified/*", async (c, next) => {
     const userToken = c.req.raw.headers.get("x-user-token");
     if (userToken) {
@@ -47,13 +50,27 @@ api.use("/api/unified/*", async (c, next) => {
             // 角色只查一次并放入上下文：权限和资源配额必须使用同一事实来源。
             // 不再预取用户所有地址/邮箱账号，避免随着租户资源增加构造越来越大的 IN 列表。
             const userRole = (await commonGetUserRole(c, payload.user_id))?.role ?? null;
-            const isAdmin = !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
+            let isAdmin = !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
+            if (!isAdmin && (await checkIsAdmin(c))) {
+                isAdmin = true;
+            }
             c.set("unifiedUserAuth", { userPayload: payload, isAdmin, userRole });
             await next();
             return;
         } catch {
             return c.json({ error: "invalid user token" }, 401);
         }
+    }
+
+    // 回退：x-admin-auth 管理密码通道（管理员后台/运维直接凭管理密码访问统一收件箱与域名邮箱）
+    if (await checkIsAdmin(c)) {
+        c.set("unifiedUserAuth", {
+            userPayload: null,
+            isAdmin: true,
+            userRole: c.env.ADMIN_USER_ROLE || "admin",
+        });
+        await next();
+        return;
     }
 
     // 回退：Bearer API-key
