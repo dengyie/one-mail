@@ -212,9 +212,13 @@ const activeRoute = computed(() => {
             @click="handleNavigate('/domain-mailbox')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'domain_mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+            :title="collapsed ? '域名邮箱 · 全域' : ''"
           >
             <n-icon size="18" :component="DnsFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">域名邮箱 · 全域</span>
+            <span v-if="!collapsed" class="truncate flex items-center justify-between flex-1">
+              <span>域名邮箱 · 全域</span>
+              <span class="px-1.5 py-0.2 text-[10px] bg-emerald-500/20 text-emerald-400 rounded-md font-mono">Catch-All</span>
+            </span>
           </button>
         </div>
 
