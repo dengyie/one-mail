@@ -113,9 +113,11 @@ const copyText = async (text, successMsg = '已复制') => {
 
 // 快速根据收件人地址切换/过滤
 const filterByAddress = (targetAddr) => {
-    if (!targetAddr || !targetAddr.includes('@')) return
-    const [prefix, d] = targetAddr.split('@')
-    name.value = prefix
+    if (!targetAddr || typeof targetAddr !== 'string') return
+    const match = targetAddr.match(/([^<@\s]+)@([^>@\s]+)/)
+    if (!match) return
+    name.value = match[1].trim()
+    const d = match[2].trim().toLowerCase()
     if (d && domainOptions.value.some(opt => opt.value === d)) {
         domain.value = d
     }
@@ -196,16 +198,17 @@ const loadList = async ({ background = false } = {}) => {
 
 const loadMore = async () => {
     if (!nextCursor.value || loadingMore.value || componentDisposed) return
+    const requestId = listRequestSeq
     loadingMore.value = true
     try {
         const res = await api.unified.listEmails({ ...listParams.value, cursor: nextCursor.value })
-        if (componentDisposed) return
+        if (componentDisposed || requestId !== listRequestSeq) return
         const rows = res.results || []
         const seen = new Set(emails.value.map(r => r.id))
         emails.value = [...emails.value, ...rows.filter(r => !seen.has(r.id))]
         nextCursor.value = res.next_cursor || ''
     } catch (e) {
-        if (!componentDisposed) {
+        if (!componentDisposed && requestId === listRequestSeq) {
             message.error(e.message || '加载更多失败')
         }
     } finally {
@@ -336,6 +339,7 @@ const scheduleRefreshAll = ({ background = false } = {}) => {
 
 // 刷新由请求参数签名变化驱动，通过 scheduleRefreshAll 进行微任务去重，打字不触发无效刷新
 watch(listSignature, () => {
+    listRequestSeq += 1
     nextCursor.value = ''
     if (hasAccess.value) {
         scheduleRefreshAll()
@@ -450,7 +454,7 @@ onBeforeUnmount(() => {
       <p class="text-sm">正在验证管理员访问权限...</p>
     </div>
 
-    <!-- 2. 普通登录用户直接拦截（非管理员禁止访问） -->
+    <!-- 2. 普通登录用户直接拦截（非管理员禁止访问，支持原地输入管理密码提权） -->
     <div
       v-else-if="isForbidden"
       class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12 shadow-sm space-y-4"
@@ -460,15 +464,34 @@ onBeforeUnmount(() => {
       </div>
       <h3 class="text-lg font-bold text-slate-900 dark:text-white">暂无管理员权限</h3>
       <p class="text-xs text-slate-500">
-        当前账号（{{ userSettings.user_email || '普通用户' }}）并非系统管理员。域名邮箱全域工作台目前仅供站长/管理员使用。
+        当前账号（{{ userSettings.user_email || '普通用户' }}）并非系统管理员。域名邮箱全域工作台目前仅供站长/管理员使用。若您知晓后台管理密码，可直接在下方验证提权。
       </p>
-      <div class="flex items-center justify-center gap-3 pt-2">
-        <n-button @click="router.push(getRouterPathWithLang('/mailbox', locale))" secondary class="rounded-xl">
-          返回收件箱
+      <div class="space-y-3 pt-2 text-left">
+        <n-input
+          v-model:value="tmpAdminPassword"
+          type="password"
+          show-password-on="click"
+          placeholder="请输入后台管理密码原地提权"
+          @keyup.enter="handleAdminPasswordLogin"
+          class="rounded-xl"
+        />
+        <n-button
+          type="primary"
+          block
+          :loading="adminLoggingIn"
+          @click="handleAdminPasswordLogin"
+          class="rounded-xl font-medium"
+        >
+          验证密码并进入工作台
         </n-button>
-        <n-button @click="goToLogin" type="primary" class="rounded-xl">
-          切换管理员账号
-        </n-button>
+        <div class="flex items-center justify-between pt-1">
+          <n-button text size="small" @click="router.push(getRouterPathWithLang('/mailbox', locale))">
+            &larr; 返回收件箱
+          </n-button>
+          <n-button text size="small" type="primary" @click="goToLogin">
+            切换账号登录 &rarr;
+          </n-button>
+        </div>
       </div>
     </div>
 
@@ -707,12 +730,15 @@ onBeforeUnmount(() => {
           v-else
           class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white dark:bg-zinc-900/60 shadow-xs"
         >
-          <button
+          <div
             v-for="row in emails"
             :key="row.id"
-            type="button"
-            class="w-full text-left px-5 py-3.5 flex items-center gap-3.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer group"
+            role="button"
+            tabindex="0"
+            class="w-full text-left px-5 py-3.5 flex items-center gap-3.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer group focus:outline-none focus:bg-zinc-50 dark:focus:bg-zinc-800/50"
             @click="openDetail(row.id)"
+            @keydown.enter.self="openDetail(row.id)"
+            @keydown.space.self.prevent="openDetail(row.id)"
           >
             <!-- 未读指示点（点击切换已读/未读） -->
             <button
@@ -776,7 +802,7 @@ onBeforeUnmount(() => {
 
             <!-- 时间戳 -->
             <div class="text-xs text-zinc-400 shrink-0 font-mono">{{ fmtTime(row.received_at) }}</div>
-          </button>
+          </div>
         </div>
 
         <!-- 游标分页：加载更多 -->

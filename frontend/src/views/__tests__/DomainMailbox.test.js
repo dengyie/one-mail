@@ -20,12 +20,16 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain("document.visibilityState === 'visible'")
   })
 
-  it('guards against request race conditions in loading states', () => {
+  it('guards against request race conditions in loading states and cursor pagination', () => {
     expect(view).toContain('let listRequestSeq = 0')
     expect(view).toContain('const requestId = ++listRequestSeq')
     expect(view).toContain('if (requestId !== listRequestSeq || componentDisposed) return')
     expect(view).toContain('else if (requestId === listRequestSeq) {')
     expect(view).toContain('loading.value = false')
+
+    // loadMore 也校验 requestId 确保分页加载不被旧过滤条件污染
+    expect(view).toContain('const requestId = listRequestSeq')
+    expect(view).toContain('if (componentDisposed || requestId !== listRequestSeq) return')
 
     // Codes request also has sequential requestId race guard
     expect(view).toContain('let codesRequestSeq = 0')
@@ -34,10 +38,11 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('codesLoading.value = false')
   })
 
-  it('drives query refresh strictly through computed listSignature to prevent watch storms', () => {
+  it('drives query refresh strictly through computed listSignature to prevent watch storms and invalidates inflight pagination', () => {
     expect(view).toContain('const listParams = computed(() => ({')
     expect(view).toContain('const listSignature = computed(() => JSON.stringify(listParams.value))')
     expect(view).toContain('watch(listSignature, () => {')
+    expect(view).toContain('listRequestSeq += 1')
     expect(view).toContain("nextCursor.value = ''")
     expect(view).toContain('scheduleRefreshAll()')
   })
@@ -69,8 +74,15 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('row.to_addr')
     expect(view).toContain('filterByAddress(row.to_addr)')
     expect(view).toContain('const filterByAddress = (targetAddr) => {')
-    expect(view).toContain("const [prefix, d] = targetAddr.split('@')")
+    expect(view).toContain("const match = targetAddr.match(/([^<@\\s]+)@([^>@\\s]+)/)")
     expect(view).toContain('addressOnly.value = true')
+  })
+
+  it('conforms to HTML5 interactive content model without button nesting and supports keyboard navigation', () => {
+    expect(view).toContain('role="button"')
+    expect(view).toContain('tabindex="0"')
+    expect(view).toContain('@keydown.enter.self="openDetail(row.id)"')
+    expect(view).toContain('@keydown.space.self.prevent="openDetail(row.id)"')
   })
 
   it('offers selectable time windows for verification code aggregation', () => {
@@ -103,9 +115,10 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('const isForbidden = computed(')
     expect(view).toContain('const isUnauthenticated = computed(')
 
-    // 普通用户被拦截的明确 UI 提示
+    // 普通用户被拦截的明确 UI 提示并支持原地输入管理密码提权
     expect(view).toContain('暂无管理员权限')
     expect(view).toContain('当前账号（{{ userSettings.user_email || \'普通用户\' }}）并非系统管理员')
+    expect(view).toContain('placeholder="请输入后台管理密码原地提权"')
 
     // 访客未登录凭据引导
     expect(view).toContain('系统管理员访问凭证')
