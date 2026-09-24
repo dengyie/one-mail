@@ -99,12 +99,15 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
 
 export const getMetaOptions = async (c: Context<HonoCustomType>) => {
     const { where, params } = await resolveScopedEmailFilter(c, {});
-    const { results } = await c.env.DB.prepare(
-        `SELECT DISTINCT source, account_id, to_addr FROM emails WHERE ${where} LIMIT 200`
-    ).bind(...params).all<{ source: string | null; account_id: string | null; to_addr: string | null }>();
-    const rows = results || [];
-    const sources = [...new Set(rows.map((r) => r.source).filter(Boolean))];
-    const accounts = [...new Set(rows.map((r) => r.account_id).filter(Boolean))];
-    const to_addrs = [...new Set(rows.map((r) => r.to_addr).filter(Boolean))];
+    // 分别获取 source、account_id 与 to_addr：
+    // source 与 account_id 基数极小，独立 DISTINCT 避免被海量不同的 to_addr 挤出截断
+    const [sourceRes, accountRes, toAddrRes] = await Promise.all([
+        c.env.DB.prepare(`SELECT DISTINCT source FROM emails WHERE ${where} AND source IS NOT NULL LIMIT 50`).bind(...params).all<{ source: string }>(),
+        c.env.DB.prepare(`SELECT DISTINCT account_id FROM emails WHERE ${where} AND account_id IS NOT NULL LIMIT 100`).bind(...params).all<{ account_id: string }>(),
+        c.env.DB.prepare(`SELECT DISTINCT to_addr FROM emails WHERE ${where} AND to_addr IS NOT NULL LIMIT 200`).bind(...params).all<{ to_addr: string }>(),
+    ]);
+    const sources = (sourceRes.results || []).map((r) => r.source).filter(Boolean);
+    const accounts = (accountRes.results || []).map((r) => r.account_id).filter(Boolean);
+    const to_addrs = (toAddrRes.results || []).map((r) => r.to_addr).filter(Boolean);
     return c.json({ sources, accounts, to_addrs });
 };

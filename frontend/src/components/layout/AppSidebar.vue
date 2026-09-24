@@ -43,13 +43,12 @@ const {
 const hasUserSession = computed(() => Boolean(userJwt.value))
 const hasAddressSession = computed(() => Boolean(jwt.value))
 const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value)
-// 域名邮箱工作台仅供管理员使用：需具备管理员身份（管理员账号/管理密码/管理员 API Key/免密开关）
+// 域名邮箱工作台仅供管理员使用：需具备管理员身份（管理员账号/管理密码/管理员 API Key）
 const canUseDomainMailbox = computed(() =>
   Boolean(
     userSettings.value.is_admin ||
     adminAuth.value ||
-    (unifiedApiKey.value && !hasUserSession.value) ||
-    openSettings.value.disableAdminPasswordCheck
+    (unifiedApiKey.value && !hasUserSession.value)
   )
 )
 
@@ -156,7 +155,7 @@ const activeRoute = computed(() => {
       <div v-else class="space-y-5">
         
         <!-- 模块一：邮箱工作台 -->
-        <div v-if="hasAddressSession || hasUserSession" class="space-y-1">
+        <div v-if="hasAddressSession || hasUserSession || canUseDomainMailbox" class="space-y-1">
           <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
             邮箱工作台
           </div>
@@ -214,7 +213,7 @@ const activeRoute = computed(() => {
           </button>
 
           <button
-            v-if="showAdminPage && canUseDomainMailbox"
+            v-if="canUseDomainMailbox"
             @click="handleNavigate('/domain-mailbox')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'domain_mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"

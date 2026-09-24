@@ -91,36 +91,36 @@ const generateRandomPrefix = () => {
     name.value = `${word}${num}`
 }
 
-const copyAddress = async () => {
-    if (!fullAddress.value) return
+const copyText = async (text, successMsg = '已复制') => {
+    if (!text) return
     try {
-        await navigator.clipboard.writeText(fullAddress.value)
-        message.success('完整地址已复制')
+        if (typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text)
+            message.success(successMsg)
+        } else {
+            message.error('当前环境不支持剪贴板复制，请手动复制')
+        }
     } catch {
         message.error('复制失败，请手动选择复制')
     }
 }
 
-const copyText = async (text, successMsg = '已复制') => {
-    if (!text) return
-    try {
-        await navigator.clipboard.writeText(text)
-        message.success(successMsg)
-    } catch {
-        message.error('复制失败')
-    }
-}
+const copyAddress = () => copyText(fullAddress.value, '完整地址已复制')
 
 // 快速根据收件人地址切换/过滤
 const filterByAddress = (targetAddr) => {
     if (!targetAddr || typeof targetAddr !== 'string') return
     const match = targetAddr.match(/([^<@\s]+)@([^>@\s]+)/)
     if (!match) return
-    name.value = match[1].trim()
-    const d = match[2].trim().toLowerCase()
-    if (d && domainOptions.value.some(opt => opt.value === d)) {
-        domain.value = d
+    const targetPrefix = match[1].trim()
+    const targetDomain = match[2].trim().toLowerCase()
+    const matchedOption = domainOptions.value.find(opt => opt.value.toLowerCase() === targetDomain)
+    if (!matchedOption) {
+        message.warning('该邮箱后缀不属于当前站点已配置的域名')
+        return
     }
+    name.value = targetPrefix
+    domain.value = matchedOption.value
     addressOnly.value = true
 }
 
@@ -357,18 +357,18 @@ const ensureSettings = async () => {
     }
 }
 
-watch(domainOptions, (opts) => {
-    if (!domain.value && opts.length) domain.value = opts[0].value
-})
-
-const copyCode = async (code) => {
-    try {
-        await navigator.clipboard.writeText(code)
-        message.success('验证码已复制: ' + code)
-    } catch {
-        message.error('复制失败')
+const ensureValidDomain = (opts) => {
+    if (!opts || !opts.length) return
+    if (!domain.value || !opts.some(o => o.value === domain.value)) {
+        domain.value = opts[0].value
     }
 }
+
+watch(domainOptions, (opts) => {
+    ensureValidDomain(opts)
+}, { immediate: true })
+
+const copyCode = (code) => copyText(code, '验证码已复制: ' + code)
 
 const openDetail = (id) => {
     router.push({
@@ -411,9 +411,7 @@ onMounted(async () => {
     }
     if (componentDisposed) return
     if (!hasAccess.value) return
-    if (!domain.value && domainOptions.value.length) {
-        domain.value = domainOptions.value[0].value
-    }
+    ensureValidDomain(domainOptions.value)
     if (domain.value) {
         scheduleRefreshAll()
         startTimer()
@@ -422,9 +420,7 @@ onMounted(async () => {
 
 watch(hasAccess, (val) => {
     if (val && !componentDisposed) {
-        if (!domain.value && domainOptions.value.length) {
-            domain.value = domainOptions.value[0].value
-        }
+        ensureValidDomain(domainOptions.value)
         if (domain.value) {
             scheduleRefreshAll()
             startTimer()
