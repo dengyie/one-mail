@@ -417,6 +417,7 @@ export const api = {
             return unifiedAuthFetch(`/api/unified/verifcodes?${s.toString()}`);
         },
         markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+        markUnread: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/unread`, { method: 'POST' }),
         toggleStar: (id, isStarred) =>
             unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/star`, {
                 method: 'POST',

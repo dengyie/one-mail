@@ -14,13 +14,13 @@
 
     <n-empty v-else-if="error && !email" :description="error" class="py-20">
       <template #extra>
-        <n-button size="small" @click="router.push('/unified')">{{ t('detail.back') }}</n-button>
+        <n-button size="small" @click="handleBack">{{ t('detail.back') }}</n-button>
       </template>
     </n-empty>
 
     <template v-else-if="email">
       <div class="flex items-center justify-between">
-        <n-button size="small" quaternary @click="router.push('/unified')">
+        <n-button size="small" quaternary @click="handleBack">
           <template #icon><n-icon><ArrowBackRound /></n-icon></template>
           {{ t('detail.back') }}
         </n-button>
@@ -175,6 +175,7 @@ import { ArrowBackRound, ImageRound, RefreshRound } from '@vicons/material'
 import { sanitizeHtmlMail } from '../utils/sanitize-html-mail'
 import { blockRemoteContent } from '../utils/remote-content-policy'
 import { useScopedI18n } from '../i18n/app'
+import { getRouterPathWithLang } from '../utils'
 import { api } from '../api'
 import { useGlobalState } from '../store'
 import UnifiedMailboxActions from '../components/UnifiedMailboxActions.vue'
@@ -183,11 +184,24 @@ import StreamMarkdown from '../components/ai/StreamMarkdown.vue'
 import MessageActionToolbar from '../components/ai/MessageActionToolbar.vue'
 import { useMessage } from 'naive-ui'
 
-const { t } = useScopedI18n('unified')
+const { t, locale } = useScopedI18n('unified')
 const { userJwt, unifiedApiKey, autoLoadRemoteImages } = useGlobalState()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+
+const handleBack = () => {
+  const fromQuery = route.query.from
+  if (typeof fromQuery === 'string' && fromQuery.startsWith('/')) {
+    router.push(getRouterPathWithLang(fromQuery, locale.value))
+    return
+  }
+  if (typeof window !== 'undefined' && window.history?.state?.back) {
+    router.back()
+  } else {
+    router.push(getRouterPathWithLang('/unified', locale.value))
+  }
+}
 
 const email = ref(null)
 const loading = ref(true)
