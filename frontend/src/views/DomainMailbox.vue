@@ -22,6 +22,9 @@ const addressOnly = ref(false)
 const domainOptions = computed(() =>
     (openSettings.value.domains || []).map(d => ({ label: d.label || d.value, value: d.value }))
 )
+const noDomainsConfigured = computed(() =>
+    openSettings.value.fetched === true && domainOptions.value.length === 0
+)
 const fullAddress = computed(() => {
     const n = name.value.trim()
     return n && domain.value ? `${n}@${domain.value}` : ''
@@ -47,11 +50,14 @@ const listError = ref('')
 let listRequestSeq = 0
 let backgroundListPending = false
 
-const currentListParams = () => ({
+// 请求参数单源：刷新只由 listSignature（参数 JSON）变化驱动。
+// 全域模式下在名字输入框打字不改变参数，因此不会产生无效请求（防 watch 风暴）。
+const listParams = computed(() => ({
     domain: domain.value,
     limit: PAGE_SIZE,
     ...(addressOnly.value && fullAddress.value ? { to_addr: fullAddress.value } : {}),
-})
+}))
+const listSignature = computed(() => JSON.stringify(listParams.value))
 
 const loadList = async ({ background = false } = {}) => {
     if (!hasAccess.value || !domain.value) return
@@ -63,7 +69,7 @@ const loadList = async ({ background = false } = {}) => {
         loading.value = true
     }
     try {
-        const res = await api.unified.listEmails(currentListParams())
+        const res = await api.unified.listEmails(listParams.value)
         if (requestId !== listRequestSeq) return
         emails.value = res.results || []
         nextCursor.value = res.next_cursor || ''
@@ -85,9 +91,7 @@ const loadMore = async () => {
     if (!nextCursor.value || loadingMore.value) return
     loadingMore.value = true
     try {
-        const params = { ...currentListParams(), cursor: nextCursor.value }
-        delete params.offset
-        const res = await api.unified.listEmails(params)
+        const res = await api.unified.listEmails({ ...listParams.value, cursor: nextCursor.value })
         const rows = res.results || []
         const seen = new Set(emails.value.map(r => r.id))
         emails.value = [...emails.value, ...rows.filter(r => !seen.has(r.id))]
@@ -151,9 +155,25 @@ const refreshAll = () => {
     loadCodes()
 }
 
-watch([domain, addressOnly, fullAddress], () => {
+// 刷新只由请求参数签名驱动（见 listSignature），打字不触发无效刷新
+watch(listSignature, () => {
     nextCursor.value = ''
     refreshAll()
+})
+
+// openSettings 原本由 Index/UserLogin 等页面按需加载；本页自持该依赖，
+// 书签/新标签直达 /domain-mailbox 时也能拿到域名下拉并补选默认域
+const ensureSettings = async () => {
+    if (openSettings.value.fetched) return
+    try {
+        await api.getOpenSettings(message)
+    } catch {
+        // 拉取失败保持空下拉，页面会显示无域名提示，用户可重进页面重试
+    }
+}
+
+watch(domainOptions, (opts) => {
+    if (!domain.value && opts.length) domain.value = opts[0].value
 })
 
 const copyCode = async (code) => {
@@ -176,6 +196,7 @@ const fmtTime = (ms) => {
 }
 
 onMounted(async () => {
+    await ensureSettings()
     if (!domain.value && domainOptions.value.length) {
         domain.value = domainOptions.value[0].value
     }
@@ -196,6 +217,11 @@ onUnmounted(stopTimer)
     </n-alert>
 
     <template v-else>
+      <!-- 后端未返回任何域名（DOMAINS 未配置/为空）时的显式告警 -->
+      <n-alert v-if="noDomainsConfigured" type="warning" :show-icon="false" class="rounded-2xl">
+        后端没有返回可用域名——请检查 Worker 的 DOMAINS 环境变量配置
+      </n-alert>
+
       <!-- ① 地址工坊 -->
       <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 shadow-xs p-5 space-y-4">
         <div class="flex items-center justify-between">
