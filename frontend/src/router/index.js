@@ -108,11 +108,21 @@ const router = createRouter({
             alias: '/:lang/admin/database',
             component: () => import('../views/Admin.vue')
         },
-        {
-            path: '/admin/settings',
-            alias: '/:lang/admin/settings',
-            component: () => import('../views/Admin.vue')
-        },
+	        {
+	            path: '/admin/settings',
+	            alias: '/:lang/admin/settings',
+	            component: () => import('../views/Admin.vue')
+	        },
+	        {
+	            path: '/admin/sender-access',
+	            alias: '/:lang/admin/sender-access',
+	            component: () => import('../views/Admin.vue')
+	        },
+	        {
+	            path: '/admin/sendmail',
+	            alias: '/:lang/admin/sendmail',
+	            component: () => import('../views/Admin.vue')
+	        },
         {
             path: '/telegram_mail',
             alias: '/:lang/telegram_mail',

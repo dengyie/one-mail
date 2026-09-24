@@ -31,6 +31,7 @@ import MailWebhook from './admin/MailWebhook.vue'
 import WorkerConfig from './admin/WorkerConfig.vue'
 import IpBlacklistSettings from './admin/IpBlacklistSettings.vue'
 import AiExtractSettings from './admin/AiExtractSettings.vue'
+import AdminSendMail from './admin/SendMail.vue'
 
 const {
   adminAuth, showAdminAuth, adminTab, loading,
@@ -73,6 +74,8 @@ const currentAdminView = computed(() => {
   if (p.includes('/admin/webhook')) return 'webhook'
   if (p.includes('/admin/database')) return 'database'
   if (p.includes('/admin/settings')) return 'settings'
+  if (p.includes('/admin/sender-access')) return 'sender_access'
+  if (p.includes('/admin/sendmail')) return 'send_mail'
   if (p.includes('/admin/accounts')) return 'accounts'
   
   // 兼容根据 store adminTab 渲染
@@ -82,6 +85,8 @@ const currentAdminView = computed(() => {
   if (adminTab.value === 'webhook') return 'webhook'
   if (adminTab.value === 'database_manager') return 'database'
   if (adminTab.value === 'account_settings') return 'settings'
+  if (adminTab.value === 'sender_access') return 'sender_access'
+  if (adminTab.value === 'send_mail') return 'send_mail'
   return 'accounts'
 })
 
@@ -197,6 +202,28 @@ onMounted(async () => {
           </div>
         </div>
         <AccountSettings />
+      </div>
+
+      <!-- 发信权限与配额审批模块 -->
+      <div v-else-if="currentAdminView === 'sender_access'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">发信权限与配额管理</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">审核用户申请的发信权限、调整邮箱地址的发件额度与启用状态</p>
+          </div>
+        </div>
+        <SenderAccess />
+      </div>
+
+      <!-- 管理员直接外发邮件模块 -->
+      <div v-else-if="currentAdminView === 'send_mail'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">管理员专属外发邮件</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">以全站任意托管域名地址直接编辑并外发邮件，享有最高权限与无限额度</p>
+          </div>
+        </div>
+        <AdminSendMail />
       </div>
 
     </div>

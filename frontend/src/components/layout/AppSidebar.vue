@@ -42,6 +42,7 @@ const {
 
 const hasUserSession = computed(() => Boolean(userJwt.value))
 const hasAddressSession = computed(() => Boolean(jwt.value))
+const isAdmin = computed(() => Boolean(userSettings.value.is_admin || adminAuth.value))
 const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value)
 // 域名邮箱工作台仅供管理员使用：需具备管理员身份（管理员账号/管理密码/管理员 API Key）
 const canUseDomainMailbox = computed(() =>
@@ -102,6 +103,8 @@ const activeRoute = computed(() => {
   if (p.includes('/admin/webhook')) return 'admin_webhook'
   if (p.includes('/admin/database')) return 'admin_database'
   if (p.includes('/admin/settings')) return 'admin_settings'
+  if (p.includes('/admin/sender-access')) return 'admin_sender_access'
+  if (p.includes('/admin/sendmail')) return 'admin_send_mail'
   if (p.includes('/admin/accounts') || p.endsWith('/admin')) return 'admin_accounts'
   
   if (p.includes('/domain-mailbox')) return 'domain_mailbox'
@@ -170,7 +173,7 @@ const activeRoute = computed(() => {
           </button>
 
           <button
-            v-if="hasAddressSession && openSettings.enableSendMail"
+            v-if="(hasAddressSession || isAdmin) && openSettings.enableSendMail"
             @click="handleNavigate('/sendmail')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'sendmail' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
@@ -180,7 +183,7 @@ const activeRoute = computed(() => {
           </button>
 
           <button
-            v-if="hasAddressSession && openSettings.enableSendMail"
+            v-if="(hasAddressSession || isAdmin) && openSettings.enableSendMail"
             @click="handleNavigate('/sendbox')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'sendbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
@@ -337,6 +340,24 @@ const activeRoute = computed(() => {
           >
             <n-icon size="18" :component="DnsFilled" class="text-amber-400 shrink-0" />
             <span v-if="!collapsed" class="truncate">域名与全局策略</span>
+          </button>
+
+          <button
+            @click="handleNavigate('/admin/sender-access')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeRoute === 'admin_sender_access' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="VpnKeyFilled" class="text-amber-400 shrink-0" />
+            <span v-if="!collapsed" class="truncate">发信权限管理</span>
+          </button>
+
+          <button
+            @click="handleNavigate('/admin/sendmail')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeRoute === 'admin_send_mail' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="SendFilled" class="text-amber-400 shrink-0" />
+            <span v-if="!collapsed" class="truncate">管理员专属发信</span>
           </button>
         </div>
 

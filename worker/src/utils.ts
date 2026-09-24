@@ -42,6 +42,12 @@ export const getStringValue = (value: any): string => {
 export const getSplitStringListValue = (
     value: any, demiliter: string = ","
 ): string[] => {
+    if (Array.isArray(value)) {
+        return value
+            .map((item: any) => typeof item === "string" ? item : String(item))
+            .map((item: string) => item.trim())
+            .filter((item: string) => item.length > 0);
+    }
     const valueToSplit = getStringValue(value);
     return valueToSplit.split(demiliter)
         .map((item: string) => item.trim())

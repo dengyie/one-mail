@@ -1,7 +1,7 @@
 import { Context } from 'hono'
 
-import { CONSTANTS } from '../constants'
-import { getJsonSetting, getIntValue, getSplitStringListValue } from '../utils'
+import { CONSTANTS } from '../constants.ts'
+import { getJsonSetting, getIntValue, getSplitStringListValue, checkIsAdmin } from '../utils.ts'
 
 const ensureDefaultSendBalance = async (
     c: Context<HonoCustomType>,
@@ -51,8 +51,13 @@ export const getSendBalanceState = async (
     const noLimitSendAddressList = is_no_limit_send_balance ?
         [] : await getJsonSetting(c, CONSTANTS.NO_LIMIT_SEND_ADDRESS_LIST_KEY) || [];
     const isNoLimitSendAddress = !!noLimitSendAddressList?.includes(address);
-    const isNoLimitSender = is_no_limit_send_balance || isNoLimitSendAddress;
-    const needCheckBalance = !options?.isAdmin && !isNoLimitSender;
+    const isAdminRequest = Boolean(
+        options?.isAdmin
+        || await checkIsAdmin(c)
+        || (typeof user_role === "string" && Boolean(c.env.ADMIN_USER_ROLE) && c.env.ADMIN_USER_ROLE === user_role)
+    );
+    const isNoLimitSender = is_no_limit_send_balance || isNoLimitSendAddress || isAdminRequest;
+    const needCheckBalance = !isNoLimitSender;
     if (needCheckBalance && options?.initializeDefaultBalance !== false) {
         await ensureDefaultSendBalance(c, address);
     }
