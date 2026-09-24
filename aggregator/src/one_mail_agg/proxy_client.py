@@ -1,7 +1,10 @@
+import logging
 import socket
 import ssl
 import imaplib
 from imapclient import IMAPClient
+
+log = logging.getLogger("one-mail-agg")
 
 # 常见国内直连受阻的海外邮箱服务商（通过 pxed 本地 SOCKS5 1080 隧道出站）
 OVERSEAS_IMAP_HOSTS = {
@@ -13,6 +16,22 @@ OVERSEAS_IMAP_HOSTS = {
 }
 
 DEFAULT_SOCKS5_PROXY = ("127.0.0.1", 1080)
+
+
+def _maybe_send_id(client, account) -> None:
+    """按 RFC 2971 发送客户端 ID。
+
+    网易 163/126/yeah/Coremail 等国内服务商严格要求客户端在交互阶段发送 ID 命令，
+    否则在 SELECT INBOX 时会报错 `SELECT Unsafe Login`。只要服务端声明了 ID
+    capability，在建立连接后安全发送标准客户端标识。
+    """
+    if not hasattr(client, "has_capability") or not hasattr(client, "id_"):
+        return
+    try:
+        if client.has_capability("ID"):
+            client.id_({"name": "one-mail-agg", "version": "1.0.0", "vendor": "one-mail"})
+    except Exception as e:
+        log.warning("IMAP ID command failed for %s: %s", getattr(account, "host", ""), e)
 
 
 def create_socks5_socket(
@@ -89,6 +108,7 @@ def create_imap_client(
     timeout: float = 30.0,
     direct_client_cls=IMAPClient,
     proxied_client_cls=ProxiedIMAPClient,
+    send_id: bool = True,
 ) -> IMAPClient:
     """创建统一 IMAP transport；认证方式由调用方决定。
 
@@ -98,4 +118,7 @@ def create_imap_client(
     """
     host = str(account.host).strip()
     client_cls = proxied_client_cls if host.lower() in OVERSEAS_IMAP_HOSTS else direct_client_cls
-    return client_cls(host, port=account.port, ssl=account.use_ssl, timeout=timeout)
+    client = client_cls(host, port=account.port, ssl=account.use_ssl, timeout=timeout)
+    if send_id:
+        _maybe_send_id(client, account)
+    return client

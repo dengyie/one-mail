@@ -24,6 +24,7 @@ class AccountConfig:
     pop3_use_stls: bool = False
     initial_sync_limit: int = 50  # 首次同步时最多拉取最新 N 封（0 为不限/全量）
     user_managed: bool = False    # True = 用户自助账号（user_mail_accounts），RT 轮换回写 Worker
+    poll_interval: int | None = None  # 独立增量轮询间隔（秒）；若未配置则按协议使用安全默认值（POP3 600s / IMAP 300s）
 
     def __post_init__(self):
         # Keep protocol semantics identical for local config and Worker payloads.
@@ -37,6 +38,9 @@ class AccountConfig:
                 raise ValueError(f"{name} must be a boolean")
         if self.pop3_ssl is not None and not isinstance(self.pop3_ssl, bool):
             raise ValueError("pop3_ssl must be a boolean or null")
+        if self.poll_interval is not None:
+            if not isinstance(self.poll_interval, int) or isinstance(self.poll_interval, bool) or self.poll_interval <= 0:
+                raise ValueError("poll_interval must be a positive integer or null")
         # STLS starts plaintext and upgrades it; it cannot be combined with
         # POP3S, including the inherited use_ssl=True default.
         if self.pop3_use_stls and self.resolve_pop3_use_ssl():
