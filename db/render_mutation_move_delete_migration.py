@@ -11,9 +11,10 @@ and this script emits the canonical rebuild exactly once.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
+
+from wrangler_json import load_first_json_document
 
 
 BASE_COLUMNS = {
@@ -93,7 +94,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
-    payload = json.loads(args.schema_json.read_text(encoding="utf-8"))
+    payload = load_first_json_document(args.schema_json.read_text(encoding="utf-8"))
     existing = parse_remote_columns(payload)
     canonical = args.migration.read_text(encoding="utf-8")
     args.output.write_text(render_migration(canonical, existing), encoding="utf-8")

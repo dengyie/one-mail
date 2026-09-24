@@ -15,10 +15,11 @@ schema later; deployment must not turn first install into a migration failure.
 from __future__ import annotations
 
 import argparse
-import json
 import re
 from pathlib import Path
 from typing import Any
+
+from wrangler_json import load_first_json_document
 
 ALTER_RE = re.compile(
     r"^\s*ALTER\s+TABLE\s+emails\s+ADD\s+COLUMN\s+"
@@ -94,7 +95,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
-    payload = json.loads(args.schema_json.read_text(encoding="utf-8"))
+    payload = load_first_json_document(args.schema_json.read_text(encoding="utf-8"))
     existing = parse_remote_columns(payload)
     canonical = args.migration.read_text(encoding="utf-8")
     rendered = render_migration(canonical, existing)
