@@ -38,3 +38,28 @@ test("buildEmailFilters scopes user mail by bound recipient addresses", () => {
   assert.equal(f.where, "1=1 AND to_addr IN (?,?) AND is_read = 0");
   assert.deepEqual(f.params, ["alice@example.com", "bob@example.com"]);
 });
+
+test("buildEmailFilters domain filter pins cf_routing and suffix-matches to_addr", () => {
+  const f = buildEmailFilters({ domain: "Mangoqwq.com" });
+  assert.equal(f.where, "1=1 AND source = 'cf_routing' AND to_addr LIKE ?");
+  assert.deepEqual(f.params, ["%@mangoqwq.com"]);
+});
+
+test("buildEmailFilters domain filter combines with other clauses", () => {
+  const f = buildEmailFilters({ domain: "mangoqwq.com", unread: "1" });
+  assert.equal(f.where, "1=1 AND source = 'cf_routing' AND to_addr LIKE ? AND is_read = 0");
+  assert.deepEqual(f.params, ["%@mangoqwq.com"]);
+});
+
+test("buildEmailFilters rejects LIKE wildcard injection in domain", () => {
+  for (const bad of ["%.com", "mango_qwq.com", "mangoqwqcom", "a;b.com", "'"]) {
+    const f = buildEmailFilters({ domain: bad });
+    assert.equal(f.where, "1=0", `domain ${bad} must fail closed`);
+    assert.deepEqual(f.params, []);
+  }
+});
+
+test("buildEmailFilters domain must contain a dot", () => {
+  const f = buildEmailFilters({ domain: "localhost" });
+  assert.equal(f.where, "1=0");
+});
