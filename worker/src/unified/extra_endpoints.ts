@@ -1,6 +1,6 @@
 import { Context } from "hono";
-import { resolveScopedEmailFilter } from "./auth_scope";
-import { extractVerifCode } from "./verifcode";
+import { resolveScopedEmailFilter } from "./auth_scope.ts";
+import { extractVerifCode } from "./verifcode.ts";
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
 const intOr400 = (c: Context<HonoCustomType>, v: string | undefined, fallback: number): number => {

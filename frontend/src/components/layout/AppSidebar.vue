@@ -43,6 +43,9 @@ const {
 const hasUserSession = computed(() => Boolean(userJwt.value))
 const hasAddressSession = computed(() => Boolean(jwt.value))
 const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value)
+// 域名邮箱工作台的访问条件与页面 hasAccess 保持一致（用户 JWT 或 unified API key），
+// 纯 admin 密码会话（无用户凭据）不显示入口，避免点进去只有登录提示
+const canUseDomainMailbox = computed(() => hasUserSession.value || Boolean(unifiedApiKey.value))
 
 const handleNavigate = (path) => {
   router.push(getRouterPathWithLang(path, locale.value))
@@ -205,7 +208,7 @@ const activeRoute = computed(() => {
           </button>
 
           <button
-            v-if="showAdminPage"
+            v-if="showAdminPage && canUseDomainMailbox"
             @click="handleNavigate('/domain-mailbox')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'domain_mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
