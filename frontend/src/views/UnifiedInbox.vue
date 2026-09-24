@@ -371,7 +371,8 @@ const message = useMessage()
 
 const isLoggedIn = computed(() => !!userJwt.value?.trim())
 const hasKey = computed(() => !!unifiedApiKey.value?.trim())
-const hasAccess = computed(() => isLoggedIn.value || hasKey.value)
+const hasAdmin = computed(() => !!adminAuth.value?.trim())
+const hasAccess = computed(() => isLoggedIn.value || hasKey.value || hasAdmin.value)
 
 // Quick filter chips
 const quickFilterChips = ['📬 全部邮件', '⭐ 星标邮件', '🟢 仅未读', '🔑 提取验证码', '🔄 刷新列表']
@@ -611,6 +612,8 @@ let optionsGeneration = 0
 const authIdentity = computed(() => {
   const jwt = userJwt.value?.trim()
   if (jwt) return `user:${jwt}`
+  const admin = adminAuth.value?.trim()
+  if (admin) return `admin:${admin}`
   const key = unifiedApiKey.value?.trim()
   return key ? `key:${key}` : ''
 })

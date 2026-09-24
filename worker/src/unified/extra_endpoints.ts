@@ -64,7 +64,7 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
     const addr = typeof q.addr === "string" ? q.addr.trim() : "";
     // 鉴权作用域直接进入 SQL；addr 仍作为业务过滤条件单独绑定。
-    // domain 模式下全域过滤经 buildEmailFilters(q.domain) 注入（收窄语义，不构成越权）。
+    // domain 模式下全域过滤仅限管理员访问（经 resolveScopedEmailFilter 严格校验 isAdmin/role=admin，非管理员直接拒绝）。
     const { where, params } = await resolveScopedEmailFilter(c, { ...q, addr: undefined });
     let freshMs = 10 * 60 * 1000;                        // 默认 10 分钟内
     try { freshMs = intOr400(c, q.fresh, freshMs); } catch { return c.json({ error: "invalid fresh" }, 400); }

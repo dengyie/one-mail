@@ -14,7 +14,7 @@ export function buildEmailFilters(q: Record<string, string | undefined>): EmailF
     // to_addr：用户登录后的收件人地址归属过滤（用户 JWT 通道注入），同 inClause 多值模式
     if (q.to_addr)     inClause("to_addr", q.to_addr);
     // domain：域名邮箱全域视图（cf_routing 本站邮件，收件地址以 @domain 结尾）。
-    // 只做结果收窄：普通用户通道会在外层再 AND 上租户 ownership，传入不构成越权。
+    // 全域 catch-all 仅限管理员（外层 resolveScopedEmailFilter 强制校验 isAdmin/role=admin，非管理员直接 0=1 拒绝）。
     // 域名值限定合法字符集，杜绝 %/_ 等 LIKE 通配符造成全表匹配。
     if (q.domain) {
         const d = q.domain.trim().toLowerCase();

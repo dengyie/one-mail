@@ -39,7 +39,16 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('const listSignature = computed(() => JSON.stringify(listParams.value))')
     expect(view).toContain('watch(listSignature, () => {')
     expect(view).toContain("nextCursor.value = ''")
-    expect(view).toContain('refreshAll()')
+    expect(view).toContain('scheduleRefreshAll()')
+  })
+
+  it('coalesces concurrent and initial-mount refresh triggers via microtask scheduling', () => {
+    expect(view).toContain('let refreshScheduled = false')
+    expect(view).toContain('const scheduleRefreshAll = ({ background = false } = {}) => {')
+    expect(view).toContain('if (refreshScheduled) return')
+    expect(view).toContain('queueMicrotask(() => {')
+    expect(view).toContain('refreshScheduled = false')
+    expect(view).toContain('refreshAll({ background })')
   })
 
   it('implements debounced search query to eliminate keystroke-level network floods', () => {
@@ -83,11 +92,11 @@ describe('DomainMailbox view contract and performance optimizations', () => {
   })
 
   it('enforces strict admin authorization and guards against non-admin access', () => {
-    // 权限计算：严格限定管理员角色、管理密码、免密开关或纯 API Key
+    // 权限计算：严格限定管理员角色、管理密码、或纯 API Key（杜绝 disableAdminPasswordCheck 假阳性）
     expect(view).toContain('userSettings.value.is_admin === true')
     expect(view).toContain('adminAuth.value')
     expect(view).toContain('unifiedApiKey.value && !userJwt.value')
-    expect(view).toContain('openSettings.value.disableAdminPasswordCheck === true')
+    expect(view).not.toContain('openSettings.value.disableAdminPasswordCheck === true')
 
     // 三态判定：鉴权中、普通用户拦截、未登录访客提示
     expect(view).toContain('const isCheckingAuth = computed(')
