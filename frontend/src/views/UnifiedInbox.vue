@@ -462,6 +462,7 @@ let listRequestSeq = 0
 let codesRequestSeq = 0
 let statusRequestSeq = 0
 let backgroundListPending = false
+let backgroundCodesPending = false
 let autoRefreshTimer = null
 let componentDisposed = false
 const autoRefresh = ref(true)
@@ -518,7 +519,7 @@ const autoRefreshList = () => {
   if (!autoRefresh.value || !hasAccess.value) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   if (activeTab.value !== 'list') {
-    if (activeTab.value === 'codes' && codesAddr.value.trim() && !codesLoading.value) {
+    if (activeTab.value === 'codes' && codesAddr.value.trim() && !codesLoading.value && !backgroundCodesPending) {
       void loadCodes({ background: true })
     }
     return
@@ -699,6 +700,7 @@ const freshOptions = [
 ]
 
 const loadCodes = async ({ background = false } = {}) => {
+  if (background && backgroundCodesPending) return
   const requestId = ++codesRequestSeq
   const identity = authIdentity.value
   const isCurrent = () =>
@@ -715,7 +717,9 @@ const loadCodes = async ({ background = false } = {}) => {
     }
     return
   }
-  if (!background) {
+  if (background) {
+    backgroundCodesPending = true
+  } else {
     codesLoading.value = true
     codesError.value = ''
   }
@@ -734,6 +738,9 @@ const loadCodes = async ({ background = false } = {}) => {
       codes.value = []
     }
   } finally {
+    if (background) {
+      backgroundCodesPending = false
+    }
     if (isCurrent() && !background) codesLoading.value = false
   }
 }
@@ -926,6 +933,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   componentDisposed = true
+  backgroundListPending = false
+  backgroundCodesPending = false
   listRequestSeq += 1
   codesRequestSeq += 1
   statusRequestSeq += 1
