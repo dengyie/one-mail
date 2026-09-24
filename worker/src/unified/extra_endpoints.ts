@@ -45,6 +45,8 @@ function stripHtmlToText(html: string): string {
         .replace(/&#39;/gi, "'")
         .replace(/&lt;/gi, "<")
         .replace(/&gt;/gi, ">")
+        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
+        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
         .replace(/\s+/g, " ")
         .trim();
 }
@@ -57,6 +59,10 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     const { where, params } = await resolveScopedEmailFilter(c, { ...q, addr: undefined });
     let freshMs = 10 * 60 * 1000;                        // 默认 10 分钟内
     try { freshMs = intOr400(c, q.fresh, freshMs); } catch { return c.json({ error: "invalid fresh" }, 400); }
+    // 兼容自适应：若用户通过 API 传入较小数值（如 fresh=10 或 fresh=60），自动识别为分钟并换算为毫秒
+    if (freshMs > 0 && freshMs < 10000) {
+        freshMs = freshMs * 60 * 1000;
+    }
     const since = Date.now() - freshMs;
     // 优化投影：仅当 text_body 为空时截取前 8000 字符 HTML，避免 50 封邮件全量传输大体积 HTML 造成 D1 吞吐浪费与内存抖动
     const { results } = await c.env.DB.prepare(
