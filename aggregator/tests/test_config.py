@@ -23,9 +23,9 @@ def test_load_config_parses_accounts(tmp_path):
     assert c.accounts[0].folders == ["INBOX"]
 
 
-def test_load_config_missing_file_raises():
+def test_load_config_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
-        load_config("/nonexistent/x.json")
+        load_config(str(tmp_path / "missing.json"))
 
 
 def test_load_config_defaults_and_slash_strip(tmp_path):
