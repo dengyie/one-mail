@@ -37,7 +37,10 @@ const resetSendMailIdempotencyKey = () => {
 // 是发送前唯一的富文本防线；仍建议仅对自己的可见内容开启正文加载。
 const safePreviewContent = computed(() => sanitizeHtml(sendMailModel.value?.content || ''))
 
-const { settings, sendMailModel, userSettings, userJwt } = useGlobalState()
+const { settings, sendMailModel, userSettings, userJwt, adminAuth } = useGlobalState()
+
+const isAdmin = computed(() => Boolean(userSettings.value?.is_admin || adminAuth.value))
+const hasSendPermission = computed(() => isAdmin.value || (settings.value.send_balance && settings.value.send_balance > 0))
 
 const { t, locale } = useScopedI18n('views.index.SendMail')
 
@@ -211,7 +214,7 @@ onMounted(async () => {
             </div>
 
             <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm">
-                <div v-if="!settings.send_balance || settings.send_balance <= 0">
+                <div v-if="!hasSendPermission">
                     <n-alert type="warning" :show-icon="false" :bordered="false" class="rounded-2xl">
                         {{ t('requestAccessTip') }}
                         <n-button type="primary" tertiary @click="requestAccess" size="small" class="ml-2">{{ t('requestAccess')
@@ -221,7 +224,8 @@ onMounted(async () => {
                 </div>
                 <div v-else class="space-y-4">
                     <div class="flex items-center justify-between p-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-xs font-semibold text-blue-600 dark:text-blue-400">
-                        <span>{{ t('send_balance') }}: {{ settings.send_balance }} 封可用额度</span>
+                        <span v-if="isAdmin">{{ t('send_balance') }}: 管理员无限额度</span>
+                        <span v-else>{{ t('send_balance') }}: {{ settings.send_balance }} 封可用额度</span>
                         <n-button type="primary" :loading="sending" :disabled="sending" @click="send" class="rounded-xl px-5">
                             {{ t('send') }}
                         </n-button>
