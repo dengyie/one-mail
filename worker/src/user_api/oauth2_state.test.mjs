@@ -19,39 +19,37 @@ class MemoryD1 {
   }
 
   prepare(query) {
-    const db = this;
+    // 箭头函数保持 this 指向实例，避免 this 别名
     return {
-      bind(...params) {
-        return {
-          run() {
-            if (query.includes("DELETE FROM settings WHERE key LIKE")) {
-              const prefix = String(params[0]).slice(0, -1);
-              const now = Number(params[1]);
-              let changes = 0;
-              for (const [key, value] of db.map) {
-                if (key.startsWith(prefix) && Number(value) <= now) {
-                  db.map.delete(key);
-                  changes += 1;
-                }
+      bind: (...params) => ({
+        run: async () => {
+          if (query.includes("DELETE FROM settings WHERE key LIKE")) {
+            const prefix = String(params[0]).slice(0, -1);
+            const now = Number(params[1]);
+            let changes = 0;
+            for (const [key, value] of this.map) {
+              if (key.startsWith(prefix) && Number(value) <= now) {
+                this.map.delete(key);
+                changes += 1;
               }
-              return Promise.resolve({ meta: { changes } });
             }
-            if (query.includes("INSERT OR REPLACE INTO settings")) {
-              db.map.set(String(params[0]), String(params[1]));
-              return Promise.resolve({ meta: { changes: 1 } });
-            }
-            if (query.includes("DELETE FROM settings WHERE key = ?")) {
-              const key = String(params[0]);
-              const expires = Number(db.map.get(key));
-              const changes = Number.isFinite(expires) && expires > Number(params[1])
-                ? (db.map.delete(key), 1)
-                : 0;
-              return Promise.resolve({ meta: { changes } });
-            }
-            throw new Error("unexpected query");
-          },
-        };
-      },
+            return { meta: { changes } };
+          }
+          if (query.includes("INSERT OR REPLACE INTO settings")) {
+            this.map.set(String(params[0]), String(params[1]));
+            return { meta: { changes: 1 } };
+          }
+          if (query.includes("DELETE FROM settings WHERE key = ?")) {
+            const key = String(params[0]);
+            const expires = Number(this.map.get(key));
+            const changes = Number.isFinite(expires) && expires > Number(params[1])
+              ? (this.map.delete(key), 1)
+              : 0;
+            return { meta: { changes } };
+          }
+          throw new Error("unexpected query");
+        },
+      }),
     };
   }
 }
