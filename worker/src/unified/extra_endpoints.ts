@@ -55,15 +55,14 @@ function stripHtmlToText(html: string): string {
  * 获取指定邮箱近期的验证码列表。
  *
  * Query 参数说明：
- * - addr: 目标收件地址（与 domain 二选一）
- * - domain: 域名邮箱全域模式（如 domain=mangoqwq.com，取该域名下任意收件地址的验证码）
+ * - addr: 目标收件地址（可选，指定单地址过滤）
+ * - domain: 域名邮箱全域模式（可选，如 domain=mangoqwq.com，取该域名下任意收件地址的验证码）
+ * - 若 addr 与 domain 均未指定，则在当前鉴权租户范围内聚合全部可用邮箱的近期验证码（统一收件箱全量模式）
  * - fresh: 新鲜度窗口。支持毫秒（>=10000）或分钟（1~9999 自适应乘 60000，如 fresh=10 表示 10 分钟，fresh=1440 表示 24 小时）。默认 10 分钟。
  */
 export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
     const addr = typeof q.addr === "string" ? q.addr.trim() : "";
-    const domain = typeof q.domain === "string" ? q.domain.trim() : "";
-    if (!addr && !domain) return c.json({ error: "addr or domain required" }, 400);
     // 鉴权作用域直接进入 SQL；addr 仍作为业务过滤条件单独绑定。
     // domain 模式下全域过滤经 buildEmailFilters(q.domain) 注入（收窄语义，不构成越权）。
     const { where, params } = await resolveScopedEmailFilter(c, { ...q, addr: undefined });
@@ -80,7 +79,7 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
                 CASE WHEN (text_body IS NULL OR trim(text_body) = '')
                      THEN substr(html_body, 1, 8000)
                      ELSE '' END AS html_body,
-                from_addr, received_at FROM emails
+                from_addr, to_addr, received_at FROM emails
          WHERE ${where}${addr ? " AND to_addr = ?" : ""} AND received_at >= ? ORDER BY received_at DESC LIMIT 50`
     ).bind(...params, ...(addr ? [addr] : []), since).all();
     const out = (results as Record<string, unknown>[]).map((r) => {
@@ -89,6 +88,7 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
             : stripHtmlToText(typeof r.html_body === "string" ? r.html_body : "");
         return {
             from_addr: r.from_addr,
+            to_addr: r.to_addr,
             subject: r.subject,
             received_at: r.received_at,
             code: extractVerifCode(`${r.subject ?? ""}\n${text}`),

@@ -2991,8 +2991,8 @@ export const MESSAGE_REGISTRY = {
       "zh": "收件地址"
     },
     "codes.addrPlaceholder": {
-      "en": "e.g. xxx@example.com",
-      "zh": "例如 xxx@example.com"
+      "en": "Filter by address (optional, blank for all)",
+      "zh": "按邮箱过滤（选填，留空聚合全部）"
     },
     "codes.refresh": {
       "en": "Refresh",

@@ -32,6 +32,7 @@ const CODE_ROW = {
     text_body: "Use 123456 to sign in.",
     html_body: "",
     from_addr: "noreply@example.com",
+    to_addr: "user@mangoqwq.com",
     received_at: Date.now() - 1000,
 };
 
@@ -39,6 +40,7 @@ test("verifCodes domain mode suffix-matches whole domain and never pins to_addr"
     const { c, captured } = makeCtx({ domain: "Mangoqwq.com", fresh: "1440" }, [CODE_ROW]);
     const res = await verifCodes(c);
     assert.deepEqual(res.body.results.map((r) => r.code), ["123456"]);
+    assert.equal(res.body.results[0].to_addr, "user@mangoqwq.com");
     const { sql, binds } = captured();
     assert.ok(sql.includes("source = 'cf_routing'"), "domain mode must pin cf_routing");
     assert.ok(sql.includes("to_addr LIKE ?"), "domain mode must suffix-match to_addr");
@@ -51,16 +53,22 @@ test("verifCodes addr mode keeps exact to_addr pin", async () => {
     const { c, captured } = makeCtx({ addr: "user@mangoqwq.com" }, [CODE_ROW]);
     const res = await verifCodes(c);
     assert.deepEqual(res.body.results.map((r) => r.code), ["123456"]);
+    assert.equal(res.body.results[0].to_addr, "user@mangoqwq.com");
     const { sql, binds } = captured();
     assert.ok(sql.includes("AND to_addr = ?"), "addr mode must pin to_addr");
     assert.equal(binds[0], "user@mangoqwq.com");
 });
 
-test("verifCodes rejects requests with neither addr nor domain", async () => {
-    const { c, captured } = makeCtx({});
+test("verifCodes unified mode allows query without addr or domain, returning to_addr", async () => {
+    const { c, captured } = makeCtx({}, [CODE_ROW]);
     const res = await verifCodes(c);
-    assert.equal(res.status, 400);
-    assert.equal(captured(), null, "no DB round-trip without a filter target");
+    assert.equal(res.status, undefined);
+    assert.deepEqual(res.body.results.map((r) => r.code), ["123456"]);
+    assert.equal(res.body.results[0].to_addr, "user@mangoqwq.com");
+    const { sql, binds } = captured();
+    assert.ok(!sql.includes("AND to_addr = ?"), "unified mode must not pin to_addr");
+    assert.ok(!sql.includes("to_addr LIKE ?"), "unified mode must not filter by domain pattern");
+    assert.equal(typeof binds[binds.length - 1], "number", "last bind is the fresh-window since");
 });
 
 test("verifCodes domain wildcard injection fails closed", async () => {
