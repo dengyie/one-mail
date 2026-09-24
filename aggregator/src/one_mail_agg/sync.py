@@ -9,7 +9,7 @@ from .imap_base import fetch_new_messages
 from .normalize import normalize_message
 from .uploader import upload_emails
 from .pop3_source import connect_pop3, fetch_new_pop3_messages, uidl_to_key
-from .proxy_client import ProxiedIMAPClient, create_imap_client
+from .proxy_client import ProxiedIMAPClient, create_imap_client, _maybe_send_id
 from .folder_catalog import maybe_sync_imap_folder_catalog
 
 log = logging.getLogger("one-mail-agg")
@@ -53,6 +53,7 @@ def default_client_factory(account: AccountConfig) -> IMAPClient:
         proxied_client_cls=ProxiedIMAPClient,
     )
     c.login(account.username, account.password)
+    _maybe_send_id(c, account)
     return c
 
 

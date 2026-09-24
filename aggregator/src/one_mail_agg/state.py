@@ -177,6 +177,21 @@ class SyncState:
             self._save_locked()
             return float(skip_until)
 
+    def record_rate_limit_backoff(self, account_id: str,
+                                  backoff_sec: int = 1800,
+                                  now: float | None = None) -> float:
+        """针对服务端显式频控/流量超限错误（如网易 163 登录太频繁、POP 流量超限等），立即进入长退避。"""
+        now = float(now) if now is not None else time.time()
+        with self._lock:
+            pa = dict(self._data["per_account"].get(account_id) or {})
+            n = int(pa.get("fail_count", 0) or 0) + 1
+            skip_until = max(float(pa.get("skip_until", 0) or 0), now + backoff_sec)
+            pa["fail_count"] = n
+            pa["skip_until"] = skip_until
+            self._data["per_account"][account_id] = pa
+            self._save_locked()
+            return float(skip_until)
+
     def record_success(self, account_id: str) -> None:
         with self._lock:
             if account_id not in self._data["per_account"]:
