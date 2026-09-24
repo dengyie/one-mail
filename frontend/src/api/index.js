@@ -232,7 +232,7 @@ const getOpenSettings = async (message, notification) => {
                 || openSettings.value.alwaysShowAnnouncement)
         ) {
             announcement.value = openSettings.value.announcement;
-            notification.info({
+            notification?.info?.({
                 content: () => {
                     return h("div", {
                         innerHTML: sanitizeHtml(announcement.value)
@@ -241,7 +241,7 @@ const getOpenSettings = async (message, notification) => {
             });
         }
     } catch (error) {
-        message.error(error.message || "error");
+        message?.error?.(error.message || "error");
     } finally {
         openSettings.value.fetched = true;
     }
