@@ -517,6 +517,40 @@ def test_sync_explicit_pop3_goes_directly(tmp_path, monkeypatch):
     assert pop_f.made == 1
 
 
+def test_sync_gmail_account_never_falls_back_to_pop3(tmp_path, monkeypatch):
+    """Gmail 账号无论在 OSError 还是 IMAPClientError 下均绝不降级到 POP3。"""
+    pop_f = _PopFactory([])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = AccountConfig(id="gmail-main", source="imap_gmail", host="imap.gmail.com", port=993,
+                        username="user@gmail.com", password="pw", folders=["INBOX"],
+                        protocol="auto", pop3_host="pop.gmail.com", pop3_port=995, pop3_ssl=True)
+
+    def failing_factory(_account):
+        raise OSError("network timeout")
+
+    with pytest.raises(OSError, match="network timeout"):
+        sync_mod.sync_account(failing_factory, _cfg([acc]), acc, state)
+    assert pop_f.made == 0
+    assert not state.is_fallback_pinned("gmail-main")
+
+
+def test_sync_gmail_account_clears_stale_fallback_pin(tmp_path, monkeypatch):
+    """历史误被 pin 到 POP3 的 Gmail 账号在同步时必须自动解开 pin 并尝试 IMAP。"""
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_fallback_pinned("gmail-main", True)
+    acc = AccountConfig(id="gmail-main", source="imap_gmail", host="imap.gmail.com", port=993,
+                        username="user@gmail.com", password="pw", folders=["INBOX"],
+                        protocol="auto", pop3_host="pop.gmail.com", pop3_port=995, pop3_ssl=True)
+
+    client = _ImapMsgs([])
+    res = sync_mod.sync_account(lambda _a: client, _cfg([acc]), acc, state)
+    assert res["protocol"] == "imap"
+    assert not state.is_fallback_pinned("gmail-main")
+
+
+
 def test_sync_oauth_failure_does_not_fallback(tmp_path, monkeypatch):
     """OAuth 账号没有可复用的 POP3 密码：IMAP 失败不能降级。"""
     calls = _stub_upload(monkeypatch)

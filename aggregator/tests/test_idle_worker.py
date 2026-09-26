@@ -206,7 +206,7 @@ def test_repeated_idle_failures_enter_polling_cooldown(tmp_path, monkeypatch):
     assert waits == [2, 4, 8, 16]
     fingerprint, retry_at = _idle_retry_after[acc.id]
     assert fingerprint == _idle_fingerprint(acc)
-    assert retry_at == 400.0
+    assert retry_at == 100.0 + idle_mod._IDLE_RETRY_COOLDOWN_SECONDS
 
 
 def test_cooldown_skips_worker_then_retries_after_expiry(tmp_path, monkeypatch):
@@ -370,6 +370,32 @@ def test_is_msa_like_false_for_normal_account():
         username="u@qq.com", password="pwd",
     )
     assert _is_msa_like(acc) is False
+
+
+def test_ensure_idle_workers_recovers_pinned_gmail_account(tmp_path, monkeypatch):
+    """历史被误 pin 到 POP3 的 Gmail 账号在 ensure_idle_workers 中自动解开 pin 并拉起 IDLE。"""
+    acc = AccountConfig(
+        id="gmail-1", source="imap_gmail", host="imap.gmail.com", port=993,
+        username="u@gmail.com", password="pwd", protocol="auto"
+    )
+    state = SyncState(str(tmp_path / "state.json"))
+    state.set_fallback_pinned(acc.id, True)
+
+    started = []
+    class _FakeWorker:
+        def __init__(self, config, account, state, client_factory): self.account = account
+        def start(self): started.append(self.account.id)
+        def is_alive(self): return True
+        def is_stopped(self): return False
+        def stop(self): pass
+
+    monkeypatch.setattr(idle_mod, "ImapIdleWorker", _FakeWorker)
+    ensure_idle_workers(_config(tmp_path), state, [acc])
+
+    assert not state.is_fallback_pinned(acc.id)
+    assert started == [acc.id]
+    assert acc.id in _active_idle_workers
+
 
 
 def test_resolve_client_factory_msa_failure_logs_reauth(caplog):
