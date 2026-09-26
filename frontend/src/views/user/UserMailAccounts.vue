@@ -23,12 +23,12 @@ const submitting = ref(false)
 const sourceOptions = computed(() => ([
     { label: t('gmail'), value: 'gmail', source: 'imap_gmail', host: 'imap.gmail.com', port: 993, pop3Host: 'pop.gmail.com', pop3Port: 995, protocol: 'imap' },
     { label: t('outlook'), value: 'outlook', source: 'imap_outlook', host: 'outlook.office365.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
-    { label: t('qq'), value: 'qq', source: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('qq'), value: 'qq', source: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995, protocol: 'imap' },
     { label: t('163'), value: '163', source: 'imap_163', host: 'imap.163.com', port: 993, pop3Host: 'pop.163.com', pop3Port: 995, protocol: 'auto' },
     { label: '网易 126', value: '126', source: 'imap_custom', host: 'imap.126.com', port: 993, pop3Host: 'pop.126.com', pop3Port: 995, protocol: 'auto' },
     { label: 'iCloud Mail', value: 'icloud', source: 'imap_custom', host: 'imap.mail.me.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
-    { label: 'Yahoo Mail', value: 'yahoo', source: 'imap_custom', host: 'imap.mail.yahoo.com', port: 993, pop3Host: 'pop.mail.yahoo.com', pop3Port: 995, protocol: 'auto' },
-    { label: t('custom'), value: 'custom', source: 'imap_custom', host: '', port: 993, pop3Host: '', pop3Port: 995, protocol: 'auto' },
+    { label: 'Yahoo Mail', value: 'yahoo', source: 'imap_custom', host: 'imap.mail.yahoo.com', port: 993, pop3Host: 'pop.mail.yahoo.com', pop3Port: 995, protocol: 'imap' },
+    { label: t('custom'), value: 'custom', source: 'imap_custom', host: '', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
 ]))
 const protocolOptions = computed(() => ([
     { label: t('auto') || '自动', value: 'auto' },

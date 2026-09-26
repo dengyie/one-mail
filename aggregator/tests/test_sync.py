@@ -550,6 +550,48 @@ def test_sync_gmail_account_clears_stale_fallback_pin(tmp_path, monkeypatch):
     assert not state.is_fallback_pinned("gmail-main")
 
 
+def test_sync_qq_and_overseas_accounts_never_fallback_to_pop3(tmp_path, monkeypatch):
+    """QQ 邮箱与海外邮箱在 OSError 下绝不降级到 POP3，保护 IDLE 长连接与多文件夹能力。"""
+    pop_f = _PopFactory([])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+    state = SyncState(str(tmp_path / "st.json"))
+
+    for acc_id, source, host, pop3_host in [
+        ("qq-1", "imap_qq", "imap.qq.com", "pop.qq.com"),
+        ("yahoo-1", "imap_custom", "imap.mail.yahoo.com", "pop.mail.yahoo.com"),
+    ]:
+        acc = AccountConfig(id=acc_id, source=source, host=host, port=993,
+                            username="user@example.com", password="pw", folders=["INBOX"],
+                            protocol="auto", pop3_host=pop3_host, pop3_port=995, pop3_ssl=True)
+
+        def failing_factory(_account):
+            raise OSError("socket reset")
+
+        with pytest.raises(OSError, match="socket reset"):
+            sync_mod.sync_account(failing_factory, _cfg([acc]), acc, state)
+        assert pop_f.made == 0
+        assert not state.is_fallback_pinned(acc_id)
+
+
+def test_sync_qq_and_overseas_accounts_clear_stale_fallback_pin(tmp_path, monkeypatch):
+    """历史残留误 pin 的 QQ/海外邮箱在同步时必须自动自愈解除 pin。"""
+    _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+
+    for acc_id, source, host in [
+        ("qq-1", "imap_qq", "imap.qq.com"),
+        ("yahoo-1", "imap_custom", "imap.mail.yahoo.com"),
+    ]:
+        state.set_fallback_pinned(acc_id, True)
+        acc = AccountConfig(id=acc_id, source=source, host=host, port=993,
+                            username="user@example.com", password="pw", folders=["INBOX"],
+                            protocol="auto")
+        client = _ImapMsgs([])
+        res = sync_mod.sync_account(lambda _a: client, _cfg([acc]), acc, state)
+        assert res["protocol"] == "imap"
+        assert not state.is_fallback_pinned(acc_id)
+
+
 
 def test_sync_oauth_failure_does_not_fallback(tmp_path, monkeypatch):
     """OAuth 账号没有可复用的 POP3 密码：IMAP 失败不能降级。"""

@@ -58,6 +58,21 @@ def test_account_poll_interval_defaults_and_custom(tmp_path):
                                 username="u@163.com", password="p", protocol="imap")
     assert get_account_poll_interval(imap163_acc, st) == 300
 
+    # 126 IMAP 默认 300s（防网易频控）
+    imap126_acc = AccountConfig(id="i126", source="imap_custom", host="imap.126.com", port=993,
+                                username="u@126.com", password="p", protocol="imap")
+    assert get_account_poll_interval(imap126_acc, st) == 300
+
+    # Gmail / QQ / Outlook / 海外邮箱若残留 pin，不施加 600s 惩罚
+    for acc in [
+        AccountConfig(id="g", source="imap_gmail", host="imap.gmail.com", port=993, username="u", password="p"),
+        AccountConfig(id="q", source="imap_qq", host="imap.qq.com", port=993, username="u", password="p"),
+        AccountConfig(id="o", source="imap_outlook", host="outlook.office365.com", port=993, username="u", password="p"),
+        AccountConfig(id="y", source="imap_custom", host="imap.mail.yahoo.com", port=993, username="u", password="p"),
+    ]:
+        st.set_fallback_pinned(acc.id, True)
+        assert get_account_poll_interval(acc, st) == 60
+
     # 自定义配置优先
     custom_acc = AccountConfig(id="c1", source="imap_custom", host="imap.example.com", port=993,
                                username="u", password="p", poll_interval=120)

@@ -19,7 +19,7 @@ import { processItem, revokeProcessedItemUrls } from '../../utils/email-parser'
 import MailContentRenderer from '../../components/MailContentRenderer.vue'
 import AddressSelect from '../../components/AddressSelect.vue'
 
-const { jwt, settings, useSimpleIndex, showAddressCredential, openSettings, loading } = useGlobalState()
+const { jwt, settings, useSimpleIndex, showAddressCredential, openSettings, loading, configAutoRefreshInterval } = useGlobalState()
 const message = useMessage()
 
 // 邮件数据
@@ -27,10 +27,14 @@ const currentPage = ref(1)
 const totalCount = ref(0)
 const currentMail = ref(null)
 const showAccountSettingsCard = ref(false)
-const currentAutoRefreshInterval = ref(60)
+const currentAutoRefreshInterval = ref(Number(configAutoRefreshInterval.value) || 10)
 const timer = ref(null)
 let mailRequestSeq = 0;
 let simpleMounted = false;
+
+watch(configAutoRefreshInterval, (newInterval) => {
+    currentAutoRefreshInterval.value = Number(newInterval) || 10
+})
 
 const { t } = useScopedI18n('views.index.SimpleIndex')
 
@@ -96,7 +100,7 @@ const refreshMails = async () => {
     if (loading.value) return
     currentPage.value = 1
     showAccountSettingsCard.value = false
-    currentAutoRefreshInterval.value = 60
+    currentAutoRefreshInterval.value = Number(configAutoRefreshInterval.value) || 10
     await fetchMails()
     message.success(t('refreshSuccess'))
 }
@@ -142,7 +146,7 @@ onMounted(async () => {
     // 启动自动刷新
     timer.value = setInterval(async () => {
         if (!isFirstPage.value) {
-            currentAutoRefreshInterval.value = 60
+            currentAutoRefreshInterval.value = Number(configAutoRefreshInterval.value) || 10
             return
         }
 

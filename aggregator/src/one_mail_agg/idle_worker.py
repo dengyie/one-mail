@@ -10,6 +10,7 @@ from .state import SyncState
 from .sync import sync_imap, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .remote_accounts import report_sync_status
+from .proxy_client import OVERSEAS_IMAP_HOSTS
 
 log = logging.getLogger("one-mail-agg")
 
@@ -260,8 +261,10 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
         for acc in accounts:
             if acc.source == "graph_outlook" or acc.protocol == "pop3":
                 continue
-            # 自愈修复：若为 Gmail 且历史曾被误 pinned 到 POP3，立即解除 pin 恢复实时推送
-            if acc.source == "imap_gmail" and state.is_fallback_pinned(acc.id):
+            # 自愈修复：若为 Gmail / QQ / Outlook / 海外邮箱且历史曾被误 pinned 到 POP3，立即解除 pin 恢复实时推送
+            if (acc.source in ("imap_gmail", "imap_qq", "imap_outlook")
+                    or str(acc.host).lower() in OVERSEAS_IMAP_HOSTS
+                    or acc.protocol == "imap") and state.is_fallback_pinned(acc.id):
                 state.set_fallback_pinned(acc.id, False)
             if state.is_fallback_pinned(acc.id):
                 continue
