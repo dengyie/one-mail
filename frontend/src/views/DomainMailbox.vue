@@ -17,6 +17,7 @@ const {
     unifiedApiKey,
     adminAuth,
     userSettings,
+    configAutoRefreshInterval,
 } = useGlobalState()
 const router = useRouter()
 const message = useMessage()
@@ -294,9 +295,13 @@ const loadCodes = async ({ background = false } = {}) => {
 }
 
 // ---- 自动刷新 & 后台可见性防御 ----
-const AUTO_REFRESH_MS = 30000
 const autoRefresh = ref(true)
 let timer = null
+
+const getRefreshIntervalMs = () => {
+    const s = Number(configAutoRefreshInterval?.value) || 10
+    return Math.max(5000, s * 1000)
+}
 
 const startTimer = () => {
     stopTimer()
@@ -308,8 +313,14 @@ const startTimer = () => {
             loadList({ background: true })
             loadCodes({ background: true })
         }
-    }, AUTO_REFRESH_MS)
+    }, getRefreshIntervalMs())
 }
+
+watch(configAutoRefreshInterval, () => {
+    if (timer) {
+        startTimer()
+    }
+})
 
 const stopTimer = () => {
     if (timer) { clearInterval(timer); timer = null }

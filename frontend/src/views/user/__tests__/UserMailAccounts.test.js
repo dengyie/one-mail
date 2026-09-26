@@ -56,8 +56,10 @@ describe('external mailbox provider form contract', () => {
         expect(view).toContain("protocol: 'imap'")
     })
 
-    it('sets Gmail preset and emptyForm protocol default to imap', () => {
+    it('sets Gmail, QQ, and Yahoo preset protocol defaults to imap', () => {
         expect(view).toContain("source: 'imap_gmail', host: 'imap.gmail.com', port: 993, pop3Host: 'pop.gmail.com', pop3Port: 995, protocol: 'imap'")
+        expect(view).toContain("source: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995, protocol: 'imap'")
+        expect(view).toContain("source: 'imap_custom', host: 'imap.mail.yahoo.com', port: 993, pop3Host: 'pop.mail.yahoo.com', pop3Port: 995, protocol: 'imap'")
         expect(view).toContain("provider: 'gmail', label: '', source: 'imap_gmail', protocol: 'imap'")
     })
 

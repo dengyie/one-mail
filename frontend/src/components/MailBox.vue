@@ -180,8 +180,8 @@ const setupAutoRefresh = async (autoRefresh) => {
   }
 }
 
-watch(autoRefresh, async (autoRefresh, old) => {
-  setupAutoRefresh(autoRefresh)
+watch([autoRefresh, configAutoRefreshInterval], async ([autoRefreshVal]) => {
+  setupAutoRefresh(autoRefreshVal)
 }, { immediate: true })
 
 watch([page, pageSize], async ([page, pageSize], [oldPage, oldPageSize]) => {

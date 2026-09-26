@@ -145,4 +145,11 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('if (!domain.value || !opts.some(o => o.value === domain.value)) {')
     expect(view).toContain('domain.value = opts[0].value')
   })
+
+  it('binds auto-refresh interval to global configAutoRefreshInterval', () => {
+    expect(view).toContain('configAutoRefreshInterval')
+    expect(view).toContain('const getRefreshIntervalMs = () =>')
+    expect(view).toContain('Math.max(5000, s * 1000)')
+    expect(view).toContain('watch(configAutoRefreshInterval, () =>')
+  })
 })

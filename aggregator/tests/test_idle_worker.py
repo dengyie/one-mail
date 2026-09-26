@@ -397,6 +397,36 @@ def test_ensure_idle_workers_recovers_pinned_gmail_account(tmp_path, monkeypatch
     assert acc.id in _active_idle_workers
 
 
+def test_ensure_idle_workers_recovers_pinned_qq_and_overseas_accounts(tmp_path, monkeypatch):
+    """历史误 pin 的 QQ 与海外邮箱（如 Yahoo）在 ensure_idle_workers 中自动解开 pin 并启动 IDLE。"""
+    qq_acc = AccountConfig(
+        id="qq-1", source="imap_qq", host="imap.qq.com", port=993,
+        username="u@qq.com", password="pwd", protocol="auto"
+    )
+    yahoo_acc = AccountConfig(
+        id="yahoo-1", source="imap_custom", host="imap.mail.yahoo.com", port=993,
+        username="u@yahoo.com", password="pwd", protocol="auto"
+    )
+    state = SyncState(str(tmp_path / "state.json"))
+    state.set_fallback_pinned(qq_acc.id, True)
+    state.set_fallback_pinned(yahoo_acc.id, True)
+
+    started = []
+    class _FakeWorker:
+        def __init__(self, config, account, state, client_factory): self.account = account
+        def start(self): started.append(self.account.id)
+        def is_alive(self): return True
+        def is_stopped(self): return False
+        def stop(self): pass
+
+    monkeypatch.setattr(idle_mod, "ImapIdleWorker", _FakeWorker)
+    ensure_idle_workers(_config(tmp_path), state, [qq_acc, yahoo_acc])
+
+    assert not state.is_fallback_pinned(qq_acc.id)
+    assert not state.is_fallback_pinned(yahoo_acc.id)
+    assert set(started) == {qq_acc.id, yahoo_acc.id}
+
+
 
 def test_resolve_client_factory_msa_failure_logs_reauth(caplog):
     with caplog.at_level(logging.ERROR, logger="one-mail-agg"):
