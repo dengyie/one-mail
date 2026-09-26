@@ -21,7 +21,7 @@ const submitting = ref(false)
 // provider-specific backend branches. Outlook is IMAP-only here because Microsoft
 // Basic Auth is disabled; its credential is supplied through the existing OAuth JSON.
 const sourceOptions = computed(() => ([
-    { label: t('gmail'), value: 'gmail', source: 'imap_gmail', host: 'imap.gmail.com', port: 993, pop3Host: 'pop.gmail.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('gmail'), value: 'gmail', source: 'imap_gmail', host: 'imap.gmail.com', port: 993, pop3Host: 'pop.gmail.com', pop3Port: 995, protocol: 'imap' },
     { label: t('outlook'), value: 'outlook', source: 'imap_outlook', host: 'outlook.office365.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
     { label: t('qq'), value: 'qq', source: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995, protocol: 'auto' },
     { label: t('163'), value: '163', source: 'imap_163', host: 'imap.163.com', port: 993, pop3Host: 'pop.163.com', pop3Port: 995, protocol: 'auto' },
@@ -40,7 +40,7 @@ const form = ref(emptyForm())
 
 function emptyForm() {
     return {
-        provider: 'gmail', label: '', source: 'imap_gmail', protocol: 'auto',
+        provider: 'gmail', label: '', source: 'imap_gmail', protocol: 'imap',
         host: 'imap.gmail.com', port: 993, use_ssl: true,
         pop3_host: 'pop.gmail.com', pop3_port: 995, pop3_ssl: true, pop3_use_stls: false,
         username: '', cred: '', oauth_json: '', folders: ''

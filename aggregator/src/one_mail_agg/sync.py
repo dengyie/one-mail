@@ -38,6 +38,7 @@ def _safe_auto_pop3_fallback(account: AccountConfig, state: SyncState,
     """
     return (
         account.protocol == "auto"
+        and account.source != "imap_gmail"
         and account.oauth is None
         and _only_inbox(account)
         and not state.has_imap_history(account.id)
@@ -157,9 +158,13 @@ def sync_account(client_factory, config: Config, account: AccountConfig, state: 
     if state.is_fallback_pinned(account.id):
         # Pin 只属于 auto + 单 INBOX 配置。用户显式切回 IMAP，或后来增加了
         # 文件夹，都必须解除旧 pin，而不是被历史状态永久劫持到 POP3。
-        if account.protocol == "auto" and _only_inbox(account):
+        # 修复：Gmail 绝不应被锁定在 POP3（若历史有被误 pin 的 Gmail 账号，在此自动解除恢复 IMAP）。
+        if account.source == "imap_gmail":
+            state.set_fallback_pinned(account.id, False)
+        elif account.protocol == "auto" and _only_inbox(account):
             return sync_pop3(account, config, state)
-        state.set_fallback_pinned(account.id, False)
+        else:
+            state.set_fallback_pinned(account.id, False)
 
     client = None
     try:

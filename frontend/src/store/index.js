@@ -110,7 +110,11 @@ export const useGlobalState = createGlobalState(
         const useUTCDate = useStorage('useUTCDate', false);
         const autoLoadRemoteImages = useStorage('autoLoadRemoteImages', false);
         const autoRefresh = useStorage('autoRefresh', false);
-        const configAutoRefreshInterval = useStorage("configAutoRefreshInterval", 60);
+        const configAutoRefreshInterval = useStorage("configAutoRefreshInterval", 10);
+        // 若本地存储中仍保留旧版本的 60s 默认值，平滑迁移至 10s 快速轮询
+        if (configAutoRefreshInterval.value === 60) {
+            configAutoRefreshInterval.value = 10;
+        }
         const userOpenSettings = ref({
             fetched: false,
             enable: false,

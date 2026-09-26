@@ -119,8 +119,8 @@ const { t } = useScopedI18n('views.common.Appearance')
             </h3>
 
             <n-form-item-row :label="t('autoRefreshInterval')">
-                <n-slider v-model:value="configAutoRefreshInterval" :min="30" :max="300" :step="1" :marks="{
-                    60: '60s', 120: '120s', 180: '180s', 240: '240s'
+                <n-slider v-model:value="configAutoRefreshInterval" :min="5" :max="120" :step="1" :marks="{
+                    5: '5s', 10: '10s', 30: '30s', 60: '60s'
                 }" />
             </n-form-item-row>
         </div>

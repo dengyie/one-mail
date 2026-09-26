@@ -61,6 +61,8 @@ def get_account_poll_interval(account, state: SyncState, default_poll_interval: 
     if getattr(account, "poll_interval", None) is not None and account.poll_interval > 0:
         return account.poll_interval
     if getattr(account, "protocol", "auto") == "pop3" or state.is_fallback_pinned(account.id):
+        if getattr(account, "source", "") == "imap_gmail":
+            return max(default_poll_interval, 60)
         return 600
     if getattr(account, "source", "") in ("graph_outlook", "imap_163"):
         return 300
