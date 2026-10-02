@@ -1,9 +1,22 @@
+import threading
+import time
+
 import requests
 from imapclient import IMAPClient
 
 from .config import AccountConfig
 from .proxy_client import create_imap_client
 from .token_store import make_rotated_callback, redemption_lock, refresh_rt_from_config
+
+# MSA 个人号的 refresh_token 每次兑换都轮换。服务端按固定会话时长掐掉 IMAP
+# 后，若每次重连都重新兑换，会把刷新令牌消耗得远快于访问令牌的真实寿命。
+# 缓存键是 (client_id, 兑换后的 refresh_token)：同一应用下的多张卡不会串号，
+# 其他路径轮换过 RT 后旧键自然失效。
+_MSA_REFRESH_SKEW_SECONDS = 300
+_MSA_DEFAULT_TTL_SECONDS = 3600
+_MSA_MIN_TTL_SECONDS = 60
+_msa_access_cache: dict[tuple[str, str], tuple[str, float]] = {}
+_msa_cache_lock = threading.Lock()
 
 
 def _handle_rotated(oauth: dict, data: dict, on_rotated) -> None:
@@ -49,15 +62,37 @@ def outlook_access_token(oauth: dict, on_rotated=None) -> str:
     return data["access_token"]
 
 
-def msa_access_token(oauth: dict, on_rotated=None) -> str:
-    """Personal Microsoft accounts (Hotmail / Outlook.com / Live).
+def _msa_cache_key(client_id, refresh_token) -> tuple[str, str]:
+    return (str(client_id or ""), str(refresh_token or ""))
 
-    Consumer MSA uses the /consumers tenant with a public client. A
-    client_secret is NOT required (and usually not present). If one happens to
-    be configured it is forwarded as-is — harmless and compatible.
 
-    ⚠️ 响应必然携带轮换后的新 refresh_token：on_rotated 落盘是账号存活的前提。
+def cached_msa_access_token(oauth: dict, on_rotated=None, now: float | None = None) -> str:
+    """复用尚未到期的 MSA access_token，避免每次 IMAP 重连都轮换 refresh_token。
+
+    命中条件是调用方当前持有的 refresh_token 与缓存键一致且未到提前刷新窗口。
+    兑换成功后改记在轮换后的 RT 上，下次重连回读到新 RT 即可命中。
     """
+    current_rt = oauth.get("refresh_token")
+    key = _msa_cache_key(oauth.get("client_id"), current_rt)
+    current = now if now is not None else time.monotonic()
+    with _msa_cache_lock:
+        cached = _msa_access_cache.get(key)
+        if cached is not None and cached[1] > current:
+            return cached[0]
+    access, new_rt, expires_in = _redeem_msa_access_token(oauth, on_rotated)
+    ttl = expires_in if isinstance(expires_in, (int, float)) and expires_in > 0 else _MSA_DEFAULT_TTL_SECONDS
+    deadline = current + max(_MSA_MIN_TTL_SECONDS, float(ttl) - _MSA_REFRESH_SKEW_SECONDS)
+    stored_rt = new_rt or current_rt
+    stored_key = _msa_cache_key(oauth.get("client_id"), stored_rt)
+    with _msa_cache_lock:
+        if stored_key != key:
+            _msa_access_cache.pop(key, None)
+        _msa_access_cache[stored_key] = (access, deadline)
+    return access
+
+
+def _redeem_msa_access_token(oauth: dict, on_rotated=None) -> tuple[str, str | None, int | float | None]:
+    """向 /consumers 兑换一次。返回 access_token、轮换后的 RT、expires_in。"""
     payload = {
         "client_id": oauth["client_id"],
         "refresh_token": oauth["refresh_token"],
@@ -73,7 +108,20 @@ def msa_access_token(oauth: dict, on_rotated=None) -> str:
     r.raise_for_status()
     data = r.json()
     _handle_rotated(oauth, data, on_rotated)
-    return data["access_token"]
+    return data["access_token"], data.get("refresh_token"), data.get("expires_in")
+
+
+def msa_access_token(oauth: dict, on_rotated=None) -> str:
+    """Personal Microsoft accounts (Hotmail / Outlook.com / Live).
+
+    Consumer MSA uses the /consumers tenant with a public client. A
+    client_secret is NOT required (and usually not present). If one happens to
+    be configured it is forwarded as-is — harmless and compatible.
+
+    ⚠️ 响应必然携带轮换后的新 refresh_token：on_rotated 落盘是账号存活的前提。
+    未过期的 access_token 会被复用，避免 IMAP 会话被服务端掐断后反复轮换 RT。
+    """
+    return cached_msa_access_token(oauth, on_rotated)
 
 
 _TOKEN_FN = {
