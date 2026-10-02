@@ -236,17 +236,51 @@ def _poll_pass(config, state, now: float | None = None) -> None:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e))
 
 
-def _drain_mutation_jobs(config) -> None:
+# 队列长期为空时，每 5 秒一次的 claim 只会打满 Worker 往返（线上空队列也要
+# 0.7–3 秒）。连续确认空队列后把间隔退到 60 秒；领到任务立即恢复。
+_MUTATION_IDLE_BACKOFF_SECONDS = 60
+_MUTATION_IDLE_CONFIRMATIONS = 3
+_mutation_idle_interval = 0.0
+_mutation_empty_claims = 0
+
+
+def mutation_claim_interval(base_interval: float, claimed: int | None) -> float:
+    """空队列连续确认后拉长 claim 间隔；领到任务或请求失败时回到基础间隔。
+
+    claimed 为 None 表示本次 claim 没有拿到可信结果（超时、5xx），不能据此
+    判断队列为空，所以不进入退避。
+    """
+    global _mutation_idle_interval, _mutation_empty_claims
+    if claimed or claimed is None:
+        # 领到任务，或这次请求失败：都不能当成「队列空」，立刻回到基础间隔。
+        _mutation_empty_claims = 0
+        _mutation_idle_interval = 0.0
+        return base_interval
+    _mutation_empty_claims += 1
+    if _mutation_empty_claims >= _MUTATION_IDLE_CONFIRMATIONS:
+        _mutation_idle_interval = max(base_interval, _MUTATION_IDLE_BACKOFF_SECONDS)
+        return _mutation_idle_interval
+    return base_interval
+
+
+def _drain_mutation_jobs(config) -> int | None:
     """排空 provider mutation 队列（已读/星标/移动的回写）。
 
     与同步同进程、不并发：mutation 需要为账号兑换 refresh_token，与同步并发兑换
     会让其中一份拿到的 RT 立刻失效。单进程 tick 串行天然只有一个写者。
+    返回本批领到的任务数；请求失败时返回 None，调用方据此保持 5 秒重试。
     """
-    result = process_mutation_jobs(config)
-    if result.get("claimed", 0):
+    try:
+        result = process_mutation_jobs(config)
+    except Exception as e:
+        log.error("mutation claim error: %s", e)
+        return None
+    claimed = int(result.get("claimed", 0) or 0)
+    if claimed:
         log.info("mutation batch claimed=%d succeeded=%d retried=%d failed=%d unsupported=%d",
-                 result.get("claimed", 0), result.get("succeeded", 0), result.get("retried", 0),
+                 claimed, result.get("succeeded", 0), result.get("retried", 0),
                  result.get("failed", 0), result.get("unsupported", 0))
+    return claimed
 
 
 def run_daemon(config_path: str, poll_interval: int = 60,
@@ -263,8 +297,12 @@ def run_daemon(config_path: str, poll_interval: int = 60,
     """
     log.info("Starting one-mail-agg in continuous daemon mode (poll_interval=%ds, mutation_interval=%ds)",
              poll_interval, mutation_interval)
+    global _mutation_idle_interval, _mutation_empty_claims
+    _mutation_idle_interval = 0.0
+    _mutation_empty_claims = 0
     state = SyncState(load_config(config_path).state_path)
     next_poll_at = 0.0
+    next_mutation_at = 0.0
 
     while True:
         tick_started = time.monotonic()
@@ -273,11 +311,15 @@ def run_daemon(config_path: str, poll_interval: int = 60,
             if tick_started >= next_poll_at:
                 next_poll_at = tick_started + poll_interval
                 _poll_pass(config, state, now=tick_started)
-            else:
-                _drain_mutation_jobs(config)
+            elif tick_started >= next_mutation_at:
+                claimed = _drain_mutation_jobs(config)
+                claim_every = mutation_claim_interval(mutation_interval, claimed)
+                next_mutation_at = tick_started + claim_every
         except Exception as e:
             log.error("daemon iteration error: %s", e)
 
+        # 轮询循环仍按基础间隔醒来，保证 60s 兜底拉取不被退避拖住。
+        # 空队列只是跳过 claim，不拉长整个 tick。
         time.sleep(mutation_interval)
 
 

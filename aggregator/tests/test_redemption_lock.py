@@ -373,6 +373,53 @@ def test_poll_pass_skips_accounts_owned_by_live_idle_worker(tmp_path, monkeypatc
         idle_mod._active_idle_workers.pop("qq", None)
 
 
+def test_mutation_claim_backs_off_after_consecutive_empty_results():
+    """连续 3 次确认空队列后再拉长到 60 秒；领到任务或失败立刻回到 5 秒。"""
+    main_mod._mutation_empty_claims = 0
+    main_mod._mutation_idle_interval = 0.0
+    try:
+        assert [main_mod.mutation_claim_interval(5, 0) for _ in range(3)] == [5, 5, 60]
+        assert main_mod.mutation_claim_interval(5, 0) == 60
+        assert main_mod.mutation_claim_interval(5, 2) == 5
+        assert main_mod.mutation_claim_interval(5, 0) == 5
+        assert main_mod.mutation_claim_interval(5, None) == 5
+        assert main_mod._mutation_empty_claims == 0
+    finally:
+        main_mod._mutation_empty_claims = 0
+        main_mod._mutation_idle_interval = 0.0
+
+
+def test_run_daemon_skips_empty_mutation_claims_until_backoff_ends(tmp_path, monkeypatch):
+    """空领取满 3 次后跳过 claim；60 秒兜底拉取照常，领到任务后恢复每 5 秒。"""
+    clock = _Clock(stop_after=20)
+    claimed_results = [0, 0, 0, 1, 0]
+    seen = []
+
+    def _drain(_cfg):
+        claimed = claimed_results.pop(0) if claimed_results else 0
+        seen.append((clock.now, claimed))
+        return claimed
+
+    polls = []
+    monkeypatch.setattr(main_mod, "load_config",
+                        lambda path: Config(worker_base_url="https://w", admin_token="t",
+                                            accounts=[], state_path=str(tmp_path / "state.json")))
+    monkeypatch.setattr(main_mod, "fetch_user_accounts", lambda *a: [])
+    monkeypatch.setattr(main_mod.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(main_mod.time, "sleep", clock.sleep)
+    monkeypatch.setattr(main_mod, "ensure_idle_workers",
+                        lambda cfg, st, accs: polls.append(clock.now))
+    monkeypatch.setattr(main_mod, "_drain_mutation_jobs", _drain)
+
+    with pytest.raises(_StopDaemon):
+        main_mod.run_daemon("whatever.json", poll_interval=60, mutation_interval=5)
+
+    assert seen[:4] == [(5.0, 0), (10.0, 0), (15.0, 0), (75.0, 1)]
+    assert (80.0, 0) in seen
+    assert all(item[0] != 20.0 for item in seen)
+    assert polls[:2] == [0.0, 60.0]
+
+
 def test_drain_mutation_jobs_logs_only_when_claimed(tmp_path, monkeypatch, caplog):
     config = Config(worker_base_url="https://w", admin_token="t", accounts=[],
                     state_path=str(tmp_path / "state.json"))
