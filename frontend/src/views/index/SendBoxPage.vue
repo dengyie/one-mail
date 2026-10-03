@@ -79,7 +79,7 @@ onMounted(async () => {
         <n-button v-if="userJwt" @click="router.push(getRouterPathWithLang('/user/addresses', locale))" type="primary" class="rounded-xl font-medium px-5">
           前往专属地址列表
         </n-button>
-        <n-button v-else @click="router.push(getRouterPathWithLang('/mailbox', locale))" type="primary" class="rounded-xl font-medium px-5">
+        <n-button v-else @click="router.push(getRouterPathWithLang('/', locale))" type="primary" class="rounded-xl font-medium px-5">
           前往即时收件箱生成邮箱
         </n-button>
       </div>
