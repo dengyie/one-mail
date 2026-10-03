@@ -197,6 +197,11 @@ jobs:
           fi
 
           cd worker/
+          # wrangler prints env var values (JWT/admin secrets) in the
+          # bindings table, so non-debug mode must not echo stdout.
+          # Known non-secret failure: custom_domain re-PUT of
+          # mail-api.mangoqwq.cc.cd returns 100117 after a successful
+          # script upload. Keep that hostname out of BACKEND_TOML.
           if [ "${DEBUG_MODE:-}" = "true" ]; then
             pnpm run deploy
           else
@@ -205,6 +210,7 @@ jobs:
             else
               code=$?
               echo "Command failed with exit code $code"
+              echo "If the Worker script uploaded, check custom_domain 100117 (externally managed DNS) and SEND_MAIL placement (send_email must be top-level, not under [triggers])."
               exit "$code"
             fi
           fi
