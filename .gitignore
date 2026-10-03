@@ -150,6 +150,9 @@ smtp_proxy_server/data/
 
 # one-mail Task 1 additions
 worker/wrangler.toml
+
+# Local agent continuity / leftover dashboard dumps (never commit)
+.codex-memory/
 .venv/
 aggregator/config.json
 aggregator/src/*.egg-info/

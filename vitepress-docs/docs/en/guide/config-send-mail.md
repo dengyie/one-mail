@@ -14,10 +14,14 @@ Each `/api/send_mail` request matches channels in order; **the first hit sends**
 | Order | Condition | Channel | Deducts balance |
 |-------|-----------|---------|----------------|
 | 1 | `SEND_MAIL` bound **AND** recipient in `verifiedAddressList` | Cloudflare binding (compat mode) | No |
-| 2 | `RESEND_TOKEN` or `RESEND_TOKEN_<DOMAIN>` set | Resend API | Yes |
+| 2 | `RESEND_TOKEN_<DOMAIN>` set | Resend API (that domain only) | Yes |
 | 3 | `SMTP_CONFIG` has entry for current domain | worker-mailer SMTP | Yes |
-| 4 | `SEND_MAIL` bound (none of the above) | **Cloudflare binding (recommended primary)** | Yes |
+| 4 | Global `RESEND_TOKEN` set | Resend API (fallback) | Yes |
+| 5 | `SEND_MAIL` bound (none of the above) | **Cloudflare binding (recommended primary)** | Yes |
 | — | None of the above | Throws | — |
+
+> [!WARNING] Do not use a global `RESEND_TOKEN` for multi-provider tests
+> Global `RESEND_TOKEN` is only a fallback when a domain has no per-domain config. To split Resend / Brevo / SMTP2GO by domain, set **only** `RESEND_TOKEN_<DOMAIN>`. Domain SMTP now beats the global Resend token.
 
 > [!NOTE]
 > Binding send failures return an error directly.
@@ -76,6 +80,8 @@ wrangler secret put RESEND_TOKEN_YOUR_DOMAIN_COM
 wrangler secret put RESEND_TOKEN_MAIL_YOUR_DOMAIN_COM
 ```
 
+For a multi-provider test, use the per-domain secret only. Put Resend bounce MX / SPF on the `send.` subdomain and **do not change the root MX** (root MX stays on Cloudflare Email Routing). DKIM CNAMEs must be DNS-only (gray cloud).
+
 ## Send Emails Using SMTP
 
 The format of `SMTP_CONFIG` is as follows. **The key must be your own sending domain**, and the value is the SMTP configuration.
@@ -112,30 +118,35 @@ For SMTP configuration format details, refer to [zou-yu/worker-mailer](https://g
 | `host` | SMTP server address, e.g. `smtp.mailgun.org`, `smtp.gmail.com`, or your self-hosted SMTP server |
 | `port` | SMTP port, typically `465` (SSL) or `587` (STARTTLS) |
 | `secure` | Whether to use SSL/TLS. Set to `true` for port 465, `false` for port 587 |
+| `startTls` | Set `true` on port 587 (Brevo / SMTP2GO STARTTLS) |
 | `authType` | Authentication method, typically `["plain", "login"]` |
 | `credentials.username` | SMTP server login username |
 | `credentials.password` | SMTP server login password |
 
-If you have **multiple domains** using different SMTP services, add multiple keys in the same JSON:
+If you have **multiple domains** using different SMTP services, add multiple keys in the same JSON. Brevo uses the SMTP key (not the API key); SMTP2GO commonly uses `mail.smtp2go.com:2525`:
 
 ```json
 {
-    "domain-a.com": {
-        "host": "smtp.mailgun.org",
-        "port": 465,
-        "secure": true,
+    "mangoqwq.cc.cd": {
+        "host": "smtp-relay.brevo.com",
+        "port": 587,
+        "secure": false,
+        "startTls": true,
         "authType": ["plain", "login"],
-        "credentials": { "username": "user@domain-a.com", "password": "xxx" }
+        "credentials": { "username": "your-brevo-login", "password": "your-brevo-smtp-key" }
     },
-    "domain-b.com": {
-        "host": "smtp.gmail.com",
-        "port": 465,
-        "secure": true,
+    "mangoq.ccwu.cc": {
+        "host": "mail.smtp2go.com",
+        "port": 2525,
+        "secure": false,
+        "startTls": true,
         "authType": ["plain", "login"],
-        "credentials": { "username": "user@gmail.com", "password": "app-password" }
+        "credentials": { "username": "your-smtp2go-username", "password": "your-smtp2go-password" }
     }
 }
 ```
+
+Configure Resend with per-domain secrets only (`RESEND_TOKEN_MANGOQWQ_COM` / `RESEND_TOKEN_OTP_MANGOQWQ_COM` / `RESEND_TOKEN_VERIFY_MANGOQWQ_COM`) — do not put them in `SMTP_CONFIG`, and do not set a global `RESEND_TOKEN`. Keep the root MX on Cloudflare Email Routing. Port 587 needs `startTls: true`. SMTP2GO SPF/DKIM uses the CNAMEs from its dashboard (DNS-only / gray cloud); do not rewrite the existing root SPF TXT.
 
 Then execute the following command to add `SMTP_CONFIG` to secrets:
 

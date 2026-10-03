@@ -9,6 +9,7 @@ import { CONSTANTS } from '../constants'
 import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDomainMapValue, getMailDomain, includesDomain } from '../utils';
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
+import { getDomainResendToken, resolveSendMailChannel } from '../core/send_mail_channel';
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
 import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError } from './send_mail_limit_utils';
 
@@ -75,16 +76,13 @@ export const sendMailByBinding = async (
 }
 
 const sendMailByResend = async (
-    c: Context<HonoCustomType>, address: string,
+    address: string,
     reqJson: {
         from_name: string, to_mail: string, to_name: string,
         subject: string, content: string, is_html: boolean
-    }
+    },
+    token: string
 ): Promise<void> => {
-    const mailDomain = getMailDomain(address);
-    const token = c.env[
-        `RESEND_TOKEN_${mailDomain.replace(/\./g, "_").toUpperCase()}`
-    ] || c.env.RESEND_TOKEN;
     const resend = new Resend(token);
     const { data, error } = await resend.emails.send({
         from: reqJson.from_name ? `${reqJson.from_name} <${address}>` : address,
@@ -184,15 +182,17 @@ export const sendMail = async (
     }
     // Resolve the dispatch path before taking any reservations. The actual provider
     // call stays inside one try/catch so every failed attempt releases both quotas.
-    const resendTokenKey = "RESEND_TOKEN_" + mailDomain.replace(/\./g, "_").toUpperCase();
-    const resendEnabled = c.env.RESEND_TOKEN || c.env[resendTokenKey];
     const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
-    const smtpConfig = getDomainMapValue(smtpConfigMap, mailDomain);
+    const channel = resolveSendMailChannel<WorkerMailerOptions>({
+        domainResendToken: getDomainResendToken(c.env, mailDomain),
+        globalResendToken: c.env.RESEND_TOKEN,
+        smtpConfig: getDomainMapValue(smtpConfigMap, mailDomain),
+        sendMailBindingEnabled: isSendMailBindingEnabled(c, mailDomain),
+    });
     const verifiedAddressList = c.env.SEND_MAIL
         ? await getJsonSetting(c, CONSTANTS.VERIFIED_ADDRESS_LIST_KEY) || []
         : [];
     const sendByVerifiedAddressList = verifiedAddressList.includes(to_mail);
-    const sendMailBindingEnabled = isSendMailBindingEnabled(c, mailDomain);
     let sendMailLimitReservation: SendMailLimitReservation | null = null;
     let providerDispatchStarted = false;
 
@@ -216,7 +216,7 @@ export const sendMail = async (
 
         // Validate that a provider is configured before marking the attempt
         // unknown; a configuration error never touched an external service.
-        if (!sendByVerifiedAddressList && !resendEnabled && !smtpConfig && !sendMailBindingEnabled) {
+        if (!sendByVerifiedAddressList && channel.kind === "none") {
             throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");
         }
         if (sendMailLimitReservation) {
@@ -225,11 +225,11 @@ export const sendMail = async (
         }
         if (sendByVerifiedAddressList) {
             await sendMailToVerifyAddress(c, address, reqJson);
-        } else if (resendEnabled) {
-            await sendMailByResend(c, address, reqJson);
-        } else if (smtpConfig) {
-            await sendMailBySmtp(c, address, reqJson, smtpConfig);
-        } else if (sendMailBindingEnabled) {
+        } else if (channel.kind === "resend") {
+            await sendMailByResend(address, reqJson, channel.token);
+        } else if (channel.kind === "smtp") {
+            await sendMailBySmtp(c, address, reqJson, channel.options);
+        } else if (channel.kind === "binding") {
             await sendMailByBinding(c, address, reqJson);
         } else {
             throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");

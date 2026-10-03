@@ -14,10 +14,14 @@ Workers Paid 每月含 3,000 封，超出部分 $0.35 / 1000 封。
 | 顺序 | 条件 | 通道 | 扣 balance |
 |------|------|------|-----------|
 | 1 | `SEND_MAIL` 已绑定 **且** 收件人在 `verifiedAddressList` | Cloudflare binding（兼容模式） | 否 |
-| 2 | `RESEND_TOKEN` 或 `RESEND_TOKEN_<DOMAIN>` 已配置 | Resend API | 是 |
+| 2 | `RESEND_TOKEN_<DOMAIN>` 已配置 | Resend API（仅该域名） | 是 |
 | 3 | `SMTP_CONFIG` 含当前域名配置 | worker-mailer SMTP | 是 |
-| 4 | `SEND_MAIL` 已绑定（以上均未命中） | **Cloudflare binding（推荐主通道）** | 是 |
+| 4 | 全局 `RESEND_TOKEN` 已配置 | Resend API（兜底） | 是 |
+| 5 | `SEND_MAIL` 已绑定（以上均未命中） | **Cloudflare binding（推荐主通道）** | 是 |
 | — | 以上均未命中 | 抛错 | — |
+
+> [!WARNING] 不要用全局 `RESEND_TOKEN` 做多渠道测试
+> 全局 `RESEND_TOKEN` 仍会作为没有域名级配置时的兜底。若要把 Resend、Brevo、SMTP2GO 拆到不同域名，**只配** `RESEND_TOKEN_<DOMAIN>`，不要配全局 `RESEND_TOKEN`。域名级 SMTP 现在优先于全局 Resend，不会再被盖住。
 
 > [!NOTE]
 > binding 发信失败会直接报错。
@@ -76,6 +80,8 @@ wrangler secret put RESEND_TOKEN_YOUR_DOMAIN_COM
 wrangler secret put RESEND_TOKEN_MAIL_YOUR_DOMAIN_COM
 ```
 
+多渠道测试时只配域名级 secret。Resend 的 bounce MX / SPF 放在 `send.` 子域，**不要改根 MX**（根 MX 仍给 Cloudflare Email Routing 收信）。DKIM CNAME 必须灰云。
+
 ## 使用 SMTP 发送邮件
 
 `SMTP_CONFIG` 的格式如下，**key 必须是你自己的发信域名**，value 为 SMTP 配置。
@@ -112,30 +118,35 @@ SMTP 配置格式详情可以参考 [zou-yu/worker-mailer](https://github.com/zo
 | `host` | SMTP 服务器地址，如 `smtp.mailgun.org`、`smtp.gmail.com` 或你自建的 SMTP 服务器地址 |
 | `port` | SMTP 端口，通常 `465`（SSL）或 `587`（STARTTLS） |
 | `secure` | 是否使用 SSL/TLS，端口 465 时设为 `true`，端口 587 时设为 `false` |
+| `startTls` | 端口 587 时设为 `true`（Brevo / SMTP2GO STARTTLS） |
 | `authType` | 认证方式，一般使用 `["plain", "login"]` |
 | `credentials.username` | SMTP 服务器的登录用户名 |
 | `credentials.password` | SMTP 服务器的登录密码 |
 
-如果你有**多个域名**使用不同的 SMTP 服务，在同一个 JSON 中添加多个 key 即可：
+如果你有**多个域名**使用不同的 SMTP 服务，在同一个 JSON 中添加多个 key 即可。Brevo 用 SMTP key（不是 API key），SMTP2GO 常用 `mail.smtp2go.com:2525`：
 
 ```json
 {
-    "domain-a.com": {
-        "host": "smtp.mailgun.org",
-        "port": 465,
-        "secure": true,
+    "mangoqwq.cc.cd": {
+        "host": "smtp-relay.brevo.com",
+        "port": 587,
+        "secure": false,
+        "startTls": true,
         "authType": ["plain", "login"],
-        "credentials": { "username": "user@domain-a.com", "password": "xxx" }
+        "credentials": { "username": "your-brevo-login", "password": "your-brevo-smtp-key" }
     },
-    "domain-b.com": {
-        "host": "smtp.gmail.com",
-        "port": 465,
-        "secure": true,
+    "mangoq.ccwu.cc": {
+        "host": "mail.smtp2go.com",
+        "port": 2525,
+        "secure": false,
+        "startTls": true,
         "authType": ["plain", "login"],
-        "credentials": { "username": "user@gmail.com", "password": "app-password" }
+        "credentials": { "username": "your-smtp2go-username", "password": "your-smtp2go-password" }
     }
 }
 ```
+
+Resend 只配域名级 secret（`RESEND_TOKEN_MANGOQWQ_COM` / `RESEND_TOKEN_OTP_MANGOQWQ_COM` / `RESEND_TOKEN_VERIFY_MANGOQWQ_COM`），不要写进 `SMTP_CONFIG`，也不要配全局 `RESEND_TOKEN`。根 MX 保持 Cloudflare Email Routing；端口 587 需要 `startTls: true`。SMTP2GO 的 SPF/DKIM 走其面板给出的 CNAME（灰云），不要改现有根 SPF TXT。
 
 然后执行下面的命令，将 `SMTP_CONFIG` 添加到 secrets 中
 
