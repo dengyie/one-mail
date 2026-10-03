@@ -24,6 +24,29 @@ keep_vars = true
 #    { name = "SEND_MAIL" },
 # ]
 # SEND_MAIL_DOMAINS = ["example.com", "mail.example.com"]
+#
+# Split outbound providers by domain (do NOT set a global RESEND_TOKEN, or it
+# becomes a fallback for domains without a per-domain Resend/SMTP config).
+# Prefer secrets, not plaintext vars:
+#   wrangler secret put RESEND_TOKEN_MANGOQWQ_COM
+#   wrangler secret put RESEND_TOKEN_OTP_MANGOQWQ_COM
+#   wrangler secret put RESEND_TOKEN_VERIFY_MANGOQWQ_COM
+#   wrangler secret put SMTP_CONFIG
+# Example SMTP_CONFIG (Brevo + SMTP2GO). Key must be a DOMAINS entry:
+# {
+#   "mangoqwq.cc.cd": {
+#     "host": "smtp-relay.brevo.com", "port": 587, "secure": false,
+#     "startTls": true, "authType": ["plain", "login"],
+#     "credentials": { "username": "...", "password": "..." }
+#   },
+#   "mangoq.ccwu.cc": {
+#     "host": "mail.smtp2go.com", "port": 2525, "secure": false,
+#     "startTls": true, "authType": ["plain", "login"],
+#     "credentials": { "username": "...", "password": "..." }
+#   }
+# }
+# DNS: keep root MX on Cloudflare Email Routing; grey-cloud DKIM; Resend bounce
+# MX/SPF on the send. subdomain only. ENABLE_AUTO_REPLY must stay false.
 
 [vars]
 # DEFAULT_LANG = "zh"

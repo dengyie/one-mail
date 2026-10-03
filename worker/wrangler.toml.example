@@ -13,6 +13,13 @@ ADMIN_PASSWORDS = ["<REDACTED>"]
 ENABLE_USER_CREATE_EMAIL = true
 ENABLE_USER_DELETE_EMAIL = true
 ENABLE_AUTO_REPLY = false
+# Outbound OTP test split (secrets, not plaintext vars):
+#   RESEND_TOKEN_MANGOQWQ_COM         — Resend API for mangoqwq.com (account 1)
+#   RESEND_TOKEN_OTP_MANGOQWQ_COM     — Resend API for otp.mangoqwq.com (account 2)
+#   RESEND_TOKEN_VERIFY_MANGOQWQ_COM  — Resend API for verify.mangoqwq.com (account 3)
+#   SMTP_CONFIG                       — Brevo on mangoqwq.cc.cd, SMTP2GO on mangoq.ccwu.cc
+# Do not set a global RESEND_TOKEN; it is only a fallback for domains without
+# per-domain Resend/SMTP. Keep root MX on Cloudflare Email Routing.
 # Telegram webhook 来源校验 secret token；配置后 /admin/telegram/init 的 setWebhook
 # 会携带 secret_token，/telegram/webhook 对比 X-Telegram-Bot-Api-Secret-Token 头。
 # 未配置时 webhook 处理 fail-closed（503）。

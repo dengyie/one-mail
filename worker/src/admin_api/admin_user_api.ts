@@ -3,7 +3,7 @@ import { Context } from 'hono';
 import { CONSTANTS } from '../constants';
 import { getJsonSetting, saveSetting, checkUserPassword, getDomains, getUserRoles, getMailDomain, includesDomain } from '../utils';
 import { UserSettings, GeoData, UserInfo, RoleAddressConfig } from "../models";
-import { handleListQuery } from '../common'
+import { handleListQuery, isSendMailEnabled } from '../common'
 import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
 import { mergeRoleAddressConfigs } from "../unified/rbac_config";
@@ -31,6 +31,9 @@ export default {
             const domains = getDomains(c);
             if (!includesDomain(domains, mailDomain)) {
                 return c.text(`${msgs.VerifyMailDomainInvalidMsg} ${JSON.stringify(domains, null, 2)}`, 400)
+            }
+            if (!isSendMailEnabled(c, mailDomain)) {
+                return c.text(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")", 400)
             }
         }
         // Legacy 0 used to mean unlimited. Non-admin users must now always have a

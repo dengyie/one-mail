@@ -2,6 +2,7 @@ import { Context } from 'hono';
 import { WorkerMailerOptions } from 'worker-mailer';
 
 import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
+import { getDomainResendToken, resolveSendMailChannel } from './core/send_mail_channel';
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { generateRandomPassword, hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
@@ -35,20 +36,14 @@ export const isSendMailEnabled = (
     c: Context<HonoCustomType>,
     mailDomain: string
 ): boolean => {
-    // Check resend token for domain or global
-    const resendEnabled = c.env.RESEND_TOKEN || c.env[
-        `RESEND_TOKEN_${mailDomain.replace(/\./g, "_").toUpperCase()}`
-    ];
-    if (resendEnabled) return true;
-
-    // Check SMTP config for domain
     const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
-    if (getDomainMapValue(smtpConfigMap, mailDomain)) return true;
-
-    // Check SEND_MAIL binding
-    if (isSendMailBindingEnabled(c, mailDomain)) return true;
-
-    return false;
+    const channel = resolveSendMailChannel<WorkerMailerOptions>({
+        domainResendToken: getDomainResendToken(c.env, mailDomain),
+        globalResendToken: c.env.RESEND_TOKEN,
+        smtpConfig: getDomainMapValue(smtpConfigMap, mailDomain),
+        sendMailBindingEnabled: isSendMailBindingEnabled(c, mailDomain),
+    });
+    return channel.kind !== "none";
 }
 
 export const isSendMailBindingEnabled = (

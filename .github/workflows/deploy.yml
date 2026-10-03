@@ -51,7 +51,7 @@ jobs:
       - name: Build @one-mail/shared
         run: pnpm --filter @one-mail/shared build
 
-      - name: Run Worker tests (144 test cases)
+      - name: Run Worker tests
         run: |
           cd worker
           node --experimental-strip-types --test src/core/*.test.mjs src/unified/*.test.mjs src/user_api/*.test.mjs src/email/*.test.mjs
