@@ -10,6 +10,8 @@
 
 - feat: |Worker| 发信通道按域名拆分：`RESEND_TOKEN_<DOMAIN>` → 域名 `SMTP_CONFIG` → 全局 `RESEND_TOKEN` → `SEND_MAIL` binding。域名级 SMTP 不再被全局 Resend token 盖住，同一 Worker 可把 Resend / Brevo / SMTP2GO 拆到不同发信域。新增 `worker/src/core/send_mail_channel.ts` 与 8 项单测；`/api/send_mail`、`/external/api/send_mail`、`/admin/send_mail`、注册 `verify_code` 共用同一解析。保存用户设置时，开启邮箱验证还会检查 `verifyMailSender` 所在域已配置发信通道。不要配全局 `RESEND_TOKEN`；根 MX 保持 Cloudflare Email Routing。
 
+- fix: |CI/Worker| Deploy Backend 在脚本已上传后仍因 `custom_domain` 重 PUT `mail-api.mangoqwq.cc.cd` 报 100117 退出 1；`send_email` 写在 `[triggers]` 下会被 Wrangler 4 丢掉 `SEND_MAIL` binding。生产 `BACKEND_TOML` 改为顶层 `send_email`、注释掉已存在的 custom domain、`workers_dev = false`。
+
 - fix: |Frontend| 远程内容阻断补全：①统一收件箱详情页新增「加载图片」按封恢复按钮（`UnifiedInboxDetail.vue` 补 `showRemoteImages`/`allowRemote` 分支与告警条），与主阅读器一致；②回信/转发引用改走 `blockRemoteContent` 统一安全管道（`mail-actions.js`），远程/外部跟踪资源不再随引用进入回复；③发信 `send()` 发送前对 `html`/`rich` 正文统一 `sanitizeHtml` 兜底净化（`SendMail.vue`），杜绝 `javascript:`/`data:text/html`/事件属性经编辑器或回信片段带入收件人客户端，`text` 按原样以免字面 `<` 误解析；④`detail.htmlBlocked`/`remoteImagesBlocked` 文案统一。新增 `mail-actions.test.js`（6 项），`frontend/src/utils` 全量 92 单测通过。实现说明见 `docs/remote-content-blocking-completion.md`。
 
 - fix: |Worker| 外部邮件服务超时后的 reservation 进入 unknown/sent 状态；支持 `x-idempotency-key` 重放，未知结果返回 503 且不释放额度/余额，避免重试重复发送和额度绕过。新增迁移 `db/2026-09-09-send-mail-delivery-state.sql`。
