@@ -24,6 +24,13 @@ describe('AppSidebar access control contracts', () => {
     expect(sidebar).toContain('域名邮箱 · 全域')
   })
 
+  it('keeps 即时收件箱 on / and does not send address sessions through /mailbox', () => {
+    expect(sidebar).toContain('即时收件箱')
+    expect(sidebar).toContain("@click=\"handleNavigate('/')\"")
+    expect(sidebar).not.toContain("handleNavigate('/mailbox')")
+    expect(sidebar).toContain("@click=\"handleNavigate('/unified')\"")
+  })
+
   it('permits administrators to view and access sendmail/sendbox and exposes admin sender management tools', () => {
     // 侧边栏允许管理员在未激活临时地址会话时访问发送邮件入口
     expect(sidebar).toContain('const isAdmin = computed(() => Boolean(userSettings.value.is_admin || adminAuth.value))')

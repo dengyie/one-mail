@@ -8,7 +8,9 @@ import {
     DEFAULT_LOCALE,
     getBrowserLocales,
     getPreferredLocale,
+    LOCALE_PATH_PATTERN,
     replaceLocaleInFullPath,
+    resolveMailboxRedirect,
     resolveSupportedLocale,
 } from '../i18n/utils'
 
@@ -24,8 +26,18 @@ const router = createRouter({
         },
         {
             path: '/mailbox',
-            alias: '/:lang/mailbox',
-            component: Index
+            alias: [
+                `/:lang(${LOCALE_PATH_PATTERN})/mailbox`,
+                '/mailbox/',
+                `/:lang(${LOCALE_PATH_PATTERN})/mailbox/`,
+            ],
+            redirect: (to) => {
+                const target = resolveMailboxRedirect(to.fullPath)
+                if (!target) {
+                    return { name: 'not-found' }
+                }
+                return target
+            },
         },
         {
             path: '/sendmail',

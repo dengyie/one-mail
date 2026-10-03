@@ -7,6 +7,7 @@ import type { SupportedLocale } from './locale-registry'
 
 export const DEFAULT_LOCALE: SupportedLocale = 'zh'
 export const FALLBACK_LOCALE: SupportedLocale = 'zh'
+export const LOCALE_PATH_PATTERN = SUPPORTED_LOCALES.join('|')
 export const PREFERRED_LOCALE_STORAGE_KEY = 'preferredLocale'
 export const EMPTY_LOCALE_MESSAGES = Object.fromEntries(
   SUPPORTED_LOCALES.map((supportedLocale) => [supportedLocale, {}]),
@@ -120,6 +121,23 @@ export const getPathWithLocale = (path: string, locale: SupportedLocale): string
 export const replaceLocaleInFullPath = (fullPath: string, locale: SupportedLocale): string => {
   const { path, suffix } = splitPathSuffix(fullPath)
   return `${getPathWithLocale(path, locale)}${suffix}`
+}
+
+const MAILBOX_BASE_PATH = '/mailbox'
+
+export const resolveMailboxRedirect = (fullPath: string): string | null => {
+  const { path, suffix } = splitPathSuffix(fullPath || '/')
+  const pathLocale = resolveSupportedLocale(path.split('/')[1])
+  const basePath = stripLocaleFromPath(path)
+  const normalizedBase = basePath.length > 1 && basePath.endsWith('/')
+    ? basePath.slice(0, -1)
+    : basePath
+
+  if (normalizedBase !== MAILBOX_BASE_PATH) {
+    return null
+  }
+
+  return `${getPathWithLocale('/unified', pathLocale || DEFAULT_LOCALE)}${suffix}`
 }
 
 const getLocaleAliasPath = (path: string, locale: SupportedLocale): string => {

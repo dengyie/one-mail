@@ -105,7 +105,7 @@ onMounted(async () => {
       </div>
       <h3 class="text-lg font-bold text-slate-900 dark:text-white">暂无管理员权限</h3>
       <p class="text-xs text-slate-500 mt-2">当前登录账号并非系统管理员，无法访问管理控制台。</p>
-      <n-button @click="router.push(getRouterPathWithLang('/mailbox', locale))" type="primary" secondary class="mt-6 rounded-xl">
+      <n-button @click="router.push(getRouterPathWithLang('/unified', locale))" type="primary" secondary class="mt-6 rounded-xl">
         返回收件箱
       </n-button>
     </div>

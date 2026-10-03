@@ -492,7 +492,7 @@ onBeforeUnmount(() => {
           验证密码并进入工作台
         </n-button>
         <div class="flex items-center justify-between pt-1">
-          <n-button text size="small" @click="router.push(getRouterPathWithLang('/mailbox', locale))">
+          <n-button text size="small" @click="router.push(getRouterPathWithLang('/unified', locale))">
             &larr; 返回收件箱
           </n-button>
           <n-button text size="small" type="primary" @click="goToLogin">
