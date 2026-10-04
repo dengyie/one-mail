@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |Frontend| Hide the Temp Email “即时收件箱” sidebar item after account login. That entry is `/`; signed-in users already have the unified inbox. Address-JWT sessions still see it so temporary-mailbox users keep an inbox entry.
+
 - feat: |Frontend/nginx| Permanently send `/mailbox` to the unified inbox at `/unified` (locale prefixes `zh|en|es|pt-BR|ja|de` and query preserved). Temp Email stays at `/`; “generate mailbox” and post-bind navigation now go to `/` so an address session is not dumped on the unified login wall. `/domain-mailbox` is unchanged. Vue `/:lang` only matches `SUPPORTED_LOCALES`; unknown prefixes do not fall through to `/unified`. pxed nginx uses `absolute_redirect off` plus a relative `Location` instead of a hardcoded host. Reload nginx separately; frontend CI does not ship nginx conf.
 
 - feat: |Worker| Split outbound send-mail by domain: `RESEND_TOKEN_<DOMAIN>` → domain `SMTP_CONFIG` → global `RESEND_TOKEN` → `SEND_MAIL` binding. Domain SMTP is no longer hidden by a global Resend token, so one Worker can send via Resend / Brevo / SMTP2GO on different From domains. Adds `worker/src/core/send_mail_channel.ts` and 8 unit tests; `/api/send_mail`, `/external/api/send_mail`, `/admin/send_mail`, and registration `verify_code` share the same resolver. Saving user settings with mail verification on also requires `verifyMailSender` to have a configured send channel. Do not set a global `RESEND_TOKEN`; keep root MX on Cloudflare Email Routing.

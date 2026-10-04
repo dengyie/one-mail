@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |Frontend| 账号登录后侧栏隐藏「即时收件箱」。该入口是 Temp Email（`/`），登录用户已有「统一归集箱」；仅地址 JWT 会话仍显示，避免临时邮箱用户丢掉收件入口。
+
 - feat: |Frontend/nginx| `/mailbox` 永久跳到统一归集箱 `/unified`（含 `zh|en|es|pt-BR|ja|de` 前缀与 query）。即时收件箱仍在 `/`；发信「生成邮箱」与绑地址后的跳转改走 `/`，避免地址会话撞上统一箱登录墙。`/domain-mailbox` 不跳转。Vue `/:lang` 只认 `SUPPORTED_LOCALES`，未知前缀不落到 `/unified`。pxed nginx 用 `absolute_redirect off` + 相对 `Location`，不写死主机。nginx 需独立 reload，不走前端 CI。
 
 - feat: |Worker| 发信通道按域名拆分：`RESEND_TOKEN_<DOMAIN>` → 域名 `SMTP_CONFIG` → 全局 `RESEND_TOKEN` → `SEND_MAIL` binding。域名级 SMTP 不再被全局 Resend token 盖住，同一 Worker 可把 Resend / Brevo / SMTP2GO 拆到不同发信域。新增 `worker/src/core/send_mail_channel.ts` 与 8 项单测；`/api/send_mail`、`/external/api/send_mail`、`/admin/send_mail`、注册 `verify_code` 共用同一解析。保存用户设置时，开启邮箱验证还会检查 `verifyMailSender` 所在域已配置发信通道。不要配全局 `RESEND_TOKEN`；根 MX 保持 Cloudflare Email Routing。

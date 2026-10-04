@@ -24,8 +24,9 @@ describe('AppSidebar access control contracts', () => {
     expect(sidebar).toContain('域名邮箱 · 全域')
   })
 
-  it('keeps 即时收件箱 on / and does not send address sessions through /mailbox', () => {
+  it('hides 即时收件箱 for account sessions and keeps it on / for address-only sessions', () => {
     expect(sidebar).toContain('即时收件箱')
+    expect(sidebar).toContain('v-if="!hasUserSession"')
     expect(sidebar).toContain("@click=\"handleNavigate('/')\"")
     expect(sidebar).not.toContain("handleNavigate('/mailbox')")
     expect(sidebar).toContain("@click=\"handleNavigate('/unified')\"")

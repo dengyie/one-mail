@@ -164,6 +164,7 @@ const activeRoute = computed(() => {
           </div>
           
           <button
+            v-if="!hasUserSession"
             @click="handleNavigate('/')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
