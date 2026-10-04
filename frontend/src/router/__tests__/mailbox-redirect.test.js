@@ -35,6 +35,7 @@ describe('mailbox to unified redirect contracts', () => {
     expect(addressManagement).not.toContain('getRouterPathWithLang("/mailbox"')
     expect(sidebar).toContain("handleNavigate('/')")
     expect(sidebar).toContain('即时收件箱')
+    expect(sidebar).toContain('v-if="!hasUserSession"')
     expect(sidebar).not.toContain("handleNavigate('/mailbox')")
   })
 
