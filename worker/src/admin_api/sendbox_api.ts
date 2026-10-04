@@ -1,21 +1,20 @@
 import { Context } from 'hono'
 
-import { handleListQuery } from '../common'
+import { querySendboxList } from '../mails_api/send_mail_api'
 
 const list = async (c: Context<HonoCustomType>) => {
-    const { address, limit, offset } = c.req.query();
-    if (address) {
-        return await handleListQuery(c,
-            `SELECT * FROM sendbox where address = ? `,
-            `SELECT count(*) as count FROM sendbox where address = ? `,
-            [address], limit, offset
-        );
-    }
-    return await handleListQuery(c,
-        `SELECT * FROM sendbox `,
-        `SELECT count(*) as count FROM sendbox `,
-        [], limit, offset
-    );
+    const { address, limit, offset, source, q, from, to, channel, with_count } = c.req.query();
+    return querySendboxList(c, {
+        address: address || undefined,
+        source,
+        channel,
+        q,
+        from,
+        to,
+        limit,
+        offset,
+        withCount: with_count !== "0",
+    });
 };
 
 const remove = async (c: Context<HonoCustomType>) => {

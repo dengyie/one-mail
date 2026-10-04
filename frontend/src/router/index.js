@@ -42,12 +42,19 @@ const router = createRouter({
         {
             path: '/sendmail',
             alias: '/:lang/sendmail',
-            component: () => import('../views/index/SendMail.vue')
+            component: () => import('../views/index/SendWorkbench.vue')
         },
         {
             path: '/sendbox',
             alias: '/:lang/sendbox',
-            component: () => import('../views/index/SendBoxPage.vue')
+            redirect: (to) => {
+                const langSeg = typeof to.params.lang === 'string' ? to.params.lang : ''
+                const prefix = langSeg ? `/${langSeg}` : ''
+                return {
+                    path: `${prefix}/sendmail`,
+                    query: { ...to.query, tab: 'self' },
+                }
+            }
         },
         {
             path: '/webhook',
@@ -130,11 +137,21 @@ const router = createRouter({
 	            alias: '/:lang/admin/sender-access',
 	            component: () => import('../views/Admin.vue')
 	        },
-	        {
-	            path: '/admin/sendmail',
-	            alias: '/:lang/admin/sendmail',
-	            component: () => import('../views/Admin.vue')
-	        },
+        {
+            path: '/admin/sendmail',
+            alias: '/:lang/admin/sendmail',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/sendbox',
+            alias: '/:lang/admin/sendbox',
+            component: () => import('../views/Admin.vue')
+        },
+        {
+            path: '/admin/send-unknown',
+            alias: '/:lang/admin/send-unknown',
+            component: () => import('../views/Admin.vue')
+        },
         {
             path: '/telegram_mail',
             alias: '/:lang/telegram_mail',

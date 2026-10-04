@@ -74,6 +74,8 @@ export default {
                 subject: "Temp Mail Verify code",
                 content: `Your verify code is ${code}`,
                 is_html: false,
+            }, {
+                source: "system_otp",
             })
         } catch (e) {
             // Keep the reserved code until TTL even on send errors: a provider

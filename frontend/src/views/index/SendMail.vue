@@ -15,6 +15,7 @@ import { getSendMailIdempotencyKey, clearSendMailIdempotencyKey } from '../../ut
 
 const router = useRouter()
 const message = useMessage()
+const emit = defineEmits(['sent', 'send-unknown', 'send-error'])
 const isPreview = ref(false)
 const editorRef = shallowRef()
 const sending = ref(false)
@@ -122,7 +123,10 @@ const send = async () => {
             {
                 method: 'POST',
                 body: JSON.stringify(payload),
-                headers: { 'x-idempotency-key': currentSendMailIdempotencyKey() },
+                headers: {
+                    'x-idempotency-key': currentSendMailIdempotencyKey(),
+                    'x-one-mail-client': 'web',
+                },
             })
         sendMailModel.value = {
             fromName: "",
@@ -135,9 +139,16 @@ const send = async () => {
         isPreview.value = false
         resetSendMailIdempotencyKey()
         message.success(t("successSend"));
+        emit('sent')
     } catch (error) {
         if (error?.status !== 503) resetSendMailIdempotencyKey()
-        message.error(error?.status === 503 ? t('deliveryUnknown') : (error.message || "error"));
+        if (error?.status === 503) {
+            emit('send-unknown')
+            message.error(t('deliveryUnknown'))
+        } else {
+            emit('send-error', error)
+            message.error(error.message || "error")
+        }
     } finally {
         sending.value = false
     }

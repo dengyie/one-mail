@@ -66,11 +66,16 @@ CREATE TABLE IF NOT EXISTS sendbox (
     id INTEGER PRIMARY KEY,
     address TEXT,
     raw TEXT,
+    source TEXT,
+    channel TEXT,
+    provider_message_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_sendbox_address ON sendbox(address);
 CREATE INDEX IF NOT EXISTS idx_sendbox_created_at ON sendbox(created_at);
+CREATE INDEX IF NOT EXISTS idx_sendbox_source ON sendbox(source);
+CREATE INDEX IF NOT EXISTS idx_sendbox_address_source ON sendbox(address, source);
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -207,6 +212,14 @@ async function ensureLegacyColumns(db: D1Database): Promise<void> {
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id)`);
 }
 
+async function ensureSendboxSourceSchema(db: D1Database): Promise<void> {
+    await ensureColumn(db, 'sendbox', 'source', 'TEXT');
+    await ensureColumn(db, 'sendbox', 'channel', 'TEXT');
+    await ensureColumn(db, 'sendbox', 'provider_message_id', 'TEXT');
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_sendbox_source ON sendbox(source)`);
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_sendbox_address_source ON sendbox(address, source)`);
+}
+
 async function ensurePop3Columns(db: D1Database): Promise<string[]> {
     const tableInfo = await db.prepare(`PRAGMA table_info(user_mail_accounts)`).all();
     const columns = new Set((tableInfo.results ?? []).map((column: any) => column.name));
@@ -271,6 +284,7 @@ export default {
         // CREATE TABLE does not add columns to an old table, so repair the
         // actual table shape even when db_version is missing or stale.
         await ensureLegacyColumns(c.env.DB);
+        await ensureSendboxSourceSchema(c.env.DB);
         await ensurePop3Columns(c.env.DB);
         await ensureUnifiedColumns(c.env.DB);
         await ensureProviderIdentitySchema(c.env.DB);
@@ -344,6 +358,7 @@ export default {
         // tables that already existed (CREATE IF NOT EXISTS cannot).
         await c.env.DB.exec(initQuery());
         await ensureLegacyColumns(c.env.DB);
+        await ensureSendboxSourceSchema(c.env.DB);
         const migrationChanges = await ensurePop3Columns(c.env.DB);
         const unifiedChanges = await ensureUnifiedColumns(c.env.DB);
         const providerIdentityChanges = await ensureProviderIdentitySchema(c.env.DB);

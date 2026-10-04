@@ -1,8 +1,8 @@
 import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
-import { sendMail } from "../mails_api/send_mail_api";
-import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, listUnknownSendMailReservations, resolveUnknownSendMailReservation, refundResolvedSendMailBalance } from "../mails_api/send_mail_limit_utils";
+import { saveSendbox, saveSendboxIfMissing, sendMail } from "../mails_api/send_mail_api";
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, listUnknownSendMailReservations, countUnknownSendMailReservations, resolveUnknownSendMailReservation, refundResolvedSendMailBalance } from "../mails_api/send_mail_limit_utils";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -39,7 +39,8 @@ export const sendMailbyAdmin = async (c: Context<HonoCustomType>) => {
             is_html: is_html,
         }, {
             isAdmin: true,
-            idempotencyKey: c.req.raw.headers.get("x-idempotency-key") ?? undefined
+            idempotencyKey: c.req.raw.headers.get("x-idempotency-key") ?? undefined,
+            source: "admin",
         })
     } catch (e) {
         console.error("Admin send_mail failed", e);
@@ -84,7 +85,24 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
         const idempotencyKey = c.req.raw.headers.get("x-idempotency-key") ?? undefined;
         const requestHash = idempotencyKey ? await hashSendMailRequest({ from, to, subject, html, text, cc, bcc, replyTo, attachments, headers }) : undefined;
         sendMailLimitReservation = await reserveSendMailLimit(c, { idempotencyKey, requestHash });
-        if (sendMailLimitReservation?.replay === "sent") return c.json({ status: "ok" });
+        if (sendMailLimitReservation?.replay === "sent") {
+            const toMail = Array.isArray(to)
+                ? (typeof to[0] === "string" ? to[0] : to[0]?.email)
+                : (typeof to === "string" ? to : to?.email);
+            await saveSendboxIfMissing(c, fromMail, {
+                from_name: typeof from === "string" ? "" : (from?.name || ""),
+                to_name: "",
+                to_mail: toMail,
+                subject,
+                is_html: Boolean(html),
+                content: html || text || "",
+            }, {
+                source: "admin_binding",
+                channel: "binding",
+                reservation_id: sendMailLimitReservation.id ?? null,
+            });
+            return c.json({ status: "ok" });
+        }
         if (sendMailLimitReservation?.replay === "unknown") throw new SendMailDeliveryUnknownError();
         if (sendMailLimitReservation) {
             await sendMailLimitReservation.markDispatchStarted();
@@ -122,6 +140,21 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
             console.error("Failed to commit send mail limit reservation; reconciliation will promote sent state", commitError);
         }
     }
+    const toMail = Array.isArray(to)
+        ? (typeof to[0] === "string" ? to[0] : to[0]?.email)
+        : (typeof to === "string" ? to : to?.email);
+    await saveSendbox(c, fromMail, {
+        from_name: typeof from === "string" ? "" : (from?.name || ""),
+        to_name: "",
+        to_mail: toMail,
+        subject,
+        is_html: Boolean(html),
+        content: html || text || "",
+    }, {
+        source: "admin_binding",
+        channel: "binding",
+        reservation_id: sendMailLimitReservation?.id ?? null,
+    });
     return c.json({ status: "ok" });
 }
 
@@ -129,8 +162,11 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
 export const listUnknownSendMail = async (c: Context<HonoCustomType>) => {
     try {
         const rawLimit = Number(c.req.query("limit") || 100);
-        const results = await listUnknownSendMailReservations(c.env.DB, Number.isFinite(rawLimit) ? rawLimit : 100);
-        return c.json({ results });
+        const [results, count] = await Promise.all([
+            listUnknownSendMailReservations(c.env.DB, Number.isFinite(rawLimit) ? rawLimit : 100),
+            countUnknownSendMailReservations(c.env.DB),
+        ]);
+        return c.json({ results, count });
     } catch (error) {
         console.error("Failed to list unknown send-mail reservations", error);
         return c.text(i18n.getMessagesbyContext(c).OperationFailedMsg, 500);

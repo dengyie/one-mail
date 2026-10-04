@@ -59,6 +59,30 @@ res = requests.post(
 )
 ```
 
+## 客户端来源头与发件箱过滤
+
+网页发信工作台会带 `x-one-mail-client: web`。SMTP 代理会带 `x-one-mail-client: smtp-proxy`。其它值会被忽略。
+
+| 入口 | 默认 `source` |
+|------|----------------|
+| `POST /api/send_mail` + `web` | `user_ui` |
+| `POST /api/send_mail`（无有效头） | `user_api` |
+| `POST /external/api/send_mail`（无有效头） | `external_api` |
+| `POST /external/api/send_mail` + `smtp-proxy` | `smtp_proxy` |
+
+`GET /api/sendbox` 与 `GET /admin/sendbox` 支持：
+
+- `source`：逗号分隔白名单（`user_ui,user_api,external_api,smtp_proxy,admin,admin_binding,system_otp,unknown`）
+- `q`：按主题或收件人搜索，最长 80 字符；含 `%` `_` `\` 或控制符时返回空结果
+- `from` / `to`：时间范围（epoch 秒或 ISO）
+
+响应每行保留 `id,address,raw,created_at`，并带解析后的 `source`、`channel`、`to_mail`、`subject`、`provider_message_id`。旧行没有 `source` 时显示为 `unknown`。Resend 成功时会把 `data.id` 写入 `provider_message_id`。
+
+管理员未知投递（服务商 503、配额预约停在 `dispatch_state=unknown`）：
+
+- `GET /admin/send_mail/unknown`：列出未确认送达的预约
+- `POST /admin/send_mail/unknown/:id/resolve`：body `{ "outcome": "sent" | "rejected" }`。`sent` 保留额度，`rejected` 释放预约并退回额度
+
 ## 通过 SMTP 发送邮件
 
 请先参考 [配置 SMTP 代理](/zh/guide/feature/config-smtp-proxy.html)。

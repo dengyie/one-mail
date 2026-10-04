@@ -32,6 +32,7 @@ import WorkerConfig from './admin/WorkerConfig.vue'
 import IpBlacklistSettings from './admin/IpBlacklistSettings.vue'
 import AiExtractSettings from './admin/AiExtractSettings.vue'
 import AdminSendMail from './admin/SendMail.vue'
+import UnknownSendMail from './admin/UnknownSendMail.vue'
 
 const {
   adminAuth, showAdminAuth, adminTab, loading,
@@ -76,6 +77,8 @@ const currentAdminView = computed(() => {
   if (p.includes('/admin/settings')) return 'settings'
   if (p.includes('/admin/sender-access')) return 'sender_access'
   if (p.includes('/admin/sendmail')) return 'send_mail'
+  if (p.includes('/admin/sendbox')) return 'send_box'
+  if (p.includes('/admin/send-unknown')) return 'send_unknown'
   if (p.includes('/admin/accounts')) return 'accounts'
   
   // 兼容根据 store adminTab 渲染
@@ -87,6 +90,8 @@ const currentAdminView = computed(() => {
   if (adminTab.value === 'account_settings') return 'settings'
   if (adminTab.value === 'sender_access') return 'sender_access'
   if (adminTab.value === 'send_mail') return 'send_mail'
+  if (adminTab.value === 'sendBox') return 'send_box'
+  if (adminTab.value === 'sendUnknown') return 'send_unknown'
   return 'accounts'
 })
 
@@ -224,6 +229,28 @@ onMounted(async () => {
           </div>
         </div>
         <AdminSendMail />
+      </div>
+
+      <!-- 全站出站记录 -->
+      <div v-else-if="currentAdminView === 'send_box'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">出站记录</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">按地址、来源与关键词查询全站已发邮件，验证码正文默认折叠</p>
+          </div>
+        </div>
+        <SendBox />
+      </div>
+
+      <!-- 未知投递 -->
+      <div v-else-if="currentAdminView === 'send_unknown'" class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800/80">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">未知投递</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">服务商未确认送达的出站请求。标记已送达会保留额度，标记失败会退回额度。</p>
+          </div>
+        </div>
+        <UnknownSendMail />
       </div>
 
     </div>

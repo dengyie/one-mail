@@ -1,10 +1,12 @@
 <script setup>
 import { ref, h, onMounted, watch, computed } from 'vue';
 import { NBadge, useMessage } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import { useScopedI18n } from '@/i18n/app'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
+import { getRouterPathWithLang } from '../../utils'
 import { NButton, NMenu } from 'naive-ui';
 import { MenuFilled } from '@vicons/material'
 import AddressCredentialModal from '../../components/AddressCredentialModal.vue'
@@ -14,8 +16,9 @@ const {
     adminMailTabAddress, adminSendBoxTabAddress
 } = useGlobalState()
 const message = useMessage()
+const router = useRouter()
 
-const { t } = useScopedI18n('views.admin.Account')
+const { t, locale } = useScopedI18n('views.admin.Account')
 
 const showEmailCredential = ref(false)
 const curEmailCredential = ref("")
@@ -342,6 +345,7 @@ const columns = computed(() => [
                         if (row.send_count > 0) {
                             adminSendBoxTabAddress.value = row.name;
                             adminTab.value = "sendBox";
+                            router.push(getRouterPathWithLang('/admin/sendbox', locale.value));
                         }
                     }
                 },

@@ -179,6 +179,40 @@ jobs:
             echo "Remote D1 mutation job schema is current"
           fi
 
+      - name: Ensure remote D1 sendbox source schema
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare credentials::D1 migrations require CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+          cd worker/
+          trap 'rm -f ../.d1-sendbox-schema.json ../.d1-sendbox-source.sql' EXIT
+
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --command "PRAGMA table_info(sendbox)" \
+            --json > ../.d1-sendbox-schema.json
+
+          python3 ../db/render_sendbox_source_migration.py \
+            --schema-json ../.d1-sendbox-schema.json \
+            --migration ../db/2026-10-04-sendbox-source.sql \
+            --output ../.d1-sendbox-source.sql
+
+          if [ -s ../.d1-sendbox-source.sql ]; then
+            pnpm exec wrangler d1 execute DB \
+              --remote \
+              --yes \
+              --file ../.d1-sendbox-source.sql
+            echo "Remote D1 sendbox source schema is current"
+          else
+            echo "Remote D1 sendbox table is not initialized yet; fresh initialization will create the current schema"
+          fi
+
       - name: Deploy Backend for ${{ github.ref_name }}
         shell: bash
         env:

@@ -403,6 +403,7 @@ export const hashSendMailRequest = async (value: unknown): Promise<string> => {
 };
 
 export type SendMailLimitReservation = {
+    id?: string;
     replay?: "sent" | "unknown";
     markDispatchStarted: () => Promise<void>;
     markDispatchSucceeded: () => Promise<void>;
@@ -475,8 +476,8 @@ export const reserveSendMailLimit = async (
             const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state, sender_address, balance_reserved, balance_refunded FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
             if (existing) {
                 if (existing.request_hash !== requestHash) throw new SendMailIdempotencyConflictError();
-                if (existing.status === "committed" || existing.dispatch_state === "sent") return { replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
-                if (existing.dispatch_state === "unknown" || existing.status === "active") return { replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                if (existing.status === "committed" || existing.dispatch_state === "sent") return { id: existing.id, replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                if (existing.dispatch_state === "unknown" || existing.status === "active") return { id: existing.id, replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
                 await c.env.DB.prepare("DELETE FROM send_mail_limit_reservations WHERE id = ? AND status = 'released'").bind(existing.id).run();
             }
         }
@@ -507,6 +508,7 @@ export const reserveSendMailLimit = async (
 
         let settled = false;
         return {
+            id,
             markDispatchStarted: async () => { await updateDispatchState(c, id, "unknown", "pending"); },
             markDispatchSucceeded: async () => { await updateDispatchState(c, id, "sent", "unknown"); },
             markBalanceReserved: async (address: string, addressId: string | number) => { await markBalanceReserved(c, id, address, addressId); },
@@ -529,8 +531,8 @@ export const reserveSendMailLimit = async (
             const existing = await c.env.DB.prepare("SELECT id, request_hash, status, dispatch_state FROM send_mail_limit_reservations WHERE idempotency_key = ?").bind(idempotencyKey).first<ExistingReservation>();
             if (existing) {
                 if (existing.request_hash !== requestHash) throw new SendMailIdempotencyConflictError();
-                if (existing.status === "committed" || existing.dispatch_state === "sent") return { replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
-                return { replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                if (existing.status === "committed" || existing.dispatch_state === "sent") return { id: existing.id, replay: "sent", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
+                return { id: existing.id, replay: "unknown", markDispatchStarted: async()=>{}, markDispatchSucceeded: async()=>{}, markBalanceReserved: async()=>{}, commit: async()=>{}, release: async()=>{} };
             }
         }
         console.error("Failed to reserve send mail limit", error);

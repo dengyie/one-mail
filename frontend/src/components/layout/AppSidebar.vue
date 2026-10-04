@@ -105,12 +105,13 @@ const activeRoute = computed(() => {
   if (p.includes('/admin/settings')) return 'admin_settings'
   if (p.includes('/admin/sender-access')) return 'admin_sender_access'
   if (p.includes('/admin/sendmail')) return 'admin_send_mail'
+  if (p.includes('/admin/sendbox')) return 'admin_send_box'
+  if (p.includes('/admin/send-unknown')) return 'admin_send_unknown'
   if (p.includes('/admin/accounts') || p.endsWith('/admin')) return 'admin_accounts'
   
   if (p.includes('/domain-mailbox')) return 'domain_mailbox'
   if (p.includes('/unified')) return 'unified'
-  if (p.includes('/sendmail')) return 'sendmail'
-  if (p.includes('/sendbox')) return 'sendbox'
+  if (p.includes('/sendmail') || p.includes('/sendbox')) return 'sendmail'
   if (p.includes('/webhook')) return 'webhook'
   
   if (p.includes('/user/addresses')) return 'user_addresses'
@@ -180,17 +181,7 @@ const activeRoute = computed(() => {
             :class="activeRoute === 'sendmail' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >
             <n-icon size="18" :component="SendFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">发送邮件</span>
-          </button>
-
-          <button
-            v-if="(hasAddressSession || isAdmin) && openSettings.enableSendMail"
-            @click="handleNavigate('/sendbox')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'sendbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="SendAndArchiveFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">已发信箱</span>
+            <span v-if="!collapsed" class="truncate">{{ t('sendmail') }}</span>
           </button>
 
           <button
@@ -359,6 +350,24 @@ const activeRoute = computed(() => {
           >
             <n-icon size="18" :component="SendFilled" class="text-amber-400 shrink-0" />
             <span v-if="!collapsed" class="truncate">管理员专属发信</span>
+          </button>
+
+          <button
+            @click="handleNavigate('/admin/sendbox')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeRoute === 'admin_send_box' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="SendAndArchiveFilled" class="text-amber-400 shrink-0" />
+            <span v-if="!collapsed" class="truncate">{{ t('sendboxAdmin') }}</span>
+          </button>
+
+          <button
+            @click="handleNavigate('/admin/send-unknown')"
+            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
+            :class="activeRoute === 'admin_send_unknown' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          >
+            <n-icon size="18" :component="SendAndArchiveFilled" class="text-amber-400 shrink-0" />
+            <span v-if="!collapsed" class="truncate">{{ t('sendUnknown') }}</span>
           </button>
         </div>
 

@@ -31,10 +31,23 @@ const props = defineProps({
     default: () => { },
     required: false
   },
+  collapseOtp: {
+    type: Boolean,
+    default: false
+  },
+  emptyDescription: {
+    type: String,
+    default: ''
+  },
+  quietRefreshKey: {
+    type: Number,
+    default: 0
+  },
 })
 
 const { isDark, mailboxSplitSize, loading, useUTCDate } = useGlobalState()
 const data = ref([])
+let refreshPending = false
 
 const count = ref(0)
 const page = ref(1)
@@ -42,6 +55,39 @@ const pageSize = ref(20)
 
 const curMail = ref(null);
 const showCode = ref(false)
+const revealOtp = ref(false)
+
+const SOURCE_TAG = {
+  user_ui: { type: 'success', key: 'sourceUserUi' },
+  user_api: { type: 'info', key: 'sourceUserApi' },
+  external_api: { type: 'info', key: 'sourceExternalApi' },
+  smtp_proxy: { type: 'warning', key: 'sourceSmtpProxy' },
+  admin: { type: 'error', key: 'sourceAdmin' },
+  admin_binding: { type: 'error', key: 'sourceAdminBinding' },
+  system_otp: { type: 'warning', key: 'sourceSystemOtp' },
+  unknown: { type: 'default', key: 'sourceUnknown' },
+}
+
+const CHANNEL_TAG = {
+  resend: { type: 'success', key: 'channelResend' },
+  smtp: { type: 'info', key: 'channelSmtp' },
+  binding: { type: 'warning', key: 'channelBinding' },
+  verified_binding: { type: 'warning', key: 'channelVerifiedBinding' },
+}
+
+const historyT = useScopedI18n('components.SendHistory').t
+
+const sourceLabel = (row) => {
+  const meta = SOURCE_TAG[row?.source] || SOURCE_TAG.unknown
+  return { type: meta.type, text: historyT(meta.key) }
+}
+
+const channelLabel = (row) => {
+  const meta = CHANNEL_TAG[row?.channel]
+  return meta ? { type: meta.type, text: historyT(meta.key) } : null
+}
+
+const shouldHideOtp = (row) => props.collapseOtp && row?.source === 'system_otp' && !revealOtp.value
 
 // 邮件正文为 HTML 时消毒后再渲染（与 MailContentRenderer/ShadowHtmlComponent 同一 sanitize 机制，防 XSS）
 const safeContent = computed(() => sanitizeHtml(curMail.value?.content || ''))
@@ -58,7 +104,15 @@ watch([page, pageSize], async ([page, pageSize], [oldPage, oldPageSize]) => {
   }
 })
 
-const refresh = async () => {
+watch(() => props.quietRefreshKey, async (next, prev) => {
+  if (next !== prev) {
+    await refresh({ quiet: true });
+  }
+})
+
+const refresh = async ({ quiet = false } = {}) => {
+  if (refreshPending) return
+  refreshPending = true
   try {
     const { results, count: totalCount } = await props.fetchMailData(
       pageSize.value, (page.value - 1) * pageSize.value
@@ -66,40 +120,50 @@ const refresh = async () => {
     data.value = results.map((item) => {
       try {
         const data = JSON.parse(item.raw);
+        item.source = item.source || data.source || 'unknown';
+        item.channel = item.channel || data.channel || null;
+        item.provider_message_id = item.provider_message_id || data.provider_message_id || null;
         if (data.version == "v2") {
-          item.to_mail = data.to_name ? `${data.to_name} <${data.to_mail}>` : data.to_mail;
-          item.subject = data.subject;
+          item.to_mail = item.to_mail || (data.to_name ? `${data.to_name} <${data.to_mail}>` : data.to_mail);
+          item.subject = item.subject || data.subject;
           item.is_html = data.is_html;
           item.content = data.content;
           item.raw = JSON.stringify(data, null, 2);
         } else {
-          item.to_mail = data?.personalizations?.map(
+          item.to_mail = item.to_mail || data?.personalizations?.map(
             (p) => p.to?.map((t) => t.email).join(',')
           ).join(';');
-          item.subject = data.subject;
+          item.subject = item.subject || data.subject;
           item.is_html = (data.content[0]?.type != 'text/plain');
           item.content = data.content[0]?.value;
           item.raw = JSON.stringify(data, null, 2);
         }
       } catch (error) {
         console.log(error);
+        item.source = item.source || 'unknown';
+        item.provider_message_id = item.provider_message_id || null;
       }
       return item;
     });
-    if (totalCount > 0) {
+    if (typeof totalCount === 'number' && page.value === 1) {
       count.value = totalCount;
     }
     if (!isMobile.value && !curMail.value && data.value.length > 0) {
       curMail.value = data.value[0];
     }
   } catch (error) {
-    message.error(error.message || "error");
+    if (!quiet) {
+      message.error(error.message || "error");
+    }
     console.error(error);
+  } finally {
+    refreshPending = false
   }
 };
 
 const clickRow = async (row) => {
   curMail.value = row;
+  revealOtp.value = false;
 };
 
 const mailItemClass = (row) => {
@@ -243,6 +307,15 @@ onMounted(async () => {
                     <n-tag type="info">
                       TO: {{ row.to_mail }}
                     </n-tag>
+                    <n-tag :type="sourceLabel(row).type">
+                      {{ sourceLabel(row).text }}
+                    </n-tag>
+                    <n-tag v-if="channelLabel(row)" :type="channelLabel(row).type">
+                      {{ channelLabel(row).text }}
+                    </n-tag>
+                    <n-tag v-if="row.provider_message_id" type="default">
+                      {{ historyT('providerId') }}: {{ row.provider_message_id }}
+                    </n-tag>
                   </template>
                 </n-thing>
               </n-list-item>
@@ -265,6 +338,15 @@ onMounted(async () => {
               <n-tag type="info">
                 TO: {{ curMail.to_mail }}
               </n-tag>
+              <n-tag :type="sourceLabel(curMail).type">
+                {{ sourceLabel(curMail).text }}
+              </n-tag>
+              <n-tag v-if="channelLabel(curMail)" :type="channelLabel(curMail).type">
+                {{ channelLabel(curMail).text }}
+              </n-tag>
+              <n-tag v-if="curMail.provider_message_id" type="default">
+                {{ historyT('providerId') }}: {{ curMail.provider_message_id }}
+              </n-tag>
               <n-button size="small" tertiary type="info" @click="showCode = !showCode">
                 {{ t('showCode') }}
               </n-button>
@@ -275,12 +357,16 @@ onMounted(async () => {
                 {{ t('deleteMailTip') }}
               </n-popconfirm>
             </n-space>
-            <pre v-if="showCode" style="margin-top: 10px;">{{ curMail.raw }}</pre>
+            <div v-if="shouldHideOtp(curMail)" class="mt-3 space-y-2">
+              <n-alert type="warning" :bordered="false">{{ historyT('otpCollapsed') }}</n-alert>
+              <n-button size="small" tertiary @click="revealOtp = true">{{ historyT('revealOtp') }}</n-button>
+            </div>
+            <pre v-else-if="showCode" style="margin-top: 10px;">{{ curMail.raw }}</pre>
             <pre v-else-if="!curMail.is_html" style="margin-top: 10px;">{{ curMail.content }}</pre>
             <div v-else v-html="safeContent" style="margin-top: 10px;"></div>
           </n-card>
           <n-card :bordered="false" embedded class="mail-item" v-else>
-            <n-result status="info" :title="count === 0 ? t('emptySent') : t('pleaseSelectMail')">
+            <n-result status="info" :title="count === 0 ? (emptyDescription || t('emptySent')) : t('pleaseSelectMail')">
               <template #icon>
                 <n-icon :component="SendRound" :size="100" />
               </template>
@@ -315,6 +401,15 @@ onMounted(async () => {
                 <n-tag type="info">
                   TO: {{ row.to_mail }}
                 </n-tag>
+                <n-tag :type="sourceLabel(row).type">
+                  {{ sourceLabel(row).text }}
+                </n-tag>
+                <n-tag v-if="channelLabel(row)" :type="channelLabel(row).type">
+                  {{ channelLabel(row).text }}
+                </n-tag>
+                <n-tag v-if="row.provider_message_id" type="default">
+                  {{ historyT('providerId') }}: {{ row.provider_message_id }}
+                </n-tag>
               </template>
             </n-thing>
           </n-list-item>
@@ -337,6 +432,15 @@ onMounted(async () => {
               <n-tag type="info">
                 TO: {{ curMail.to_mail }}
               </n-tag>
+              <n-tag :type="sourceLabel(curMail).type">
+                {{ sourceLabel(curMail).text }}
+              </n-tag>
+              <n-tag v-if="channelLabel(curMail)" :type="channelLabel(curMail).type">
+                {{ channelLabel(curMail).text }}
+              </n-tag>
+              <n-tag v-if="curMail.provider_message_id" type="default">
+                {{ historyT('providerId') }}: {{ curMail.provider_message_id }}
+              </n-tag>
               <n-button size="small" tertiary type="info" @click="showCode = !showCode">
                 {{ t('showCode') }}
               </n-button>
@@ -347,7 +451,11 @@ onMounted(async () => {
                 {{ t('deleteMailTip') }}
               </n-popconfirm>
             </n-space>
-            <pre v-if="showCode" style="margin-top: 10px;">{{ curMail.raw }}</pre>
+            <div v-if="shouldHideOtp(curMail)" class="mt-3 space-y-2">
+              <n-alert type="warning" :bordered="false">{{ historyT('otpCollapsed') }}</n-alert>
+              <n-button size="small" tertiary @click="revealOtp = true">{{ historyT('revealOtp') }}</n-button>
+            </div>
+            <pre v-else-if="showCode" style="margin-top: 10px;">{{ curMail.raw }}</pre>
             <pre v-else-if="!curMail.is_html" style="margin-top: 10px;">{{ curMail.content }}</pre>
             <div v-else v-html="safeContent" style="margin-top: 10px;"></div>
           </n-card>
