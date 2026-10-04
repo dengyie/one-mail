@@ -1,5 +1,6 @@
 <script setup>
 import { useMessage } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
 import { useScopedI18n } from '@/i18n/app'
@@ -7,8 +8,10 @@ import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { useSessionStorage } from '@vueuse/core'
 import { api } from '../../api'
 import { sanitizeHtml } from '../../utils/sanitize-html'
+import { getRouterPathWithLang } from '../../utils'
 import { getSendMailIdempotencyKey, clearSendMailIdempotencyKey } from '../../utils/idempotency'
 
+const router = useRouter()
 const message = useMessage()
 const isPreview = ref(false)
 const editorRef = shallowRef()
@@ -39,7 +42,7 @@ const sendMailModel = useSessionStorage('sendMailByAdminModel', {
     content: "",
 });
 
-const { t } = useScopedI18n('views.admin.SendMail')
+const { t, locale } = useScopedI18n('views.admin.SendMail')
 
 const contentTypes = [
     { label: t('text'), value: 'text' },
@@ -131,6 +134,7 @@ const send = async () => {
         }
         resetSendMailIdempotencyKey()
         message.success(t("successSend"));
+        router.push(getRouterPathWithLang('/admin/sendbox', locale.value))
     } catch (error) {
         if (error?.status !== 503) resetSendMailIdempotencyKey()
         message.error(error?.status === 503 ? t('deliveryUnknown') : (error.message || "error"));
@@ -170,6 +174,8 @@ const handleCreated = (editor) => {
     <div class="center">
         <n-card :bordered="false" embedded>
             <n-flex justify="end">
+                <n-button tertiary @click="router.push(getRouterPathWithLang('/admin/sendbox', locale.value))">{{ t('viewOutbound') }}</n-button>
+                <n-button tertiary @click="router.push(getRouterPathWithLang('/admin/send-unknown', locale.value))">{{ t('viewUnknown') }}</n-button>
                 <n-button type="primary" :loading="sending" :disabled="sending" @click="send">{{ t('send') }}</n-button>
             </n-flex>
             <div class="left">

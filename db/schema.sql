@@ -59,12 +59,19 @@ CREATE TABLE IF NOT EXISTS sendbox (
     id INTEGER PRIMARY KEY,
     address TEXT,
     raw TEXT,
+    source TEXT,
+    channel TEXT,
+    provider_message_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_sendbox_address ON sendbox(address);
 
 CREATE INDEX IF NOT EXISTS idx_sendbox_created_at ON sendbox(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_sendbox_source ON sendbox(source);
+
+CREATE INDEX IF NOT EXISTS idx_sendbox_address_source ON sendbox(address, source);
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,

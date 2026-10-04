@@ -271,6 +271,88 @@ export const MESSAGE_REGISTRY = {
       "zh": "取消全选"
     }
   },
+  "components.SendHistory": {
+    "searchPlaceholder": {
+      "en": "Search subject or recipient",
+      "zh": "搜索主题或收件人"
+    },
+    "fromTime": {
+      "en": "From",
+      "zh": "开始时间"
+    },
+    "toTime": {
+      "en": "To",
+      "zh": "结束时间"
+    },
+    "search": {
+      "en": "Search",
+      "zh": "搜索"
+    },
+    "channelAll": {
+      "en": "All channels",
+      "zh": "全部渠道"
+    },
+    "channelResend": {
+      "en": "Resend",
+      "zh": "Resend"
+    },
+    "channelSmtp": {
+      "en": "SMTP",
+      "zh": "SMTP"
+    },
+    "channelBinding": {
+      "en": "Binding",
+      "zh": "绑定发送"
+    },
+    "channelVerifiedBinding": {
+      "en": "Verified Binding",
+      "zh": "已验证绑定"
+    },
+    "sourceUserUi": {
+      "en": "Workbench",
+      "zh": "工作台"
+    },
+    "sourceUserApi": {
+      "en": "User API",
+      "zh": "用户 API"
+    },
+    "sourceExternalApi": {
+      "en": "External API",
+      "zh": "外部 API"
+    },
+    "sourceSmtpProxy": {
+      "en": "SMTP Proxy",
+      "zh": "SMTP 代理"
+    },
+    "sourceAdmin": {
+      "en": "Admin",
+      "zh": "管理员"
+    },
+    "sourceAdminBinding": {
+      "en": "Admin Binding",
+      "zh": "管理员绑定"
+    },
+    "sourceSystemOtp": {
+      "en": "System OTP",
+      "zh": "系统验证码"
+    },
+    "sourceUnknown": {
+      "en": "Unknown",
+      "zh": "未知来源"
+    },
+    "otpCollapsed": {
+      "en": "OTP content is hidden. Reveal only when you need to inspect it.",
+      "zh": "验证码正文已折叠。需要核验时再展开。"
+    },
+    "revealOtp": {
+      "en": "Reveal OTP",
+      "zh": "展开验证码"
+    },
+    "providerId": {
+      "en": "Provider ID",
+      "zh": "服务商 ID"
+    }
+  },
   "components.AddressSelect": {
     "address": {
       "en": "Address",
@@ -455,8 +537,8 @@ export const MESSAGE_REGISTRY = {
       "zh": "发件箱"
     },
     "sendmail": {
-      "en": "Send Mail",
-      "zh": "发送邮件"
+      "en": "Send",
+      "zh": "发信"
     },
     "webhookSettings": {
       "en": "Webhook Settings",
@@ -595,6 +677,18 @@ export const MESSAGE_REGISTRY = {
     "user_settings": {
       "en": "User Settings",
       "zh": "用户设置"
+    },
+    "sendmail": {
+      "en": "Send",
+      "zh": "发信"
+    },
+    "sendboxAdmin": {
+      "en": "Outbound Log",
+      "zh": "出站记录"
+    },
+    "sendUnknown": {
+      "en": "Unknown Delivery",
+      "zh": "未知投递"
     },
     "webhookSettings": {
       "en": "Webhook Settings",
@@ -1337,6 +1431,92 @@ export const MESSAGE_REGISTRY = {
       "zh": "文件过大, 请上传小于1MB的文件。"
     }
   },
+  "views.index.SendWorkbench": {
+    "title": {
+      "en": "Send Workbench",
+      "zh": "发信工作台"
+    },
+    "subtitle": {
+      "en": "Compose mail, then review what you sent and what the system sent for you.",
+      "zh": "编写邮件，并查看自己发出的与系统代发的记录。"
+    },
+    "addressLabel": {
+      "en": "From",
+      "zh": "发件身份"
+    },
+    "adminUnlimited": {
+      "en": "Admin unlimited quota",
+      "zh": "管理员无限额度"
+    },
+    "balance": {
+      "en": "{n} sends left",
+      "zh": "{n} 封可用额度"
+    },
+    "statusLoading": {
+      "en": "Loading",
+      "zh": "加载中"
+    },
+    "statusReady": {
+      "en": "Ready",
+      "zh": "可发送"
+    },
+    "statusNoAddress": {
+      "en": "No address",
+      "zh": "未激活地址"
+    },
+    "tabCompose": {
+      "en": "Compose",
+      "zh": "写邮件"
+    },
+    "tabSelf": {
+      "en": "Sent by me",
+      "zh": "我发出的"
+    },
+    "tabSystem": {
+      "en": "Sent by system",
+      "zh": "系统代发"
+    },
+    "chipCompose": {
+      "en": "New mail",
+      "zh": "写新邮件"
+    },
+    "chipSelf": {
+      "en": "Sent by me",
+      "zh": "我发出的"
+    },
+    "chipSystem": {
+      "en": "Sent by system",
+      "zh": "系统代发"
+    },
+    "chipAll": {
+      "en": "All sent",
+      "zh": "全部已发"
+    },
+    "chipRefresh": {
+      "en": "Refresh",
+      "zh": "刷新"
+    },
+    "emptySelf": {
+      "en": "Nothing sent from this workbench yet.",
+      "zh": "还没有通过工作台发出的邮件。"
+    },
+    "emptySystem": {
+      "en": "No API, SMTP, or admin mail for this address yet.",
+      "zh": "还没有 API、SMTP 或管理员代发的邮件。"
+    },
+    "emptyAll": {
+      "en": "No sent mail for this address yet.",
+      "zh": "当前地址还没有已发邮件。"
+    },
+    "autoRefreshOn": {
+      "en": "Auto 15s",
+      "zh": "15秒刷新"
+    },
+    "autoRefreshOff": {
+      "en": "Manual",
+      "zh": "手动刷新"
+    }
+  },
   "views.index.SimpleIndex": {
     "accountSettings": {
       "en": "Account Settings",
@@ -1467,6 +1647,18 @@ export const MESSAGE_REGISTRY = {
     "queryTip": {
       "en": "Please input address to query, leave blank to query all",
       "zh": "请输入地址查询, 留空则查询所有"
+    },
+    "allSources": {
+      "en": "All sources",
+      "zh": "全部来源"
+    },
+    "autoRefreshOn": {
+      "en": "Auto 15s",
+      "zh": "15秒刷新"
+    },
+    "autoRefreshOff": {
+      "en": "Manual",
+      "zh": "手动刷新"
     }
   },
   "views.admin.AiExtractSettings": {
@@ -1575,6 +1767,72 @@ export const MESSAGE_REGISTRY = {
     "tooLarge": {
       "en": "Too large file, please upload file less than 1MB.",
       "zh": "文件过大, 请上传小于1MB的文件。"
+    },
+    "viewOutbound": {
+      "en": "View outbound log",
+      "zh": "查看出站记录"
+    },
+    "viewUnknown": {
+      "en": "Unknown deliveries",
+      "zh": "查看未知投递"
+    }
+  },
+  "views.admin.UnknownSendMail": {
+    "actions": {
+      "en": "Actions",
+      "zh": "操作"
+    },
+    "balanceReserved": {
+      "en": "Reserved quota",
+      "zh": "占用额度"
+    },
+    "count": {
+      "en": "{n} unknown deliveries",
+      "zh": "{n} 条未知投递"
+    },
+    "empty": {
+      "en": "No unknown deliveries right now.",
+      "zh": "当前没有未知投递。"
+    },
+    "expiresAt": {
+      "en": "Expires",
+      "zh": "过期时间"
+    },
+    "id": {
+      "en": "Reservation ID",
+      "zh": "预约 ID"
+    },
+    "markRejected": {
+      "en": "Mark failed",
+      "zh": "标记失败"
+    },
+    "markRejectedTip": {
+      "en": "Release this reservation and refund the quota if one was reserved.",
+      "zh": "释放这条预约，并在占用了额度时退回额度。"
+    },
+    "markSent": {
+      "en": "Mark sent",
+      "zh": "标记已送达"
+    },
+    "markSentTip": {
+      "en": "Keep the quota used and close this unknown delivery as sent.",
+      "zh": "保留已占用额度，并把这条未知投递记为已送达。"
+    },
+    "refresh": {
+      "en": "Refresh",
+      "zh": "刷新"
+    },
+    "resolved": {
+      "en": "Delivery resolved",
+      "zh": "已处理未知投递"
+    },
+    "sender": {
+      "en": "From",
+      "zh": "发件地址"
+    },
+    "updatedAt": {
+      "en": "Updated",
+      "zh": "更新时间"
     }
   },
   "views.admin.Account": {

@@ -59,6 +59,30 @@ res = requests.post(
 )
 ```
 
+## Client source header and sendbox filters
+
+The web send workbench sends `x-one-mail-client: web`. The SMTP proxy sends `x-one-mail-client: smtp-proxy`. Any other value is ignored.
+
+| Endpoint | Default `source` |
+|----------|------------------|
+| `POST /api/send_mail` + `web` | `user_ui` |
+| `POST /api/send_mail` (no valid header) | `user_api` |
+| `POST /external/api/send_mail` (no valid header) | `external_api` |
+| `POST /external/api/send_mail` + `smtp-proxy` | `smtp_proxy` |
+
+`GET /api/sendbox` and `GET /admin/sendbox` accept:
+
+- `source`: comma-separated whitelist (`user_ui,user_api,external_api,smtp_proxy,admin,admin_binding,system_otp,unknown`)
+- `q`: search subject or recipient, max 80 chars; `%` `_` `\` or control characters return empty results
+- `from` / `to`: time range (epoch seconds or ISO)
+
+Each row still includes `id,address,raw,created_at`, plus parsed `source`, `channel`, `to_mail`, `subject`, and `provider_message_id`. Older rows without `source` are shown as `unknown`. A successful Resend send stores `data.id` as `provider_message_id`.
+
+Admin unknown deliveries (provider 503, reservation stuck at `dispatch_state=unknown`):
+
+- `GET /admin/send_mail/unknown`: list unconfirmed outbound reservations
+- `POST /admin/send_mail/unknown/:id/resolve`: body `{ "outcome": "sent" | "rejected" }`. `sent` keeps quota; `rejected` releases the reservation and refunds quota
+
 ## Send Email via SMTP
 
 Please first refer to [Configure SMTP Proxy](/en/guide/feature/config-smtp-proxy.html).
