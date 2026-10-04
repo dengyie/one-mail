@@ -359,13 +359,13 @@ import { useRouter } from 'vue-router'
 import { SearchRound, RefreshRound } from '@vicons/material'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
-import { useGlobalState } from '../store'
+import { useGlobalState, MIN_AUTO_REFRESH_INTERVAL } from '../store'
 import StatusIndicator from '../components/ai/StatusIndicator.vue'
 import PromptChips from '../components/ai/PromptChips.vue'
 import { useMessage } from 'naive-ui'
 
 const { t } = useScopedI18n('unified')
-const { unifiedApiKey, adminAuth, userJwt, userSettings } = useGlobalState()
+const { unifiedApiKey, adminAuth, userJwt, userSettings, configAutoRefreshInterval } = useGlobalState()
 const router = useRouter()
 const message = useMessage()
 
@@ -415,7 +415,11 @@ const activeTab = ref('list')
 
 // ---- 邮件列表 ----
 const PAGE_SIZE = 20
-const AUTO_REFRESH_MS = 5000
+// 刷新频率上限：跟随全局设置，但不允许高于 MIN_AUTO_REFRESH_INTERVAL 的频率。
+// 历史版本曾硬编码 5s 轮询，每次都附带 COUNT(*) 全表扫描，会烧穿 D1 rows_read 免费额度。
+const refreshIntervalMs = computed(() => (
+  Math.max(MIN_AUTO_REFRESH_INTERVAL, Number(configAutoRefreshInterval.value) || MIN_AUTO_REFRESH_INTERVAL) * 1000
+))
 const emails = ref([])
 const count = ref(0)
 const loading = ref(false)
@@ -462,6 +466,11 @@ let codesRequestSeq = 0
 let statusRequestSeq = 0
 let backgroundListPending = false
 let backgroundCodesPending = false
+
+// 增量探测基线：最新一封邮件的 (received_at, id) 指纹。轮询先做 1 行探测，
+// 基线没变化就完全不拉列表、不跑 COUNT(*)，避免无谓的 D1 rows_read。
+const emailSortKey = (row) => `${Number(row?.received_at) || 0}:${row?.id ?? ''}`
+let newestSeenKey = ''
 let autoRefreshTimer = null
 let componentDisposed = false
 const autoRefresh = ref(true)
@@ -487,6 +496,10 @@ const loadList = async ({ background = false } = {}) => {
     // The first page already includes the scoped count; avoid a second full-table scan.
     if (requestedPage === 1 && typeof listRes.count === 'number') {
       count.value = listRes.count
+    }
+    // 刷新探测基线（仅第一页代表全域最新一封）
+    if (requestedPage === 1 && emails.value.length > 0) {
+      newestSeenKey = emailSortKey(emails.value[0])
     }
     listError.value = ''
     connected.value = true
@@ -514,6 +527,13 @@ const applyFilter = () => { page.value = 1; loadList() }
 const setPage = (p) => { page.value = p; loadList() }
 const openDetail = (id) => router.push({ path: `/unified/${id}` })
 
+const probeNewestKey = async () => {
+  // 探测请求只取 1 行，且 with_count=0 让 worker 跳过 COUNT(*) 全表扫描
+  const probeRes = await api.unified.listEmails({ ...filterParams.value, limit: 1, offset: 0, with_count: 0 })
+  const top = (probeRes.results || [])[0]
+  return top ? emailSortKey(top) : ''
+}
+
 const autoRefreshList = () => {
   if (!autoRefresh.value || !hasAccess.value) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
@@ -524,12 +544,25 @@ const autoRefreshList = () => {
     return
   }
   if (loading.value || backgroundListPending) return
-  void loadList({ background: true })
+  void (async () => {
+    let newestKey = ''
+    try {
+      newestKey = await probeNewestKey()
+    } catch (e) {
+      if (!backgroundListPending) connected.value = false
+      return
+    }
+    const hasNew = newestKey !== newestSeenKey
+    newestSeenKey = newestKey
+    if (hasNew && !backgroundListPending) {
+      await loadList({ background: true })
+    }
+  })()
 }
 
 const startAutoRefresh = () => {
   if (autoRefreshTimer != null || typeof window === 'undefined') return
-  autoRefreshTimer = window.setInterval(autoRefreshList, AUTO_REFRESH_MS)
+  autoRefreshTimer = window.setInterval(autoRefreshList, refreshIntervalMs.value)
 }
 
 const stopAutoRefresh = () => {
@@ -870,6 +903,7 @@ watch(authIdentity, (identity, previousIdentity) => {
   listRequestSeq += 1
   codesRequestSeq += 1
   statusRequestSeq += 1
+  newestSeenKey = ''
   resetOptions()
   connected.value = false
   loading.value = false
@@ -895,6 +929,14 @@ watch(autoRefresh, (enabled) => {
     startAutoRefresh()
   } else {
     stopAutoRefresh()
+  }
+})
+
+// 设置里调整刷新间隔后，重排已挂载的定时器
+watch(refreshIntervalMs, () => {
+  if (autoRefreshTimer != null) {
+    stopAutoRefresh()
+    startAutoRefresh()
   }
 })
 

@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend/Worker| 统一收件箱去掉 5 秒硬编码轮询，止损 D1 rows_read。旧轮询每次刷新都附带 `COUNT(*)` 全量计数，读取随 emails 表规模线性放大，开一个页面约 40–75 分钟即可烧穿 D1 免费套餐每日 500 万 rows_read。现在：①刷新间隔跟随「外观设置」的全局自动刷新间隔，并在 store 统一钳制 30s 频率上限（外观滑条最低从 5s 提到 30s，临时邮箱/域名邮箱等所有轮询视图一并生效）；②后台自动刷新改为增量探测——每次只取最新 1 封，`with_count=0` 让 Worker 跳过 `COUNT(*)`，最新邮件没变化就完全不拉列表、不做计数；`/api/unified/emails` 新增 `with_count=0` 参数（`handleListQuery` 支持 `skipCount`）。探测请求的读取量从 O(全表) 降到 O(1) 行。
+
 - feat: |Frontend| 账号登录后侧栏隐藏「即时收件箱」。该入口是 Temp Email（`/`），登录用户已有「统一归集箱」；仅地址 JWT 会话仍显示，避免临时邮箱用户丢掉收件入口。
 
 - feat: |Frontend/nginx| `/mailbox` 永久跳到统一归集箱 `/unified`（含 `zh|en|es|pt-BR|ja|de` 前缀与 query）。即时收件箱仍在 `/`；发信「生成邮箱」与绑地址后的跳转改走 `/`，避免地址会话撞上统一箱登录墙。`/domain-mailbox` 不跳转。Vue `/:lang` 只认 `SUPPORTED_LOCALES`，未知前缀不落到 `/unified`。pxed nginx 用 `absolute_redirect off` + 相对 `Location`，不写死主机。nginx 需独立 reload，不走前端 CI。

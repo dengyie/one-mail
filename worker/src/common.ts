@@ -667,7 +667,8 @@ export const handleListQuery = async (
     offset: string | number | undefined | null,
     /** Must be pre-validated (e.g. whitelist), NOT raw user input. Interpolated directly into SQL. */
     orderBy?: string,
-    hiddenFields: string[] = []
+    hiddenFields: string[] = [],
+    options: { skipCount?: boolean } = {}
 ): Promise<Response> => {
     const msgs = i18n.getMessagesbyContext(c);
     if (typeof limit === "string") {
@@ -687,9 +688,10 @@ export const handleListQuery = async (
     const { results } = await c.env.DB.prepare(resultsQuery).bind(
         ...params, limit, offset
     ).all();
-    const count = offset == 0 ? await c.env.DB.prepare(
-        countQuery
-    ).bind(...params).first("count") : 0;
+    // skipCount 让调用方（如轮询探测）跳过 COUNT(*)：计数随过滤集线性放大 rows_read。
+    const count = offset == 0
+        ? (options.skipCount ? null : await c.env.DB.prepare(countQuery).bind(...params).first("count"))
+        : 0;
     if (hiddenFields.length === 0) {
         return c.json({ results, count });
     }
