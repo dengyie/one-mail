@@ -104,7 +104,9 @@ test.describe('User address pagination browser flow', () => {
         return url.pathname === '/user_api/bind_address'
           && url.searchParams.get('limit') === '100';
       });
-      await page.getByRole('button', { name: /即时收件箱|Mail Box/ }).click();
+      // Account sessions no longer expose the Temp Email sidebar tab; the
+      // mailbox page itself remains at `/` and still auto-selects a bound address.
+      await page.goto(`${FRONTEND_URL}/en/`);
       const initialMailboxResponse = await initialMailboxAddressesResponse;
       expect(initialMailboxResponse.ok()).toBe(true);
       const mailboxAddressSelect = page.locator('.address-select').first();
