@@ -105,8 +105,10 @@ type UnifiedListRow = {
     [key: string]: unknown;
 };
 
-const listEmails = async (c: Context<HonoCustomType>) => {
-    const { limit, offset, cursor, ...rest } = c.req.query();
+export const listEmails = async (c: Context<HonoCustomType>) => {
+    const { limit, offset, cursor, with_count, ...rest } = c.req.query();
+    // with_count=0 供轮询探测使用：跳过 COUNT(*)，避免每次刷新都全量扫描过滤集。
+    const withCount = with_count !== "0";
     const requestedLimit = typeof limit === "string" ? parseInt(limit, 10) : Number(limit);
     const maxPageSize = await getUnifiedPageQuota(c);
     if (Number.isFinite(requestedLimit) && requestedLimit > maxPageSize) {
@@ -129,7 +131,7 @@ const listEmails = async (c: Context<HonoCustomType>) => {
         return handleListQuery(c,
             `${UNIFIED_EMAIL_SELECT} WHERE ${where}`,
             `SELECT count(*) as count FROM emails WHERE ${where}`,
-            params, limit, offset, UNIFIED_EMAIL_ORDER);
+            params, limit, offset, UNIFIED_EMAIL_ORDER, [], { skipCount: !withCount });
     }
 
     if (!Number.isInteger(requestedLimit) || requestedLimit <= 0 || requestedLimit > HARD_MAX_UNIFIED_PAGE_SIZE) {
@@ -175,8 +177,10 @@ const listEmails = async (c: Context<HonoCustomType>) => {
     // but never repeat the full COUNT scan for later cursor pages.
     const count = decodedCursor
         ? 0
-        : await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${where}`)
-            .bind(...params).first<number>("count");
+        : withCount
+            ? await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${where}`)
+                .bind(...params).first<number>("count")
+            : null;
 
     return c.json({
         results: page,

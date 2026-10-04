@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend/Worker| Drop the unified inbox's hardcoded 5s polling that burned D1 rows_read. Every refresh shipped a full-table `COUNT(*)`, so reads scaled linearly with the emails table and one open page could exhaust the D1 free-tier daily 5,000,000 rows_read in roughly 40–75 minutes. Now: ① the refresh interval follows the global auto-refresh setting in Appearance, clamped to a 30s floor in the store (slider minimum raised from 5s to 30s; every polling view — Temp Email, domain mailbox, simple list — inherits the clamp); ② background auto-refresh becomes an incremental probe — fetch only the newest row with `with_count=0`, which makes the Worker skip `COUNT(*)`, and skip the list reload entirely when the newest email is unchanged; `/api/unified/emails` gains `with_count=0` (`handleListQuery` supports `skipCount`). Probe reads drop from O(table) to O(1) row.
+
 - feat: |Frontend| Hide the Temp Email “即时收件箱” sidebar item after account login. That entry is `/`; signed-in users already have the unified inbox. Address-JWT sessions still see it so temporary-mailbox users keep an inbox entry.
 
 - feat: |Frontend/nginx| Permanently send `/mailbox` to the unified inbox at `/unified` (locale prefixes `zh|en|es|pt-BR|ja|de` and query preserved). Temp Email stays at `/`; “generate mailbox” and post-bind navigation now go to `/` so an address session is not dumped on the unified login wall. `/domain-mailbox` is unchanged. Vue `/:lang` only matches `SUPPORTED_LOCALES`; unknown prefixes do not fall through to `/unified`. pxed nginx uses `absolute_redirect off` plus a relative `Location` instead of a hardcoded host. Reload nginx separately; frontend CI does not ship nginx conf.

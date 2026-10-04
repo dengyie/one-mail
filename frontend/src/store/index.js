@@ -4,6 +4,10 @@ import {
     useLocalStorage, useSessionStorage
 } from '@vueuse/core'
 
+// 所有视图自动刷新的频率上限（最小间隔秒数）。D1 免费额度按 rows_read 计费，
+// 轮询间隔过短会让每次列表 + COUNT(*) 的读取随邮箱规模线性烧掉配额。
+export const MIN_AUTO_REFRESH_INTERVAL = 30;
+
 export const useGlobalState = createGlobalState(
     () => {
         // class 策略：<html class="dark"> 才走 dark 主题。这样 Tailwind 的 dark: 变体
@@ -110,10 +114,11 @@ export const useGlobalState = createGlobalState(
         const useUTCDate = useStorage('useUTCDate', false);
         const autoLoadRemoteImages = useStorage('autoLoadRemoteImages', false);
         const autoRefresh = useStorage('autoRefresh', false);
-        const configAutoRefreshInterval = useStorage("configAutoRefreshInterval", 10);
-        // 若本地存储中仍保留旧版本的 60s 默认值，平滑迁移至 10s 快速轮询
-        if (configAutoRefreshInterval.value === 60) {
-            configAutoRefreshInterval.value = 10;
+        const configAutoRefreshInterval = useStorage("configAutoRefreshInterval", MIN_AUTO_REFRESH_INTERVAL);
+        // 历史默认值（60s→10s 快速轮询、外观设置允许 5s）都会打爆 D1 rows_read 免费额度，
+        // 统一抬升到下限；已存储的更大值保持不变。
+        if (configAutoRefreshInterval.value < MIN_AUTO_REFRESH_INTERVAL) {
+            configAutoRefreshInterval.value = MIN_AUTO_REFRESH_INTERVAL;
         }
         const userOpenSettings = ref({
             fetched: false,
