@@ -233,6 +233,28 @@ jobs:
             echo "Remote D1 sendbox table is not initialized yet; fresh initialization will create the current schema"
           fi
 
+      - name: Ensure remote D1 passkey challenge schema
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare credentials::D1 migrations require CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+          cd worker/
+          # The D1 passkey_challenges fallback must exist even when the
+          # PASSKEY_CHALLENGES Durable Object binding is configured, so a
+          # stale BACKEND_TOML can never leave passkey login without a
+          # working challenge store. Idempotent; safe to replay.
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-10-05-passkey-challenges.sql
+          echo "Remote D1 passkey challenge schema is current"
+
       - name: Deploy Backend for ${{ github.ref_name }}
         shell: bash
         env:
