@@ -274,7 +274,7 @@ export default {
         const msgs = i18n.getMessagesbyContext(c);
         const body = await c.req.json<AuthenticateRequestBody>().catch((): AuthenticateRequestBody => ({}));
         const credential = body.credential;
-        if (!isAuthenticationCredential(credential)) {
+        if (!isCredentialPayload(credential) || !isNonEmptyString(credential.id)) {
             return c.text(msgs.InvalidInputMsg, 400);
         }
         const rp = resolvePasskeyRpContext(
@@ -293,6 +293,9 @@ export default {
         }>();
         if (!record?.passkey) {
             return c.text(msgs.PasskeyNotFoundMsg, 404);
+        }
+        if (!isAuthenticationCredential(credential)) {
+            return c.text(msgs.InvalidInputMsg, 400);
         }
 
         let passkeyData: Passkey;
