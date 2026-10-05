@@ -77,5 +77,6 @@ def test_device_flow_failure_on_declined(mod):
     app.acquire_token_by_device_flow.return_value = {
         "error": "authorization_declined", "error_description": "user refused",
     }
-    with pytest.raises(RuntimeError):
-        mod.run_device_flow(app, scopes=["IMAP"])
+    with patch.object(mod, "webbrowser"):
+        with pytest.raises(RuntimeError):
+            mod.run_device_flow(app, scopes=["IMAP"])
