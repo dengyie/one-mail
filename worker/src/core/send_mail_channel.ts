@@ -5,7 +5,7 @@
  *
  * Global `RESEND_TOKEN` used to win for every domain and hide SMTP_CONFIG.
  * Per-domain Resend and per-domain SMTP now beat the global token, so one
- * domain can use Resend while others use Brevo / SMTP2GO on the same Worker.
+ * domain can use Resend while others use generic SMTP on the same Worker.
  */
 
 export type SendMailChannelKind = "resend" | "smtp" | "binding" | "none";

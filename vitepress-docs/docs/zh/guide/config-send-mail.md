@@ -21,7 +21,7 @@ Workers Paid 每月含 3,000 封，超出部分 $0.35 / 1000 封。
 | — | 以上均未命中 | 抛错 | — |
 
 > [!WARNING] 不要用全局 `RESEND_TOKEN` 做多渠道测试
-> 全局 `RESEND_TOKEN` 仍会作为没有域名级配置时的兜底。若要把 Resend、Brevo、SMTP2GO 拆到不同域名，**只配** `RESEND_TOKEN_<DOMAIN>`，不要配全局 `RESEND_TOKEN`。域名级 SMTP 现在优先于全局 Resend，不会再被盖住。
+> 全局 `RESEND_TOKEN` 仍会作为没有域名级配置时的兜底。若要把 Resend 与通用 SMTP 拆到不同域名，**只配** `RESEND_TOKEN_<DOMAIN>`，不要配全局 `RESEND_TOKEN`。域名级 SMTP 现在优先于全局 Resend，不会再被盖住。
 
 > [!NOTE]
 > binding 发信失败会直接报错。
@@ -84,9 +84,18 @@ wrangler secret put RESEND_TOKEN_MAIL_YOUR_DOMAIN_COM
 
 ## 使用 SMTP 发送邮件
 
-`SMTP_CONFIG` 的格式如下，**key 必须是你自己的发信域名**，value 为 SMTP 配置。
+`SMTP_CONFIG` 的格式如下，**key 必须是你自己的发信域名**，value 为 SMTP 配置。子域**不会**继承父域条目。
 
 SMTP 配置格式详情可以参考 [zou-yu/worker-mailer](https://github.com/zou-yu/worker-mailer/blob/main/README_zh-CN.md)
+
+Worker 在碰外部套接字之前会 fail-closed 校验该条目。缺 `host`、非整数 `port`、TLS 标志不匹配、或设置了 `authType` 却没有用户名/密码时，`/api/send_mail` 返回 **400** 并释放预约/退额，**不会**变成 503 unknown。非法 JSON 同样是配置错误，不是「该域无 SMTP」。
+
+| 端口 | 要求 |
+|------|------|
+| `465` | `secure: true`（implicit TLS） |
+| `587` / `2525` | `startTls: true` 且 `secure: false` |
+| 其它公网端口 | 必须显式 `secure: true` 或 `startTls: true`，禁止明文 |
+| `1025` | **仅** loopback/`mailpit` 且无凭据的 E2E 豁免；生产禁止 |
 
 > [!warning] 重要
 > JSON 中的 key（如下面示例中的 `your-domain.com`）必须替换为**你自己的域名**，即 `DOMAINS` 变量中配置的域名。
@@ -118,35 +127,18 @@ SMTP 配置格式详情可以参考 [zou-yu/worker-mailer](https://github.com/zo
 | `host` | SMTP 服务器地址，如 `smtp.mailgun.org`、`smtp.gmail.com` 或你自建的 SMTP 服务器地址 |
 | `port` | SMTP 端口，通常 `465`（SSL）或 `587`（STARTTLS） |
 | `secure` | 是否使用 SSL/TLS，端口 465 时设为 `true`，端口 587 时设为 `false` |
-| `startTls` | 端口 587 时设为 `true`（Brevo / SMTP2GO STARTTLS） |
+| `startTls` | 端口 587 / 2525 时设为 `true`（STARTTLS） |
 | `authType` | 认证方式，一般使用 `["plain", "login"]` |
 | `credentials.username` | SMTP 服务器的登录用户名 |
 | `credentials.password` | SMTP 服务器的登录密码 |
 
-如果你有**多个域名**使用不同的 SMTP 服务，在同一个 JSON 中添加多个 key 即可。Brevo 用 SMTP key（不是 API key），SMTP2GO 常用 `mail.smtp2go.com:2525`：
+如果你有**多个域名**使用不同的 SMTP 服务，在同一个 JSON 中添加多个 key 即可。
 
-```json
-{
-    "mangoqwq.cc.cd": {
-        "host": "smtp-relay.brevo.com",
-        "port": 587,
-        "secure": false,
-        "startTls": true,
-        "authType": ["plain", "login"],
-        "credentials": { "username": "your-brevo-login", "password": "your-brevo-smtp-key" }
-    },
-    "mangoq.ccwu.cc": {
-        "host": "mail.smtp2go.com",
-        "port": 2525,
-        "secure": false,
-        "startTls": true,
-        "authType": ["plain", "login"],
-        "credentials": { "username": "your-smtp2go-username", "password": "your-smtp2go-password" }
-    }
-}
-```
+现网出站用 Resend 三域（`mangoqwq.com` / `otp.mangoqwq.com` / `verify.mangoqwq.com`）加 `SEND_MAIL` binding。其余 apex 只收信，不必再接第三方 SMTP 厂商。`SMTP_CONFIG` 只留给通用 SMTP（Mailpit E2E，或以后自建 relay）。若生产 secret 里还留着已停用的 Brevo 条目，应删掉该 key 或整段 secret，否则该域 From 会再次去连死掉的 relay。
 
-Resend 只配域名级 secret（`RESEND_TOKEN_MANGOQWQ_COM` / `RESEND_TOKEN_OTP_MANGOQWQ_COM` / `RESEND_TOKEN_VERIFY_MANGOQWQ_COM`），不要写进 `SMTP_CONFIG`，也不要配全局 `RESEND_TOKEN`。根 MX 保持 Cloudflare Email Routing；端口 587 需要 `startTls: true`。SMTP2GO 的 SPF/DKIM 走其面板给出的 CNAME（灰云），不要改现有根 SPF TXT。
+Resend 只配域名级 secret（`RESEND_TOKEN_MANGOQWQ_COM` / `RESEND_TOKEN_OTP_MANGOQWQ_COM` / `RESEND_TOKEN_VERIFY_MANGOQWQ_COM`），不要写进 `SMTP_CONFIG`，也不要配全局 `RESEND_TOKEN`。根 MX 保持 Cloudflare Email Routing；端口 587 需要 `startTls: true`。
+
+注册验证码 `verifyMailSender` 必须是 **`DOMAINS` 中的已活 Resend 域**（优先 `noreply@verify.mangoqwq.com`，若该子域未列入 `DOMAINS` 则用 `noreply@mangoqwq.com`）。
 
 然后执行下面的命令，将 `SMTP_CONFIG` 添加到 secrets 中
 

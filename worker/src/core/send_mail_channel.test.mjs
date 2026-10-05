@@ -32,7 +32,7 @@ test("domain Resend beats SMTP and global Resend", () => {
   const channel = resolveSendMailChannel({
     domainResendToken: "resend-com",
     globalResendToken: "global-token",
-    smtpConfig: { host: "smtp-relay.brevo.com" },
+    smtpConfig: { host: "smtp.example.com" },
     sendMailBindingEnabled: true,
   });
   assert.deepEqual(channel, {
@@ -43,7 +43,7 @@ test("domain Resend beats SMTP and global Resend", () => {
 });
 
 test("domain SMTP beats global Resend so one Worker can split providers", () => {
-  const smtp = { host: "mail.smtp2go.com", port: 2525 };
+  const smtp = { host: "smtp.example.com", port: 2525 };
   const channel = resolveSendMailChannel({
     domainResendToken: "",
     globalResendToken: "global-token",
@@ -84,12 +84,23 @@ test("none when no provider is configured", () => {
   assert.deepEqual(channel, { kind: "none" });
 });
 
+test("resolveSendMailChannel still selects smtp for a raw map entry; validation is loadSmtpOptionsForDomain", () => {
+  const broken = { host: "smtp.example.com", port: "587" };
+  const channel = resolveSendMailChannel({
+    domainResendToken: null,
+    globalResendToken: "global-token",
+    smtpConfig: broken,
+    sendMailBindingEnabled: true,
+  });
+  assert.deepEqual(channel, { kind: "smtp", options: broken });
+});
+
 test("otp subdomain Resend does not steal the apex SMTP channel", () => {
   const env = {
     RESEND_TOKEN_OTP_MANGOQWQ_COM: "resend-otp",
   };
   assert.equal(getDomainResendToken(env, "mangoqwq.com"), null);
-  const smtp = { host: "smtp-relay.brevo.com", port: 587 };
+  const smtp = { host: "smtp.example.com", port: 587 };
   const channel = resolveSendMailChannel({
     domainResendToken: getDomainResendToken(env, "mangoqwq.cc.cd"),
     globalResendToken: null,

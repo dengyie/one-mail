@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |Worker| 通用出站 SMTP fail-closed：解析 `SMTP_CONFIG` 后校验 host、安全整数 port、465/`secure`、587·2525/`startTls`、`authType` 必须带用户名密码；坏配置在 `markDispatchStarted` 之前返回 400 并释放预约/退额，不再变成 503 unknown。子域不继承父域。Mailpit `1025`+loopback 无凭据仅作 E2E 豁免。去掉 Brevo 封存跳过路径；现网出站只走 Resend 三域 + `SEND_MAIL`，不接 SMTP2GO。不设全局 `RESEND_TOKEN`。
+
 - feat: |P3 本地| 统一收件箱迁移工具改为显式 `migration:true` 精确 archival ingest：保留原邮件 ID、正文、provider 元数据、已读/星标/时间状态，冲突不覆盖；copy/delta 要求 `--source-quiesced`，delta 从头对账以捕获迟到旧时间邮件，删除按 D1 实际 rows_written（含索引写放大）共享预算限速。Worker 主入口按 account_id 分流，聚合器保持原队列 origin；Worker 349、federation 23、backfill 29、aggregator 408 项本地回归通过。用户确认 UTC 00:00 后两个远程只读生产预检均通过，第二次请求为 `rows_read=99`、`rows_written=0`，无 code 7500；生产 P3 仍未执行，未写 SHARD_MAP、未复制、未切流、未删除源邮件。
 
 - fix: |Worker| 分片交付检查修复：远端详情/变更/任务/meta 均传递账号与来源权限；配置读取失败阻止删除；账号集合使用 JSON 绑定避免 D1 参数超限。请求体超时覆盖 3 秒全程，故障保留降级标记。遥测按 UTC 日期隔离并保持单 isolate 120 秒写入节流，新增无 D1 查询的管理诊断端点 `/admin/d1_quota`；用量明确为估算，跨 isolate 的全局 KV 写入预算仍待验收。补齐 Worker 严格类型检查及缺失的独立管理员邮件 webhook KV key；内部错误不再原样返回客户端。
