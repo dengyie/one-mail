@@ -80,6 +80,15 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS passkey_challenges (
+    challenge_key TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_passkey_challenges_expires_at
+    ON passkey_challenges(expires_at);
+
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     user_email TEXT UNIQUE NOT NULL,
@@ -124,7 +133,7 @@ CREATE TABLE IF NOT EXISTS user_passkeys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_passkeys_user_id ON user_passkeys(user_id);
-
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_passkeys_passkey_id ON user_passkeys(passkey_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_passkeys_user_id_passkey_id ON user_passkeys(user_id, passkey_id);
 
 CREATE TABLE IF NOT EXISTS user_mail_accounts (
@@ -273,6 +282,15 @@ CREATE INDEX IF NOT EXISTS idx_mail_mutation_jobs_email_operation
     ON mail_mutation_jobs(email_id, operation, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mail_mutation_jobs_account
     ON mail_mutation_jobs(account_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS attachment_gc (
+    r2_key TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key);
 
 CREATE TABLE IF NOT EXISTS scheduled_locks (
     name TEXT PRIMARY KEY,

@@ -19,6 +19,23 @@ import { createKey } from "./key_admin";
 import { lookupKey, canAccess } from "./api_keys";
 import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
 import { cursorPredicate, decodeEmailCursor, encodeEmailCursor } from "./cursor";
+import {
+    federatedListEmails,
+    federatedCount,
+    federatedStats,
+    federatedVerifCodes,
+    federatedMeta,
+    federatedFolders,
+    fanOutGet,
+    fanOutApply,
+    locateRemoteEmailOwner,
+    applyToShard,
+    hasRemoteShards,
+    loadShardMap,
+    excludeRemoteSql,
+    primaryOnlyContext,
+} from "./federation.ts";
+import { UNIFIED_EMAIL_ORDER, UNIFIED_EMAIL_SELECT } from "./unified_sql.ts";
 import mail_accounts from "../user_api/mail_accounts";
 import {
     DEFAULT_MAX_UNIFIED_PAGE_SIZE,
@@ -27,8 +44,6 @@ import {
 } from "../quota.ts";
 
 const api = new Hono<HonoCustomType>();
-const UNIFIED_EMAIL_SELECT = `SELECT id,source,account_id,from_addr,to_addr,subject,COALESCE(internal_date, received_at) as received_at,internal_date,is_read,is_starred,attachments_json FROM emails`;
-const UNIFIED_EMAIL_ORDER = `COALESCE(internal_date, received_at) DESC, id DESC`;
 
 // 多通道鉴权：
 //  1) x-user-token（用户登录，浏览器 UI 主路径）：解析 userPayload，按 ADMIN_USER_ROLE
@@ -123,6 +138,24 @@ export const listEmails = async (c: Context<HonoCustomType>) => {
         return c.json({ error: "cursor and offset are mutually exclusive" }, 400);
     }
 
+    const map = await loadShardMap(c.env);
+    if (hasRemoteShards(map)) {
+        if (!Number.isInteger(requestedLimit) || requestedLimit <= 0) {
+            return c.json({ error: "invalid limit" }, 400);
+        }
+        const requestedOffset = offset === undefined ? undefined : Number(offset);
+        if (requestedOffset !== undefined && (!Number.isInteger(requestedOffset) || requestedOffset < 0)) {
+            return c.json({ error: "invalid offset" }, 400);
+        }
+        return federatedListEmails(c, map, {
+            rest,
+            limit: requestedLimit,
+            offset: requestedOffset,
+            cursor,
+            withCount,
+        });
+    }
+
     const { where, params } = await resolveScopedEmailFilter(c, rest);
 
     // Explicit offset keeps the legacy response/query contract for existing
@@ -131,7 +164,7 @@ export const listEmails = async (c: Context<HonoCustomType>) => {
         return handleListQuery(c,
             `${UNIFIED_EMAIL_SELECT} WHERE ${where}`,
             `SELECT count(*) as count FROM emails WHERE ${where}`,
-            params, limit, offset, UNIFIED_EMAIL_ORDER, [], { skipCount: !withCount });
+            params as string[], limit, offset, UNIFIED_EMAIL_ORDER, [], { skipCount: !withCount });
     }
 
     if (!Number.isInteger(requestedLimit) || requestedLimit <= 0 || requestedLimit > HARD_MAX_UNIFIED_PAGE_SIZE) {
@@ -191,28 +224,85 @@ export const listEmails = async (c: Context<HonoCustomType>) => {
 };
 
 const getEmail = async (c: Context<HonoCustomType>) => {
-    const row = await c.env.DB.prepare(`SELECT * FROM emails WHERE id = ?`)
-        .bind(c.req.param("id")).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null } | null;
-    if (!row) return c.json({ error: "not found" }, 404);
-    if (!(await checkRowAccess(c, row))) {
-        return c.json({ error: "forbidden" }, 403);
+    const map = await loadShardMap(c.env);
+    const exclude = excludeRemoteSql(map);
+    const row = await c.env.DB.prepare(`SELECT * FROM emails WHERE id = ? AND ${exclude.sql}`)
+        .bind(c.req.param("id"), ...exclude.params).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null } | null;
+    if (row) {
+        if (!(await checkRowAccess(c, row))) {
+            return c.json({ error: "forbidden" }, 403);
+        }
+        return c.json(row);
     }
-    return c.json(row);
+    if (!hasRemoteShards(map)) return c.json({ error: "not found" }, 404);
+    return fanOutGet(c, map, `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}`);
+};
+
+const applyIfExists = async (
+    c: Context<HonoCustomType>,
+    local: (c: Context<HonoCustomType>) => Promise<Response>,
+    method: string,
+    shardPath: string,
+) => {
+    const map = await loadShardMap(c.env);
+    if (!hasRemoteShards(map)) return local(c);
+    const rawClone = c.req.raw.clone();
+    const body = method === "DELETE" ? undefined : await rawClone.json().catch(() => undefined);
+    // Probe every eligible owner first. Only after the complete owner set is
+    // known do we dispatch one mutation, so no remote commit can be followed by
+    // a local primary commit or an overall failure response.
+    const owner = await locateRemoteEmailOwner(c, map, `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}`);
+    if (owner.duplicate) return c.json({ error: "duplicate email owners" }, 409);
+    if (owner.degraded.length) return c.json({ error: "shard unavailable", degraded: owner.degraded }, 503);
+    if (owner.rejected?.data) return c.json(owner.rejected.data, owner.rejected.status as 400 | 403 | 409);
+    if (owner.shard) return applyToShard(c, map, owner.shard, shardPath, { method, body });
+    if (!owner.primary && !owner.degraded.length) {
+        return c.json({ error: "not found" }, 404);
+    }
+    return local(primaryOnlyContext(c, map));
 };
 
 api.get("/api/unified/emails", listEmails);
-api.get("/api/unified/meta", getMetaOptions);
-api.get("/api/unified/folders", listFolders);
+api.get("/api/unified/meta", async (c) => {
+    const map = await loadShardMap(c.env);
+    if (!hasRemoteShards(map)) return getMetaOptions(c);
+    return federatedMeta(c, map);
+});
+api.get("/api/unified/folders", async (c) => {
+    const map = await loadShardMap(c.env);
+    if (!hasRemoteShards(map)) return listFolders(c);
+    return federatedFolders(c, map);
+});
 api.get("/api/unified/emails/:id", getEmail);
-api.get("/api/unified/count", countEmails);
-api.get("/api/unified/stats", statsEmails);
-api.get("/api/unified/verifcodes", verifCodes);
-api.get("/api/unified/mutations/:id", getMutationStatus);
-api.post("/api/unified/emails/:id/read", markRead);     // external providers return 202 queued
-api.post("/api/unified/emails/:id/unread", markUnread); // desired-state operation, retry-safe
-api.post("/api/unified/emails/:id/star", toggleStar);   // readonly API keys are blocked by canAccess
-api.post("/api/unified/emails/:id/move", moveEmail);    // folder_id must belong to the same account/provider
-api.delete("/api/unified/emails/:id", deleteEmail);     // external delete completes only after provider success
+api.get("/api/unified/count", async (c) => {
+    const map = await loadShardMap(c.env);
+    if (!hasRemoteShards(map)) return countEmails(c);
+    return federatedCount(c, map);
+});
+api.get("/api/unified/stats", async (c) => {
+    const map = await loadShardMap(c.env);
+    if (!hasRemoteShards(map)) return statsEmails(c);
+    return federatedStats(c, map);
+});
+api.get("/api/unified/verifcodes", async (c) => {
+    const map = await loadShardMap(c.env);
+    if (!hasRemoteShards(map)) return verifCodes(c);
+    return federatedVerifCodes(c, map);
+});
+api.get("/api/unified/mutations/:id", async (c) => {
+    const map = await loadShardMap(c.env);
+    if (!hasRemoteShards(map)) return getMutationStatus(c);
+    // Jobs remain on the queue where they were created, including pre-cutover
+    // primary jobs for mapped accounts. Only email copies are excluded.
+    const local = await getMutationStatus(c);
+    if (local.status !== 404) return local;
+    return fanOutGet(c, map, `/shard/mutations/${encodeURIComponent(c.req.param("id") || "")}`);
+});
+api.post("/api/unified/emails/:id/read", (c) => applyIfExists(c, markRead, "POST", `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}/read`));
+api.post("/api/unified/emails/:id/unread", (c) => applyIfExists(c, markUnread, "POST", `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}/unread`));
+api.post("/api/unified/emails/:id/star", (c) => applyIfExists(c, toggleStar, "POST", `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}/star`));
+api.post("/api/unified/emails/:id/move", (c) => applyIfExists(c, moveEmail, "POST", `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}/move`));
+api.delete("/api/unified/emails/:id", (c) => applyIfExists(c, deleteEmail, "DELETE", `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}`));
 api.post("/admin/unified/ingest", ingestHandler);
 api.get("/admin/unified/mail_accounts", mail_accounts.exportForAggregator);  // x-admin-auth 保护
 api.post("/admin/unified/mail_accounts/:id/status", mail_accounts.reportStatus);  // 聚合器 sync 回写

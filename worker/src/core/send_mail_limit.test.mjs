@@ -38,6 +38,20 @@ class MemoryD1 {
       return { meta: { changes: 0 } };
     }
 
+    if (sql.includes("UPDATE send_mail_limit_reservations SET status = 'committed', updated_at = ?")
+      && sql.includes("WHERE status = 'active' AND dispatch_state = 'sent'")) {
+      const [updatedAt] = args;
+      let changes = 0;
+      for (const row of this.reservations.values()) {
+        if (row.status === "active" && row.dispatchState === "sent") {
+          row.status = "committed";
+          row.updatedAt = updatedAt;
+          changes++;
+        }
+      }
+      return { meta: { changes } };
+    }
+
     if (sql.includes("UPDATE send_mail_limit_reservations SET status = 'released'")) {
       const [updatedAt, now, limit] = args;
       const expired = [...this.reservations.values()]

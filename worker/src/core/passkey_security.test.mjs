@@ -9,7 +9,7 @@ import {
 
 class MemoryD1 {
   constructor() {
-    this.settings = new Map();
+    this.challenges = new Map();
   }
 
   prepare(sql) {
@@ -19,31 +19,29 @@ class MemoryD1 {
   }
 
   async run(sql, args) {
-    if (sql.startsWith("DELETE FROM settings WHERE key LIKE")) {
-      const [, now] = args;
+    if (sql.includes("DELETE FROM passkey_challenges") && sql.includes("expires_at <=")) {
+      const [now] = args;
       let changes = 0;
-      for (const [key, value] of [...this.settings.entries()]) {
-        if (key.startsWith("passkey_challenge:") && Number(value) <= Number(now)) {
-          this.settings.delete(key);
+      for (const [key, row] of [...this.challenges.entries()]) {
+        if (row.expiresAt <= Number(now)) {
+          this.challenges.delete(key);
           changes += 1;
         }
       }
       return { meta: { changes } };
     }
 
-    if (sql.startsWith("INSERT OR REPLACE INTO settings")) {
-      const [key, value] = args;
-      this.settings.set(key, value);
+    if (sql.startsWith("INSERT OR REPLACE INTO passkey_challenges")) {
+      const [key, expiresAt, createdAt] = args;
+      this.challenges.set(key, { expiresAt: Number(expiresAt), createdAt: Number(createdAt) });
       return { meta: { changes: 1 } };
     }
 
-    if (sql.startsWith("DELETE FROM settings WHERE key = ?")) {
+    if (sql.includes("DELETE FROM passkey_challenges") && sql.includes("challenge_key = ?")) {
       const [key, now] = args;
-      const expiry = this.settings.get(key);
-      if (expiry == null || Number(expiry) <= Number(now)) {
-        return { meta: { changes: 0 } };
-      }
-      this.settings.delete(key);
+      const row = this.challenges.get(key);
+      if (!row || row.expiresAt <= Number(now)) return { meta: { changes: 0 } };
+      this.challenges.delete(key);
       return { meta: { changes: 1 } };
     }
 
@@ -59,6 +57,10 @@ test("passkey RP context accepts only exact server-trusted origins", () => {
   assert.deepEqual(
     resolvePasskeyRpContext("https://custom.example.com", "https://custom.example.com"),
     { origin: "https://custom.example.com", rpID: "custom.example.com" },
+  );
+  assert.equal(
+    resolvePasskeyRpContext(null, undefined),
+    null,
   );
 
   assert.equal(resolvePasskeyRpContext("https://evil.mangoqwq.com"), null);

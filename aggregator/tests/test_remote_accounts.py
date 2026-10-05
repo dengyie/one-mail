@@ -1,5 +1,8 @@
 from unittest.mock import patch, MagicMock
 
+import pytest
+import requests
+
 from one_mail_agg.config import AccountConfig
 from one_mail_agg.remote_accounts import fetch_user_accounts, report_sync_status
 
@@ -96,6 +99,22 @@ def test_non_200_returns_empty():
 def test_network_error_returns_empty():
     with patch("one_mail_agg.remote_accounts.requests.get", side_effect=Exception("boom")):
         assert fetch_user_accounts("https://w.example", "tok") == []
+
+
+@pytest.mark.parametrize("status,body", [(503, {}), (200, None), (200, []),
+                                         (200, {"accounts": {}})])
+def test_strict_account_fetch_surfaces_unavailable_or_invalid_metadata(status, body):
+    with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(status, body)):
+        with pytest.raises(RuntimeError):
+            fetch_user_accounts("https://w.example", "tok", raise_on_error=True)
+
+
+def test_strict_account_fetch_surfaces_network_error_but_allows_empty_accounts():
+    with patch("one_mail_agg.remote_accounts.requests.get", side_effect=requests.Timeout("down")):
+        with pytest.raises(requests.Timeout):
+            fetch_user_accounts("https://w.example", "tok", raise_on_error=True)
+    with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(200, {"accounts": []})):
+        assert fetch_user_accounts("https://w.example", "tok", raise_on_error=True) == []
 
 
 def test_malformed_account_skipped_others_continue():

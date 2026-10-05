@@ -33,6 +33,8 @@ export const ptBRMessages = {
   "views.admin.AccountSettings.address_block_list": "Palavras-chave bloqueadas para usuários (o administrador pode ignorar)",
   "views.index.SimpleIndex.addressCopied": "Endereço copiado com sucesso",
   "views.admin.Statistics.addressCount": "Quantidade de endereços",
+  "views.admin.Statistics.d1QuotaToday": "Cota D1 de hoje (leitura / escrita)",
+  "views.admin.Statistics.d1QuotaDetail": "leitura {read} / {readLimit} · escrita {written} / {writtenLimit} · {shard} · {date}",
   "views.admin.UserManagement.address_count": "Quantidade de endereços",
   "views.User.address_management": "Gerenciamento de endereços",
   "views.admin.UserManagement.userAddressManagement": "Gerenciamento de endereços",

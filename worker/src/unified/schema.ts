@@ -142,6 +142,14 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
     // admin initialize/migrate shape-driven even if the deploy migration was
     // skipped in a custom installation.
     await ensureMailMutationSchema(db);
+    await runStatement(db, `CREATE TABLE IF NOT EXISTS attachment_gc (
+        r2_key TEXT PRIMARY KEY,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    )`);
+    await runStatement(db, `CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key)`);
 
     return changes;
 }

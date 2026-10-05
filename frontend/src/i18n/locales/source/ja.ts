@@ -33,6 +33,8 @@ export const jaMessages = {
   "views.admin.AccountSettings.address_block_list": "ユーザー向けブロックキーワード (管理者はスキップ可能)",
   "views.index.SimpleIndex.addressCopied": "アドレスをコピーしました",
   "views.admin.Statistics.addressCount": "アドレス数",
+  "views.admin.Statistics.d1QuotaToday": "本日の D1 クォータ（読取 / 書込）",
+  "views.admin.Statistics.d1QuotaDetail": "読取 {read} / {readLimit} · 書込 {written} / {writtenLimit} · {shard} · {date}",
   "views.admin.UserManagement.address_count": "アドレス数",
   "views.User.address_management": "アドレス管理",
   "views.admin.UserManagement.userAddressManagement": "アドレス管理",

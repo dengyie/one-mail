@@ -3,6 +3,8 @@ import type { Context } from "hono";
 const MAX_CLAIM = 50;
 const LEASE_MS = 60_000;
 
+type LegacyClaimBody = { lease_token?: string; limit?: number };
+
 /**
  * Rolling-deploy compatibility endpoint for pre-move/delete aggregators.
  *
@@ -12,7 +14,7 @@ const LEASE_MS = 60_000;
  * the full claimMutationJobs implementation.
  */
 export const claimLegacyMutationJobs = async (c: Context<HonoCustomType>) => {
-    const body = await c.req.json<{ lease_token?: string; limit?: number }>().catch(() => ({}));
+    const body = await c.req.json<LegacyClaimBody>().catch((): LegacyClaimBody => ({}));
     const leaseToken = typeof body.lease_token === "string" ? body.lease_token.trim() : "";
     const requested = Number(body.limit ?? 20);
     if (!leaseToken || leaseToken.length > 200 || !Number.isInteger(requested) || requested < 1 || requested > MAX_CLAIM) {

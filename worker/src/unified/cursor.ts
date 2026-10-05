@@ -29,7 +29,7 @@ const decodeBase64Url = (value: string): string => {
     try {
         const binary = atob(normalized + "=".repeat(padding));
         const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
     } catch {
         throw invalidCursor();
     }
@@ -39,7 +39,7 @@ const validateCursor = (cursor: unknown): EmailCursor => {
     if (!cursor || typeof cursor !== "object") throw invalidCursor();
     const raw = cursor as Partial<EmailCursor>;
     if (raw.v !== 1) throw invalidCursor();
-    if (!Number.isSafeInteger(raw.sortKey)) throw invalidCursor();
+    if (typeof raw.sortKey !== "number" || !Number.isSafeInteger(raw.sortKey)) throw invalidCursor();
     if (typeof raw.id !== "string" || raw.id.length === 0 || raw.id.length > MAX_ID_LENGTH) {
         throw invalidCursor();
     }

@@ -54,6 +54,17 @@ type MutationJobRow = {
     completed_at: number | null;
 };
 
+type StarBody = { is_starred?: number };
+type MoveBody = { folder_id?: number | string };
+type ClaimBody = { lease_token?: string; limit?: number };
+type MutationResultBody = {
+    lease_token?: string;
+    status?: "succeeded" | "retry" | "failed" | "unsupported";
+    error?: string;
+    retry_after_ms?: number;
+    projection?: MutationProjection;
+};
+
 type MutationProjection = {
     source_folder?: unknown;
     source_folder_id?: unknown;
@@ -257,7 +268,7 @@ export const markRead = (c: Context<HonoCustomType>) => mutateMessageState(c, "s
 export const markUnread = (c: Context<HonoCustomType>) => mutateMessageState(c, "set_read", 0);
 
 export const toggleStar = async (c: Context<HonoCustomType>) => {
-    const body = await c.req.json<{ is_starred?: number }>().catch(() => ({}));
+    const body = await c.req.json<StarBody>().catch((): StarBody => ({}));
     const desired = typeof body?.is_starred === "number" ? (body.is_starred ? 1 : 0) : undefined;
     return mutateMessageState(c, "set_starred", desired);
 };
@@ -285,7 +296,7 @@ export const moveEmail = async (c: Context<HonoCustomType>) => {
         }, "move");
     }
 
-    const body = await c.req.json<{ folder_id?: number | string }>().catch(() => ({}));
+    const body = await c.req.json<MoveBody>().catch((): MoveBody => ({}));
     const folderId = Number(body.folder_id);
     if (!Number.isSafeInteger(folderId) || folderId <= 0 || !row.account_id) {
         return c.json({ error: "valid folder_id required" }, 400);
@@ -402,7 +413,7 @@ const collapseDuplicatePendingIntents = async (c: Context<HonoCustomType>, now: 
 };
 
 export const claimMutationJobs = async (c: Context<HonoCustomType>) => {
-    const body = await c.req.json<{ lease_token?: string; limit?: number }>().catch(() => ({}));
+    const body = await c.req.json<ClaimBody>().catch((): ClaimBody => ({}));
     const leaseToken = typeof body.lease_token === "string" ? body.lease_token.trim() : "";
     const requested = Number(body.limit ?? 20);
     if (!leaseToken || leaseToken.length > 200 || !Number.isInteger(requested) || requested < 1 || requested > MAX_CLAIM) {
@@ -486,9 +497,13 @@ const newerIntentExists = async (c: Context<HonoCustomType>, job: MutationJobRow
     return !!newer;
 };
 
+const changesOf = (result: D1Result<unknown> | undefined): number =>
+    Number((result?.meta as { changes?: number } | undefined)?.changes ?? 0);
+
 const terminalJobStatement = (
     c: Context<HonoCustomType>,
     job: MutationJobRow,
+    leaseToken: string,
     terminal: "succeeded" | "failed" | "unsupported",
     error: string | null,
     now: number,
@@ -496,8 +511,12 @@ const terminalJobStatement = (
     `UPDATE mail_mutation_jobs
         SET status = ?, last_error = ?, lease_token = NULL, lease_until = NULL,
             completed_at = ?, updated_at = ?
-      WHERE id = ? AND status = 'processing'`,
-).bind(terminal, error, now, now, job.id);
+      WHERE id = ? AND status = 'processing' AND lease_token = ?
+        AND lease_until IS NOT NULL AND lease_until > ?`,
+).bind(terminal, error, now, now, job.id, leaseToken, now);
+
+const staleLeaseResponse = (c: Context<HonoCustomType>) =>
+    c.json({ error: "stale or unknown lease" }, 409);
 
 const normalizedMoveProjection = (
     job: MutationJobRow,
@@ -541,28 +560,29 @@ const normalizedMoveProjection = (
 };
 
 export const reportMutationResult = async (c: Context<HonoCustomType>) => {
-    const body = await c.req.json<{
-        lease_token?: string;
-        status?: "succeeded" | "retry" | "failed" | "unsupported";
-        error?: string;
-        retry_after_ms?: number;
-        projection?: MutationProjection;
-    }>().catch(() => ({}));
+    const body = await c.req.json<MutationResultBody>().catch((): MutationResultBody => ({}));
     const leaseToken = typeof body.lease_token === "string" ? body.lease_token.trim() : "";
     const requestedStatus = body.status;
     if (!leaseToken || !["succeeded", "retry", "failed", "unsupported"].includes(String(requestedStatus))) {
         return c.json({ error: "invalid mutation result" }, 400);
     }
 
+    // Expiry is part of the fence, not just a trigger for the next claimant.
+    // Without this predicate, an old worker can report after its lease has
+    // expired but before another claimant happens to run the reclaim query.
+    const claimNow = Date.now();
     const job = await c.env.DB.prepare(
         `SELECT * FROM mail_mutation_jobs
-          WHERE id = ? AND status = 'processing' AND lease_token = ?`,
-    ).bind(c.req.param("id"), leaseToken).first<MutationJobRow>();
-    if (!job) return c.json({ error: "stale or unknown lease" }, 409);
+          WHERE id = ? AND status = 'processing' AND lease_token = ?
+            AND lease_until IS NOT NULL AND lease_until > ?`,
+    ).bind(c.req.param("id"), leaseToken, claimNow).first<MutationJobRow>();
+    if (!job) return staleLeaseResponse(c);
 
-    const now = Date.now();
     const error = body.error ? String(body.error).slice(0, 500) : null;
     const newer = await newerIntentExists(c, job);
+    // Re-fence after the extra ordering query. A report that arrived just
+    // before expiry must not use the older timestamp for its write guards.
+    const now = Date.now();
 
     if (requestedStatus === "retry") {
         // Read/star are absolute desired-state writes, so a newer intent can
@@ -570,12 +590,14 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
         // attempted, a timeout can mean the provider move/delete already happened.
         // Keep them as an ordering barrier until retry recovery resolves outcome.
         if (newer && !isLocationOperation(job.operation)) {
-            await c.env.DB.prepare(
+            const result = await c.env.DB.prepare(
                 `UPDATE mail_mutation_jobs
                     SET status = 'superseded', last_error = ?, lease_token = NULL,
                         lease_until = NULL, completed_at = ?, updated_at = ?
-                  WHERE id = ?`,
-            ).bind(error, now, now, job.id).run();
+                  WHERE id = ? AND status = 'processing' AND lease_token = ?
+                    AND lease_until IS NOT NULL AND lease_until > ?`,
+            ).bind(error, now, now, job.id, leaseToken, now).run();
+            if (changesOf(result) !== 1) return staleLeaseResponse(c);
             return c.json({ ok: true, status: "superseded" });
         }
         // Location changes are not allowed to age out of the ordering barrier.
@@ -584,45 +606,54 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
         // recovery proves success or the provider returns a definite terminal
         // failure. Desired-state read/star jobs retain the bounded retry budget.
         if (job.attempts >= MAX_ATTEMPTS && !isLocationOperation(job.operation)) {
-            await c.env.DB.prepare(
+            const result = await c.env.DB.prepare(
                 `UPDATE mail_mutation_jobs
                     SET status = 'failed', last_error = ?, lease_token = NULL,
                         lease_until = NULL, completed_at = ?, updated_at = ?
-                  WHERE id = ?`,
-            ).bind(error || "retry limit exceeded", now, now, job.id).run();
+                  WHERE id = ? AND status = 'processing' AND lease_token = ?
+                    AND lease_until IS NOT NULL AND lease_until > ?`,
+            ).bind(error || "retry limit exceeded", now, now, job.id, leaseToken, now).run();
+            if (changesOf(result) !== 1) return staleLeaseResponse(c);
             return c.json({ ok: true, status: "failed" });
         }
         const requestedDelay = Number(body.retry_after_ms ?? 5000 * (2 ** Math.max(0, job.attempts - 1)));
         const retryAfter = Number.isFinite(requestedDelay)
             ? Math.max(1000, Math.min(MAX_RETRY_MS, Math.trunc(requestedDelay)))
             : 5000;
-        await c.env.DB.prepare(
+        const result = await c.env.DB.prepare(
             `UPDATE mail_mutation_jobs
                 SET status = 'pending', next_attempt_at = ?, last_error = ?,
                     lease_token = NULL, lease_until = NULL, updated_at = ?
-              WHERE id = ?`,
-        ).bind(now + retryAfter, error, now, job.id).run();
+              WHERE id = ? AND status = 'processing' AND lease_token = ?
+                AND lease_until IS NOT NULL AND lease_until > ?`,
+        ).bind(now + retryAfter, error, now, job.id, leaseToken, now).run();
+        if (changesOf(result) !== 1) return staleLeaseResponse(c);
         return c.json({ ok: true, status: "pending", retry_at: now + retryAfter });
     }
 
     const terminal = requestedStatus as "succeeded" | "failed" | "unsupported";
     if (terminal !== "succeeded") {
-        await terminalJobStatement(c, job, terminal, error, now).run();
+        const result = await terminalJobStatement(c, job, leaseToken, terminal, error, now).run();
+        if (changesOf(result) !== 1) return staleLeaseResponse(c);
         return c.json({ ok: true, status: terminal });
     }
 
     if (job.operation === "move") {
         const projection = normalizedMoveProjection(job, body.projection);
         if (!projection) return c.json({ error: "invalid move projection" }, 400);
+        const leaseGuard = `EXISTS (
+            SELECT 1 FROM mail_mutation_jobs lease
+             WHERE lease.id = ? AND lease.status = 'processing' AND lease.lease_token = ?
+               AND lease.lease_until IS NOT NULL AND lease.lease_until > ${now}
+        )`;
         const statements = [
-            terminalJobStatement(c, job, "succeeded", error, now),
             c.env.DB.prepare(
                 `UPDATE emails
                     SET source_folder = ?, source_folder_id = ?, source_key = ?,
                         provider_message_id = ?,
                         imap_uid = CASE WHEN provider = 'imap' THEN ? ELSE imap_uid END,
                         updated_at = ?
-                  WHERE id = ?`,
+                  WHERE id = ? AND ${leaseGuard}`,
             ).bind(
                 projection.sourceFolder,
                 projection.sourceFolderId,
@@ -631,6 +662,8 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
                 projection.sourceKey,
                 now,
                 job.email_id,
+                job.id,
+                leaseToken,
             ),
             // Because claim is serialized per email, all later jobs are still
             // pending here. Rewrite their provider identity before any can lease.
@@ -639,7 +672,8 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
                     SET source_folder = ?, source_folder_id = ?, source_key = ?,
                         provider_message_id = ?, updated_at = ?
                   WHERE email_id = ? AND status = 'pending'
-                    AND rowid > (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)`,
+                    AND rowid > (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)
+                    AND ${leaseGuard}`,
             ).bind(
                 projection.sourceFolder,
                 projection.sourceFolderId,
@@ -648,9 +682,13 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
                 now,
                 job.email_id,
                 job.id,
+                job.id,
+                leaseToken,
             ),
+            terminalJobStatement(c, job, leaseToken, "succeeded", error, now),
         ];
-        await c.env.DB.batch(statements);
+        const results = await c.env.DB.batch(statements);
+        if (changesOf(results[results.length - 1] as D1Result<unknown>) !== 1) return staleLeaseResponse(c);
         return c.json({
             ok: true,
             status: "succeeded",
@@ -660,31 +698,43 @@ export const reportMutationResult = async (c: Context<HonoCustomType>) => {
     }
 
     if (job.operation === "delete") {
-        await c.env.DB.batch([
-            terminalJobStatement(c, job, "succeeded", error, now),
+        const leaseGuard = `EXISTS (
+            SELECT 1 FROM mail_mutation_jobs lease
+             WHERE lease.id = ? AND lease.status = 'processing' AND lease.lease_token = ?
+               AND lease.lease_until IS NOT NULL AND lease.lease_until > ${now}
+        )`;
+        const results = await c.env.DB.batch([
             c.env.DB.prepare(
                 `UPDATE mail_mutation_jobs
                     SET status = 'superseded', completed_at = ?, updated_at = ?,
                         last_error = COALESCE(last_error, 'message deleted by earlier provider mutation')
                   WHERE email_id = ? AND status = 'pending'
-                    AND rowid > (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)`,
-            ).bind(now, now, job.email_id, job.id),
-            c.env.DB.prepare(`DELETE FROM emails WHERE id = ?`).bind(job.email_id),
+                    AND rowid > (SELECT rowid FROM mail_mutation_jobs WHERE id = ?)
+                    AND ${leaseGuard}`,
+            ).bind(now, now, job.email_id, job.id, job.id, leaseToken),
+            c.env.DB.prepare(`DELETE FROM emails WHERE id = ? AND ${leaseGuard}`).bind(job.email_id, job.id, leaseToken),
+            terminalJobStatement(c, job, leaseToken, "succeeded", error, now),
         ]);
+        if (changesOf(results[results.length - 1] as D1Result<unknown>) !== 1) return staleLeaseResponse(c);
         return c.json({ ok: true, status: "succeeded", deleted: true });
     }
 
     // Read/star desired-state projection stays newest-intent-only. If a newer
     // same-operation request exists, provider completion is recorded but the
     // newer intent owns the visible local state.
-    const statements = [terminalJobStatement(c, job, "succeeded", error, now)];
+    const statements = [];
     if (!newer) {
         const column = job.operation === "set_read" ? "is_read" : "is_starred";
         statements.push(
-            c.env.DB.prepare(`UPDATE emails SET ${column} = ?, updated_at = ? WHERE id = ?`)
-                .bind(job.desired_value ? 1 : 0, now, job.email_id),
+            c.env.DB.prepare(`UPDATE emails SET ${column} = ?, updated_at = ? WHERE id = ? AND EXISTS (
+                SELECT 1 FROM mail_mutation_jobs lease
+                 WHERE lease.id = ? AND lease.status = 'processing' AND lease.lease_token = ?
+                   AND lease.lease_until IS NOT NULL AND lease.lease_until > ?
+            )`).bind(job.desired_value ? 1 : 0, now, job.email_id, job.id, leaseToken, now),
         );
     }
-    await c.env.DB.batch(statements);
+    statements.push(terminalJobStatement(c, job, leaseToken, "succeeded", error, now));
+    const results = await c.env.DB.batch(statements);
+    if (changesOf(results[results.length - 1] as D1Result<unknown>) !== 1) return staleLeaseResponse(c);
     return c.json({ ok: true, status: "succeeded" });
 };

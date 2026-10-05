@@ -1,6 +1,7 @@
 import { Context } from "hono";
 import { resolveScopedEmailFilter } from "./auth_scope.ts";
 import { extractVerifCode } from "./verifcode.ts";
+import { boundedEmailFilter } from "./unified_sql.ts";
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
 const intOr400 = (c: Context<HonoCustomType>, v: string | undefined, fallback: number): number => {
@@ -14,14 +15,14 @@ const intOr400 = (c: Context<HonoCustomType>, v: string | undefined, fallback: n
 };
 
 export const countEmails = async (c: Context<HonoCustomType>) => {
-    const { where, params } = await resolveScopedEmailFilter(c, c.req.query());
+    const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, c.req.query()));
     const count = await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${where}`)
         .bind(...params).first("count");
     return c.json({ count });
 };
 
 export const statsEmails = async (c: Context<HonoCustomType>) => {
-    const { where, params } = await resolveScopedEmailFilter(c, c.req.query());
+    const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, c.req.query()));
     const row = await c.env.DB.prepare(
         `SELECT count(*) as count,
                 COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread
@@ -33,7 +34,7 @@ export const statsEmails = async (c: Context<HonoCustomType>) => {
     });
 };
 
-function stripHtmlToText(html: string): string {
+export function stripHtmlToText(html: string): string {
     if (!html) return "";
     return html
         .replace(/<\s*(script|style|head|svg)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
@@ -65,7 +66,7 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     const addr = typeof q.addr === "string" ? q.addr.trim() : "";
     // 鉴权作用域直接进入 SQL；addr 仍作为业务过滤条件单独绑定。
     // domain 模式下全域过滤仅限管理员访问（经 resolveScopedEmailFilter 严格校验 isAdmin/role=admin，非管理员直接拒绝）。
-    const { where, params } = await resolveScopedEmailFilter(c, { ...q, addr: undefined });
+    const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, { ...q, addr: undefined }));
     let freshMs = 10 * 60 * 1000;                        // 默认 10 分钟内
     try { freshMs = intOr400(c, q.fresh, freshMs); } catch { return c.json({ error: "invalid fresh" }, 400); }
     // 兼容自适应：若用户通过 API 传入较小数值（如 fresh=10 或 fresh=60），自动识别为分钟并换算为毫秒
@@ -97,8 +98,11 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     return c.json({ results: out });
 };
 
-export const getMetaOptions = async (c: Context<HonoCustomType>) => {
-    const { where, params } = await resolveScopedEmailFilter(c, {});
+export const getMetaOptions = async (
+    c: Context<HonoCustomType>,
+    query: Record<string, string | undefined> = {},
+) => {
+    const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, query));
     // 分别获取 source、account_id 与 to_addr：
     // source 与 account_id 基数极小，独立 DISTINCT 避免被海量不同的 to_addr 挤出截断
     const [sourceRes, accountRes, toAddrRes] = await Promise.all([

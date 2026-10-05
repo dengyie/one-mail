@@ -24,7 +24,8 @@ export class AdminWebhookSettings {
 }
 
 export type WebhookMail = {
-    id: string;
+    // D1 raw_mails IDs are numbers; the no-mail test fallback is a string.
+    id: string | number;
     url?: string;
     from: string;
     to: string;

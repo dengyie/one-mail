@@ -5,6 +5,8 @@ import { checkRegistrationRateLimit, getMaxMailAccountCount } from "../utils";
 import { commonGetUserRole } from "../common";
 import { encryptCredCtx as encryptCred, decryptCredCtx as decryptCred } from "./cred_crypto";
 import { unsupportedMailAccountAction, mergeRotatedRefreshToken } from "../unified/mail_account_actions";
+import { hasRemoteShards, loadShardMap, purgeShardAccounts } from "../unified/federation.ts";
+import { ensureAccountLifecycleTable, lifecycleUpsert } from "../unified/account_lifecycle_schema.ts";
 
 // 每用户最多可接入的外部邮箱数（全局默认）。外部邮箱不消耗 mangoqwq 域名地址配额
 // （maxAddressCount 已在 utils.ts isAddressCountLimitReached 排除 source_meta='external'
@@ -29,7 +31,9 @@ const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
 // hotmail / outlook_personal 归一化为 msa；白名单应同时放行三者以免误拒。
 const OAUTH_PROVIDERS = new Set(["gmail", "outlook", "msa", "hotmail", "outlook_personal", "graph"]);
 
-const parseOptionalBoolean = (value: unknown, fallback: boolean | null): boolean | null | undefined => {
+function parseOptionalBoolean(value: unknown, fallback: boolean): boolean | undefined;
+function parseOptionalBoolean(value: unknown, fallback: boolean | null): boolean | null | undefined;
+function parseOptionalBoolean(value: unknown, fallback: boolean | null): boolean | null | undefined {
     if (value == null || value === "") return fallback;
     if (typeof value !== "boolean") return undefined;
     return value;
@@ -251,7 +255,7 @@ const UserMailAccountsModule = {
             ? body.folders.filter((f) => typeof f === "string" && f.trim()).map((f) => f.trim())
             : [];
 
-        if (!username || !host || !source || !cred || !Number.isInteger(port) || port <= 0 || port > 65535
+        if (!username || !host || !source || !cred || typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65535
             || useSsl === undefined || pop3Host === undefined || pop3Port === undefined
             || parsedPop3Ssl === undefined || pop3UseStls === undefined) {
             return c.text(msgs.RequiredFieldMsg, 400);
@@ -377,10 +381,21 @@ const UserMailAccountsModule = {
             `SELECT username FROM user_mail_accounts WHERE id = ? AND user_id = ?`
         ).bind(id, user_id).first<{ username: string }>();
         if (!row) return c.text(msgs.AddressNotFoundMsg, 404);
+        await ensureAccountLifecycleTable(c.env.DB);
+        await lifecycleUpsert(c.env.DB, { accountId: id, userId: user_id, username: row.username, state: "deleting", now: Date.now() }).run();
+        // Disable exports before any remote call. Retries observe the deleting
+        // tombstone and can resume purge without exposing stale ingest.
+        await c.env.DB.prepare(`UPDATE user_mail_accounts SET enabled = 0 WHERE id = ? AND user_id = ?`)
+            .bind(id, user_id).run();
 
         // Emails are scoped by to_addr at read time, so leaving rows behind after an
         // external account is removed would expose the old owner's history to a later
         // account using the same address. Keep cleanup and ownership changes atomic.
+        // Thin-shard: purge the owning shard before dropping metadata.
+        const map = await loadShardMap(c.env);
+        if (hasRemoteShards(map) && !(await purgeShardAccounts(map, [id]))) {
+            return c.text(msgs.OperationFailedMsg, 500);
+        }
         await c.env.DB.batch([
             c.env.DB.prepare(
                 `DELETE FROM emails WHERE account_id = ?`
@@ -393,6 +408,7 @@ const UserMailAccountsModule = {
                  (SELECT id FROM address WHERE name = ?)`
             ).bind(user_id, row.username),
         ]);
+        await lifecycleUpsert(c.env.DB, { accountId: id, userId: user_id, username: row.username, state: "purged", now: Date.now() }).run();
 
         return c.json({ success: true });
     },

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from one_mail_agg.config import AccountConfig, Config, load_config
+from one_mail_agg.config import AccountConfig, Config, ShardConfig, load_config
 
 
 def test_load_config_parses_accounts(tmp_path):
@@ -130,3 +130,100 @@ def test_load_config_explicit_pop3_fields_and_host_derivation(tmp_path):
     assert a1.pop3_ssl is True
     assert a1.resolve_pop3_host() == "pop.163.com"   # 显式 host 优先
     assert a2.resolve_pop3_host() == "mail.example.com"  # 非 imap. 前缀原样
+
+
+def _shard(**overrides):
+    return {"id": "s1", "base_url": "https://s1.example/", "token": "x" * 32,
+            "accounts": ["external", "remote-user"], **overrides}
+
+
+def test_load_static_shards_and_route_unknown_and_cf_routing_to_primary(tmp_path):
+    path = tmp_path / "shards.json"
+    path.write_text(json.dumps({"worker_base_url": "https://primary.example",
+                                "admin_token": "admin", "accounts": [],
+                                "shards": [_shard()]}))
+    config = load_config(str(path))
+    assert isinstance(config.shards[0], ShardConfig)
+    assert config.shards[0].base_url == "https://s1.example"
+    assert config.destination_for({"account_id": "remote-user"}).id == "s1"
+    assert config.destination_for({"account_id": "external"}) is config.destinations[1]
+    assert config.destination_for({"account_id": "unknown"}).id == "primary"
+    assert config.destination_for({}).id == "primary"
+    assert config.destination_for({"source": "cf_routing", "account_id": "external"}).id == "primary"
+    assert "x" * 32 not in repr(config.shards[0])
+    assert "x" * 32 not in repr(config.destinations[1])
+
+
+def test_shards_default_empty_and_allow_empty_account_list():
+    config = Config("https://primary.example", "admin", [])
+    assert config.shards == []
+    assert len(config.destinations) == 1
+    config = Config("https://primary.example", "admin", [], shards=[_shard(accounts=[])])
+    assert len(config.destinations) == 2  # Still drain old jobs on an unassigned shard.
+
+
+@pytest.mark.parametrize("shards", [
+    None, {}, "s1", [None], [[]],
+    [_shard(id="")], [_shard(id="primary")], [_shard(id=1)],
+    [_shard(token="")], [_shard(token="short")], [_shard(token=None)],
+    [_shard(token="x" * 32 + "\n")],
+    [_shard(base_url=None)], [_shard(base_url="http://s1.example")],
+    [_shard(base_url="https://")], [_shard(base_url="https://user:pass@s1.example")],
+    [_shard(base_url="https://@s1.example")],
+    [_shard(base_url="https://s1.example/path")],
+    [_shard(base_url="https://s1.example?token=secret")],
+    [_shard(base_url="https://s1.example#fragment")],
+    [_shard(base_url="https://s1.example:invalid")],
+    [_shard(base_url="https://s1.example:0")],
+    [_shard(base_url="https://s1.exa mple")],
+    [_shard(accounts="external")], [_shard(accounts=None)],
+    [_shard(accounts=[1])], [_shard(accounts=[""])],
+    [_shard(accounts=["external", " external "])],
+    [_shard(), _shard(base_url="https://s2.example", accounts=[])],
+    [_shard(), _shard(id="s2", accounts=[])],
+    [_shard(), _shard(id="s2", base_url="https://s2.example")],
+    [_shard(base_url="https://PRIMARY.example/")],
+    [{"id": "s1"}], [_shard(typo=True)],
+])
+def test_invalid_static_shards_are_rejected(shards):
+    with pytest.raises(ValueError):
+        Config("https://primary.example", "admin", [], shards=shards)
+
+
+def test_load_config_rejects_bad_shards(tmp_path):
+    path = tmp_path / "bad-shards.json"
+    path.write_text(json.dumps({"worker_base_url": "https://primary.example",
+                                "admin_token": "admin", "accounts": [],
+                                "shards": [_shard(accounts="external")]}))
+    with pytest.raises(ValueError, match="accounts"):
+        load_config(str(path))
+
+
+def test_shard_validation_and_routing_do_not_scan_account_lists():
+    class TrackedAccountId(str):
+        comparisons = 0
+        __hash__ = str.__hash__
+
+        def strip(self):
+            return self
+
+        def __eq__(self, other):
+            type(self).comparisons += 1
+            return str.__eq__(self, other)
+
+    account_ids = [TrackedAccountId(f"account-{i}") for i in range(1000)]
+    config = Config("https://primary.example", "admin", [],
+                    shards=[_shard(accounts=account_ids)])
+    for account_id in account_ids:
+        assert config.destination_for({"account_id": account_id}) is config.destinations[1]
+    # Hash-based validation and lookup stay linear; list membership would make
+    # roughly n*(n-1)/2 comparisons even before routing starts.
+    assert TrackedAccountId.comparisons <= 2 * len(account_ids)
+    assert config.shards[0].accounts == tuple(account_ids)
+
+
+def test_shard_account_normalization_preserves_order():
+    config = Config("https://primary.example", "admin", [],
+                    shards=[_shard(accounts=[" second ", "first"])])
+    assert config.shards[0].accounts == ("second", "first")
+    assert config.destination_for({"account_id": "second"}) is config.destinations[1]

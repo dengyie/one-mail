@@ -465,3 +465,255 @@ def test_successful_provider_projection_is_forwarded_to_worker(monkeypatch):
     assert result["succeeded"] == 1
     assert reports[0][0][2:4] == ("lease-1", "succeeded")
     assert reports[0][1]["projection"] == projection
+
+
+def _sharded_config(accounts=None):
+    config = _config(accounts)
+    return Config(config.worker_base_url, config.admin_token, config.accounts, shards=[
+        {"id": "s1", "base_url": "https://s1.example", "token": "1" * 32, "accounts": ["acc-1"]},
+        {"id": "s2", "base_url": "https://s2.example", "token": "2" * 32, "accounts": []},
+    ])
+
+
+def _queue_url(config, origin):
+    return next(destination for destination in config.destinations if destination.id == origin)
+
+
+def test_queue_origin_wins_over_account_routing_and_untrusted_job_fields(monkeypatch):
+    config = _sharded_config([_imap_account()])
+    calls = []
+    execution_configs = []
+    projection = {"source_folder": "Archive", "source_key": "new-key"}
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/claim"):
+            # Same account and job ID can exist in independent queues during
+            # migration. Never deduplicate across origins or trust job fields.
+            return _GraphResponse(payload={"jobs": [{"id": "old/job", "account_id": "acc-1",
+                                                     "origin": "s2", "lease_token": "untrusted"}]})
+        return _GraphResponse()
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations, "execute_mutation", lambda cfg, account, job:
+                        execution_configs.append(cfg) or projection)
+    monkeypatch.setattr(mutations, "fetch_user_accounts", lambda *a: pytest.fail("local accounts suffice"))
+    assert mutations.process_mutation_jobs(config, limit=7) == {
+        "claimed": 3, "succeeded": 3, "failed": 0, "retried": 0, "unsupported": 0}
+    assert all(cfg is config for cfg in execution_configs)
+    leases = set()
+    for origin in ["primary", "s1", "s2"]:
+        destination = _queue_url(config, origin)
+        claim = next(kwargs for url, kwargs in calls if url == destination.api_url("/mutations/v2/claim"))
+        report = next(kwargs for url, kwargs in calls if url == destination.api_url("/mutations/old%2Fjob/result"))
+        leases.add(claim["json"]["lease_token"])
+        assert claim["json"] == {"lease_token": report["json"]["lease_token"], "limit": 7}
+        assert claim["headers"] == destination.headers() == report["headers"]
+        assert report["json"]["status"] == "succeeded"
+        assert report["json"]["projection"] == projection
+    assert len(leases) == 3
+
+
+@pytest.mark.parametrize("unavailable", ["primary", "s1"])
+@pytest.mark.parametrize("failure", [requests.ConnectionError, requests.Timeout, requests.HTTPError])
+def test_claim_failure_services_other_queues_and_surfaces_error(monkeypatch, unavailable, failure):
+    config = _sharded_config([_imap_account()])
+    calls = []
+    root_error = failure("private diagnostic detail")
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        if url.endswith("/claim"):
+            if url.startswith(_queue_url(config, unavailable).base_url):
+                raise root_error
+            return _GraphResponse(payload={"jobs": [{"id": "job-1", "account_id": "acc-1"}]})
+        return _GraphResponse()
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations, "execute_mutation", lambda *a: None)
+    with pytest.raises(mutations.MutationBatchError, match=f"{unavailable} claim") as caught:
+        mutations.process_mutation_jobs(config)
+    assert caught.value.result == {"claimed": 2, "succeeded": 2, "failed": 0,
+                                   "retried": 0, "unsupported": 0}
+    assert caught.value.failures == ((f"{unavailable} claim", root_error),)
+    assert caught.value.__cause__ is root_error
+    assert root_error.__traceback__ is not None
+    assert "private diagnostic detail" not in str(caught.value)
+    for destination in config.destinations:
+        assert destination.api_url("/mutations/v2/claim") in calls
+        if destination.id != unavailable:
+            assert destination.api_url("/mutations/job-1/result") in calls
+
+
+@pytest.mark.parametrize("origin", ["primary", "s1"])
+@pytest.mark.parametrize("provider_error,reported_status", [
+    (None, "succeeded"), (mutations.MutationUnsupported("unsupported"), "unsupported"),
+    (mutations.MutationIdentityError("bad identity"), "failed"),
+    (requests.Timeout("provider down"), "retry"),
+])
+def test_report_exception_does_not_count_acknowledgement_or_starve_jobs(
+        monkeypatch, origin, provider_error, reported_status):
+    config = _sharded_config([_imap_account()])
+    reports = []
+
+    def fake_post(url, **kwargs):
+        if url.endswith("/claim"):
+            return _GraphResponse(payload={"jobs": [{"id": "bad", "account_id": "acc-1"},
+                                                     {"id": "good", "account_id": "acc-1"}]})
+        reports.append((url, kwargs["json"]["status"]))
+        if url == _queue_url(config, origin).api_url("/mutations/bad/result"):
+            raise requests.Timeout("report lost")
+        return _GraphResponse()
+
+    def execute(cfg, account, job):
+        if job["id"] == "bad" and provider_error is not None:
+            raise provider_error
+        return None
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations, "execute_mutation", execute)
+    with pytest.raises(mutations.MutationBatchError, match=f"{origin} result") as caught:
+        mutations.process_mutation_jobs(config)
+    result = caught.value.result
+    assert result["claimed"] == 6
+    assert sum(result[key] for key in ["succeeded", "failed", "retried", "unsupported"]) == 5
+    assert result["succeeded"] == (5 if provider_error is None else 3)
+    assert len(reports) == 6  # Every report tried exactly once, including later jobs.
+    assert (_queue_url(config, origin).api_url("/mutations/bad/result"), reported_status) in reports
+
+
+def test_missing_account_failed_result_still_uses_queue_origin(monkeypatch):
+    config = _sharded_config()
+    calls = []
+    fetches = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url.startswith("https://s1.example") and url.endswith("/claim"):
+            return _GraphResponse(payload={"jobs": [{"id": "job-1", "account_id": "acc-1"}]})
+        return _GraphResponse(payload={"jobs": []})
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations, "fetch_user_accounts", lambda *a, **kw: fetches.append(a) or [])
+    result = mutations.process_mutation_jobs(config)
+    assert result["failed"] == 1 and result["succeeded"] == 0
+    assert fetches == [(config.worker_base_url, config.admin_token)]
+    reports = [(url, kw) for url, kw in calls if url.endswith("/result")]
+    assert len(reports) == 1
+    assert reports[0][0] == "https://s1.example/shard/mutations/job-1/result"
+    assert reports[0][1]["json"]["status"] == "failed"
+
+
+def test_shard_jobs_keep_primary_config_for_rt_and_status_callbacks(monkeypatch):
+    from one_mail_agg.remote_accounts import report_sync_status
+
+    account = _graph_account()
+    account.user_managed = True
+    config = _sharded_config()
+    calls = []
+    fetches = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url == "https://s1.example/shard/mutations/v2/claim":
+            return _GraphResponse(payload={"jobs": [{"id": "job-1", "account_id": account.id,
+                                                     "provider": "graph", "operation": "set_read",
+                                                     "provider_message_id": "immutable", "desired_value": 1}]})
+        return _GraphResponse(payload={"jobs": []})
+
+    def access_token(oauth, callback):
+        callback("rotated-rt")
+        report_sync_status(config.worker_base_url, config.admin_token, account.id, None)
+        return "AT"
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations.requests, "patch", lambda *a, **kw: _GraphResponse())
+    monkeypatch.setattr(mutations, "assert_public_user_account", lambda _: None)
+    monkeypatch.setattr(mutations, "fetch_user_accounts", lambda *a, **kw: fetches.append(a) or [account])
+    monkeypatch.setattr(mutations, "graph_access_token", access_token)
+    assert mutations.process_mutation_jobs(config)["succeeded"] == 1
+    assert fetches == [(config.worker_base_url, config.admin_token)]
+    metadata = [(url, kwargs) for url, kwargs in calls if "/mail_accounts/" in url]
+    assert {url for url, _ in metadata} == {
+        f"{config.worker_base_url}/admin/unified/mail_accounts/{account.id}/refresh_token",
+        f"{config.worker_base_url}/admin/unified/mail_accounts/{account.id}/status"}
+    assert all(kwargs["headers"] == {"x-admin-auth": config.admin_token} for _, kwargs in metadata)
+    rt_report = next(kwargs for url, kwargs in metadata if url.endswith("/refresh_token"))
+    assert rt_report["json"] == {"refresh_token": "rotated-rt"}
+
+
+def test_primary_metadata_outage_retries_remote_jobs_and_services_local_jobs(monkeypatch):
+    config = _sharded_config([_imap_account()])
+    reports = []
+    executed = []
+
+    def fake_post(url, **kwargs):
+        if url.endswith("/claim"):
+            jobs = [{"id": "local", "account_id": "acc-1"},
+                    {"id": "remote", "account_id": "user-account"}]
+            return _GraphResponse(payload={"jobs": jobs})
+        reports.append((url, kwargs["json"]))
+        return _GraphResponse()
+
+    def metadata_down(*args, **kwargs):
+        assert args == (config.worker_base_url, config.admin_token)
+        assert kwargs == {"raise_on_error": True}
+        raise requests.ConnectionError("primary metadata down")
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations, "fetch_user_accounts", metadata_down)
+    monkeypatch.setattr(mutations, "execute_mutation", lambda cfg, account, job: executed.append(job["id"]))
+    with pytest.raises(mutations.MutationBatchError, match="account fetch") as caught:
+        mutations.process_mutation_jobs(config)
+    assert caught.value.result == {"claimed": 6, "succeeded": 3, "retried": 3,
+                                   "failed": 0, "unsupported": 0}
+    assert executed == ["local"] * 3
+    for destination in config.destinations:
+        report = next(body for url, body in reports if url == destination.api_url("/mutations/remote/result"))
+        assert report["status"] == "retry" and report["retry_after_ms"] == 5000
+
+
+def test_incomplete_batch_keeps_daemon_polling_at_base_interval(monkeypatch):
+    import one_mail_agg.main as main
+
+    def incomplete(_config):
+        raise mutations.MutationBatchError([("s1 claim", requests.Timeout())], {"claimed": 0})
+
+    monkeypatch.setattr(main, "process_mutation_jobs", incomplete)
+    assert main._drain_mutation_jobs(_config()) is None
+
+
+def test_batch_retains_all_claim_metadata_and_result_causes(monkeypatch):
+    config = _sharded_config([_imap_account()])
+    claim_error = requests.ConnectionError("private claim detail")
+    metadata_error = requests.Timeout("private metadata detail")
+    report_error = requests.HTTPError("private result detail")
+
+    def fake_post(url, **kwargs):
+        if url == _queue_url(config, "primary").api_url("/mutations/v2/claim"):
+            raise claim_error
+        if url == _queue_url(config, "s1").api_url("/mutations/v2/claim"):
+            return _GraphResponse(payload={"jobs": [{"id": "local", "account_id": "acc-1"},
+                                                    {"id": "remote", "account_id": "remote"}]})
+        if url == _queue_url(config, "s1").api_url("/mutations/local/result"):
+            raise report_error
+        return _GraphResponse(payload={"jobs": []})
+
+    def metadata_down(*args, **kwargs):
+        raise metadata_error
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations, "fetch_user_accounts", metadata_down)
+    monkeypatch.setattr(mutations, "execute_mutation", lambda *a: None)
+    with pytest.raises(mutations.MutationBatchError) as caught:
+        mutations.process_mutation_jobs(config)
+
+    error = caught.value
+    assert error.failures == (("primary claim", claim_error),
+                              ("s1 account fetch", metadata_error),
+                              ("s1 result job local", report_error))
+    assert error.__cause__ is claim_error
+    assert all(root.__traceback__ is not None for _, root in error.failures)
+    assert "private" not in str(error)
+    assert error.result == {"claimed": 2, "succeeded": 0, "failed": 0,
+                            "retried": 1, "unsupported": 0}

@@ -39,6 +39,7 @@ const CLIENT_HEADER_MAP: Record<string, SendMailSource> = {
 };
 
 const MAX_Q_LENGTH = 80;
+// eslint-disable-next-line no-control-regex
 const LIKE_META_OR_CONTROL = /[%_\\]|[\u0000-\u001F\u007F]/;
 
 const isSendMailSource = (value: unknown): value is SendMailSource => {

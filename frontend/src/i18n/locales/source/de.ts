@@ -33,6 +33,8 @@ export const deMessages = {
   "views.admin.AccountSettings.address_block_list": "Blockierbegriffe für Benutzer (Administrator kann überspringen)",
   "views.index.SimpleIndex.addressCopied": "Adresse erfolgreich kopiert",
   "views.admin.Statistics.addressCount": "Adressanzahl",
+  "views.admin.Statistics.d1QuotaToday": "D1-Kontingent heute (Lesen / Schreiben)",
+  "views.admin.Statistics.d1QuotaDetail": "Lesen {read} / {readLimit} · Schreiben {written} / {writtenLimit} · {shard} · {date}",
   "views.admin.UserManagement.address_count": "Adressanzahl",
   "views.User.address_management": "Adressverwaltung",
   "views.admin.UserManagement.userAddressManagement": "Adressverwaltung",

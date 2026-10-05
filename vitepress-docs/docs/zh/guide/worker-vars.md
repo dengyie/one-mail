@@ -114,6 +114,20 @@
 >
 > 参考 [配置 worker 使用 wasm 解析邮件](/zh/guide/feature/mail_parser_wasm_worker)
 
+## 统一收件箱薄分片
+
+| 变量名 | 类型 | 说明 | 示例 |
+| --- | --- | --- | --- |
+| `SHARD_MODE` | 文本/JSON | 分片 Worker 设置为 `1`，仅提供 `/shard/*` 数据接口，不提供用户登录或发信接口 | `1` |
+| `SHARD_ID` | 文本 | 本实例的分片标识；主站默认 `primary` | `shard1` |
+| `SHARD_TOKEN` | Secret | 分片间 Bearer 凭据；每个分片独立配置，至少 32 字节随机值 | 使用 `wrangler secret put SHARD_TOKEN` |
+
+主站 KV 的 `one-mail:shard-map` 保存版本 `v:1`、`shards`（`id/base_url/token`）和 `accounts`（账号 ID 到分片 ID）。缺失或合法空表保持全本地路径；读取失败或无效配置会拒绝请求，不能当作空表继续删除元数据。`base_url` 必须是 HTTPS origin，不能含路径、查询或用户信息。不要把真实 token 写入文档或 Git。
+
+网关向分片传递由服务端解析的账号和来源 scope，详情、变更和任务查询执行同等归属检查。远端请求最多等待 3 秒（包括响应体），不重试；部分失败返回成功结果和 `degraded` 分片标识。非空映射的 offset 上限是 500，更深分页使用 cursor。P3 迁移必须先复制、再切流、再 full delta 对账、再 exact 校验，最后才可限预算删除源；copy/delta/delete 需要操作员声明 `--source-quiesced`。用户确认 2026-10-05 UTC 00:00 后两个远程只读生产预检均通过，第二次为 `rows_read=99`、`rows_written=0`，无 code 7500；当前仍未切流或迁移。
+
+`GET /admin/d1_quota` 使用管理端鉴权，只读取 KV 和当前 isolate 的遥测，不查询 D1；D1 配额耗尽时仍可用于诊断。管理统计卡展示 UTC 当日读写**估算值**。计数按日期隔离，单 isolate 成功写入至少间隔 120 秒，失败保留待提交增量。KV 缺少原子累加且最终一致，多 isolate 的累计和全局写入预算不能得到严格保证；isolate 回收也可能丢失未提交数据。因此它不是 Cloudflare 官方配额计数器，也不能用于收信熔断。严格全局 1000 次/日预算仍是上线前的验收缺口。
+
 ## webhook 相关变量
 
 | 变量名           | 类型      | 说明                                  | 示例               |

@@ -165,12 +165,15 @@ const UserBindAddressModule = {
             return c.text(msgs.AddressNotBindedMsg, 400)
         }
         // generate jwt
-        const name = await c.env.DB.prepare(
-            `SELECT name FROM address WHERE id = ? `
-        ).bind(address_id).first("name");
+        const row = await c.env.DB.prepare(
+            `SELECT id, name FROM address WHERE id = ? `
+        ).bind(address_id).first<{ id: number; name: string }>();
+        if (!row || typeof row.name !== "string" || !Number.isInteger(row.id) || row.id <= 0) {
+            return c.text(msgs.AddressNotFoundMsg, 400);
+        }
         const jwt = await signAddressJwt(c, {
-            address: name,
-            address_id: address_id,
+            address: row.name,
+            address_id: row.id,
         })
         return c.json({
             jwt: jwt

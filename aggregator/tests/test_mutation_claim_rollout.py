@@ -62,3 +62,24 @@ def test_new_aggregator_falls_back_to_v1_against_old_worker(monkeypatch):
     # identities during a version transition.
     assert calls[0][1]["lease_token"] == lease
     assert calls[1][1]["lease_token"] == lease
+
+
+def test_shard_v2_claim_fallback_keeps_lease_and_bearer_auth(monkeypatch):
+    config = Config("https://worker.example", "admin-token", [], shards=[
+        {"id": "s1", "base_url": "https://s1.example", "token": "x" * 32, "accounts": []}])
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        return _Response(404 if url.endswith("/v2/claim") else 200, {"jobs": []})
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    assert mutations.process_mutation_jobs(config)["claimed"] == 0
+    assert [url for url, _ in calls] == [
+        "https://worker.example/admin/unified/mutations/v2/claim",
+        "https://worker.example/admin/unified/mutations/claim",
+        "https://s1.example/shard/mutations/v2/claim",
+        "https://s1.example/shard/mutations/claim"]
+    assert calls[2][1]["json"]["lease_token"] == calls[3][1]["json"]["lease_token"]
+    assert calls[0][1]["json"]["lease_token"] != calls[2][1]["json"]["lease_token"]
+    assert calls[2][1]["headers"] == calls[3][1]["headers"] == {"Authorization": "Bearer " + "x" * 32}

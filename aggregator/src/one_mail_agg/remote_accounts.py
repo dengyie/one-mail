@@ -62,25 +62,39 @@ def _optional_bool(value, default=None):
     raise ValueError(f"invalid boolean: {value!r}")
 
 
-def fetch_user_accounts(worker_base_url: str, admin_token: str) -> list[AccountConfig]:
+def fetch_user_accounts(worker_base_url: str, admin_token: str, *,
+                        raise_on_error: bool = False) -> list[AccountConfig]:
+    """Export primary metadata; strict mode distinguishes outages from empty accounts.
+
+    Sync retains the historical fail-soft default. Mutation processing uses
+    strict mode to avoid terminally failing jobs during a primary outage.
+    """
     url = f"{worker_base_url}/admin/unified/mail_accounts"
     headers = {"x-admin-auth": admin_token}
     try:
         r = requests.get(url, headers=headers, timeout=15)
         if r.status_code != 200:
+            if raise_on_error:
+                raise RuntimeError(f"mail account fetch failed: HTTP {r.status_code}")
             log.warning("fetch user mail_accounts failed: HTTP %s %s",
                         r.status_code, r.text[:200])
             return []
         data = r.json()
     except Exception as e:
+        if raise_on_error:
+            raise
         log.warning("fetch user mail_accounts error: %s", e)
         return []
 
     if not isinstance(data, dict):
+        if raise_on_error:
+            raise RuntimeError("mail account fetch returned non-object JSON")
         log.warning("fetch user mail_accounts returned non-object JSON: %r", type(data).__name__)
         return []
     raw_accounts = data.get("accounts", [])
     if not isinstance(raw_accounts, list):
+        if raise_on_error:
+            raise RuntimeError("mail account fetch returned non-list accounts")
         log.warning("fetch user mail_accounts returned non-list accounts: %r",
                     type(raw_accounts).__name__)
         return []

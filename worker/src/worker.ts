@@ -21,6 +21,12 @@ import { checkAccessControl } from './ip_blacklist';
 import { recordAdminFailure, clearAdminFailures, decideAdminAuth, getAdminFailCount } from './unified/admin_lockout';
 
 import { resolveCorsOrigin } from './cors_policy';
+import shardApi from './unified/shard_routes.ts';
+import { attachD1Quota, flushD1Quota, isShardMode, maybeFlushD1Quota } from './core/d1_quota.ts';
+import { PasskeyChallengeDurableObject } from './user_api/passkey_challenge_do.ts';
+import { D1QuotaCoordinatorDurableObject } from './core/d1_quota_coordinator_do.ts';
+
+export { PasskeyChallengeDurableObject, D1QuotaCoordinatorDurableObject };
 
 const API_PATHS = [
 	"/api/",
@@ -45,8 +51,8 @@ app.use('/*', cors({
 }));
 // error handler
 app.onError((err, c) => {
-	console.error(err)
-	return c.text(`${err.name} ${err.message}`, 500)
+	console.error("Worker request failed", { method: c.req.method, path: c.req.path, error: err });
+	return c.json({ error: "Internal server error" }, 500);
 })
 // global middlewares
 app.use('/*', async (c, next) => {
@@ -79,18 +85,23 @@ app.use('/*', async (c, next) => {
 		c.req.path.startsWith("/api/new_address")
 		|| c.req.path.startsWith("/api/send_mail")
 		|| c.req.path.startsWith("/external/api/send_mail")
-		|| c.req.path.startsWith("/user_api/register")
-		|| c.req.path.startsWith("/user_api/verify_code")
-	) {
-		const reqIp = c.req.raw.headers.get("cf-connecting-ip")
-		if (reqIp && c.env.RATE_LIMITER) {
-			const { success } = await c.env.RATE_LIMITER.limit(
-				{ key: `${c.req.path}|${reqIp}` }
-			)
-			if (!success) {
-				return c.text(`IP=${reqIp} Rate limit exceeded for ${c.req.path}`, 429)
+			|| c.req.path.startsWith("/user_api/register")
+			|| c.req.path.startsWith("/user_api/verify_code")
+			|| c.req.path.startsWith("/user_api/passkey/authenticate_")
+		) {
+			const reqIp = c.req.raw.headers.get("cf-connecting-ip")
+			const fingerprint = c.req.raw.headers.get("x-fingerprint")
+			const rateKey = reqIp || fingerprint
+			if (rateKey && c.env.RATE_LIMITER) {
+				const deviceKey = fingerprint ? `|${fingerprint.slice(0, 128)}` : ""
+				const { success } = await c.env.RATE_LIMITER.limit(
+					{ key: `${c.req.path}|${rateKey}${deviceKey}` }
+				)
+				if (!success) {
+					return c.text("Rate limit exceeded", 429)
+				}
 			}
-		}
+
 		// Check access control (blacklist and daily limit)
 		const accessControlResponse = await checkAccessControl(c);
 		if (accessControlResponse) {
@@ -321,9 +332,13 @@ app.use('/admin/*', async (c, next) => {
 		default:
 			body = msgs.NeedAdminPasswordMsg;
 	}
-	// 普通用户直接返回 403 禁止访问，不要求提供口令
-	const finalStatus = (decision.kind === "role_not_admin") ? 403 : decision.status;
-	return c.text(body, finalStatus);
+		let finalStatus: 401 | 403 | 429 = 401;
+		if (decision.kind === "role_not_admin") {
+			finalStatus = 403;
+		} else if (decision.kind === "rate_limit") {
+			finalStatus = 429;
+		}
+		return c.text(body, finalStatus);
 });
 
 
@@ -335,6 +350,7 @@ app.route('/', adminApi)
 app.route('/', apiSendMail)
 app.route('/', telegramApi)
 app.route('/', unifiedApi)
+app.route('/', shardApi)
 
 const health_check = async (c: Context<HonoCustomType>) => {
 	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
@@ -356,8 +372,64 @@ app.get('/health_check', health_check)
 app.all('/*', async c => c.text("Not Found", 404))
 
 
+const withQuotaEnv = (env: Bindings): Bindings => attachD1Quota(env);
+
+const scheduleQuotaFlush = (env: Bindings, ctx: ExecutionContext): void => {
+	maybeFlushD1Quota(env, {
+		waitUntil: (promise) => ctx.waitUntil(promise.catch((error: unknown) => {
+			console.error("D1 telemetry flush failed", { error });
+		})),
+	});
+};
+
 export default {
-	fetch: app.fetch,
-	email: email,
-	scheduled: scheduled,
+	async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
+		const instrumented = withQuotaEnv(env);
+		try {
+			if (isShardMode(instrumented)) {
+				const shardOnly = new Hono<HonoCustomType>();
+				shardOnly.use('/*', cors({
+					origin: (origin, c) => resolveCorsOrigin(origin, c.env.FRONTEND_URL),
+					allowHeaders: [
+						'Content-Type', 'Authorization', 'x-user-token', 'x-user-access-token',
+						'x-custom-auth', 'x-admin-auth', 'x-lang', 'x-fingerprint', 'x-idempotency-key',
+						'x-one-mail-client',
+					],
+					allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+				}));
+				shardOnly.route('/', shardApi);
+				shardOnly.get('/', health_check);
+				shardOnly.get('/health_check', health_check);
+				shardOnly.all('/*', (c) => c.text("Not Found", 404));
+				return await shardOnly.fetch(request, instrumented, ctx);
+			}
+			return await app.fetch(request, instrumented, ctx);
+		} finally {
+			scheduleQuotaFlush(instrumented, ctx);
+		}
+	},
+	async email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
+		if (isShardMode(env)) {
+			message.setReject("shard worker does not accept Email Routing");
+			return;
+		}
+		const instrumented = withQuotaEnv(env);
+		try {
+			return await email(message, instrumented, ctx);
+		} finally {
+			scheduleQuotaFlush(instrumented, ctx);
+		}
+	},
+	async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+		const instrumented = withQuotaEnv(env);
+		try {
+			return await scheduled(event, instrumented, ctx);
+		} finally {
+			try {
+				await flushD1Quota(instrumented);
+			} catch (error) {
+				console.error("Scheduled D1 telemetry flush failed", { error });
+			}
+		}
+	},
 }

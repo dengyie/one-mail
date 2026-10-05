@@ -35,6 +35,7 @@ def test_rewrite_config_refresh_token(tmp_path):
     assert saved["accounts"][0]["oauth"]["refresh_token"] == "NEW"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Requires POSIX file permission bits")
 def test_rewrite_config_refresh_token_keeps_credentials_private(tmp_path):
     p = _cfg_file(tmp_path)
     os.chmod(p, 0o644)

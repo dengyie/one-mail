@@ -95,6 +95,27 @@ const dbWithAddress = (row) => ({
   },
 });
 
+test("verifyAddressJwt: legacy numeric-string address id stays accepted and normalizes", async () => {
+  const c = { env: { JWT_SECRET: "test-secret", DB: dbWithAddress({ name: "test@example.com" }) } };
+  const token = await Jwt.sign({
+    address: "test@example.com", address_id: "7", exp: Math.floor(Date.now() / 1000) + 60,
+  }, c.env.JWT_SECRET, "HS256");
+  assert.equal((await verifyActiveAddressJwt(c, token))?.address_id, 7);
+});
+
+test("verifyAddressJwt: malformed address claims fail closed", async () => {
+  const c = { env: { JWT_SECRET: "test-secret" } };
+  for (const claims of [
+    { address: 7, address_id: 1 },
+    { address: "test@example.com", address_id: "not-an-id" },
+    { address: "test@example.com", address_id: 0 },
+    { address: "test@example.com", address_id: {} },
+  ]) {
+    const token = await Jwt.sign({ ...claims, exp: Math.floor(Date.now() / 1000) + 60 }, c.env.JWT_SECRET, "HS256");
+    assert.equal(await verifyAddressJwt(c, token), null);
+  }
+});
+
 test("verifyActiveAddressJwt: existing id/name pair succeeds", async () => {
   const c = {
     env: {

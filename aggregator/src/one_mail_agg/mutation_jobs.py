@@ -16,7 +16,7 @@ from urllib.parse import quote
 import requests
 from imapclient.exceptions import IMAPClientAbortError, IMAPClientError
 
-from .config import AccountConfig, Config
+from .config import AccountConfig, Config, WorkerDestination
 from .graph_source import (
     GRAPH_IMMUTABLE_PREFER,
     graph_access_token,
@@ -48,10 +48,11 @@ class MutationOutcomeUnknown(RuntimeError):
     """A location-changing provider call may have committed but cannot be proven yet."""
 
 
-def _claim_response(config: Config, path: str, lease_token: str, limit: int):
+def _claim_response(config: Config | WorkerDestination, path: str, lease_token: str, limit: int):
+    destination = config.destinations[0] if isinstance(config, Config) else config
     return requests.post(
-        f"{config.worker_base_url}{path}",
-        headers={"x-admin-auth": config.admin_token},
+        destination.api_url(path),
+        headers=destination.headers(),
         json={"lease_token": lease_token, "limit": limit},
         timeout=15,
     )
@@ -65,10 +66,16 @@ def claim_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> tuple[st
     prefer the v2 endpoint; a 404 means the Worker predates v2, where the legacy
     endpoint still has the original read/star behavior.
     """
+    return _claim_destination_jobs(config, limit=limit)
+
+
+def _claim_destination_jobs(
+    destination: Config | WorkerDestination, *, limit: int,
+) -> tuple[str, list[dict]]:
     lease_token = str(uuid.uuid4())
-    response = _claim_response(config, "/admin/unified/mutations/v2/claim", lease_token, limit)
+    response = _claim_response(destination, "/mutations/v2/claim", lease_token, limit)
     if response.status_code == 404:
-        response = _claim_response(config, "/admin/unified/mutations/claim", lease_token, limit)
+        response = _claim_response(destination, "/mutations/claim", lease_token, limit)
     response.raise_for_status()
     payload = response.json()
     jobs = payload.get("jobs", []) if isinstance(payload, dict) else []
@@ -78,7 +85,7 @@ def claim_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> tuple[st
 
 
 def report_mutation_result(
-    config: Config,
+    config: Config | WorkerDestination,
     job_id: str,
     lease_token: str,
     status: str,
@@ -94,9 +101,10 @@ def report_mutation_result(
         body["retry_after_ms"] = int(retry_after_ms)
     if projection is not None:
         body["projection"] = projection
+    destination = config.destinations[0] if isinstance(config, Config) else config
     response = requests.post(
-        f"{config.worker_base_url}/admin/unified/mutations/{quote(str(job_id), safe='')}/result",
-        headers={"x-admin-auth": config.admin_token},
+        destination.api_url(f"/mutations/{quote(str(job_id), safe='')}/result"),
+        headers=destination.headers(),
         json=body,
         timeout=15,
     )
@@ -537,55 +545,91 @@ def _retryable(error: Exception) -> bool:
     return False
 
 
+class MutationBatchError(RuntimeError):
+    """One or more queues failed; result contains only acknowledged outcomes."""
+
+    def __init__(self, failures: list[tuple[str, Exception]], result: dict):
+        # Keep diagnostic context and the original exceptions/tracebacks while
+        # making the printable summary safe for logs (no response bodies/tokens).
+        self.failures = tuple(failures)
+        super().__init__("mutation batch incomplete: " + "; ".join(
+            f"{context}: {type(error).__name__}" for context, error in self.failures))
+        self.result = result
+
+
 def process_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> dict:
-    """Claim and process one mutation batch.
+    """Drain a bounded batch per queue, retaining each queue's lease and origin.
 
-    User credentials are fetched only after at least one job is claimed, so the
-    5-second idle poll never repeatedly decrypts/exports every mailbox secret.
+    A queue/report failure is raised after the other queues have been serviced.
+    Credentials, OAuth rotation and provider execution always use the original
+    primary Config. Idle polls do not export credentials when queues are empty.
     """
-    lease_token, jobs = claim_mutation_jobs(config, limit=limit)
-    if not jobs:
-        return {"claimed": 0, "succeeded": 0, "failed": 0, "retried": 0, "unsupported": 0}
-
+    result = {"claimed": 0, "succeeded": 0, "failed": 0, "retried": 0, "unsupported": 0}
+    failures = []
     account_map = {str(account.id): account for account in config.accounts}
-    missing_ids = {str(job.get("account_id") or "") for job in jobs} - set(account_map)
-    if missing_ids:
-        for account in fetch_user_accounts(config.worker_base_url, config.admin_token):
-            if account.id in missing_ids:
-                account_map[account.id] = account
-
-    result = {"claimed": len(jobs), "succeeded": 0, "failed": 0, "retried": 0, "unsupported": 0}
-    for job in jobs:
-        job_id = str(job.get("id") or "")
-        account_id = str(job.get("account_id") or "")
-        account = account_map.get(account_id)
-        if not account:
-            report_mutation_result(config, job_id, lease_token, "failed", error="mail account configuration unavailable")
-            result["failed"] += 1
+    fetched_accounts = False
+    for destination in config.destinations:
+        # Keep the public primary interface (and rollout tests) unchanged.
+        origin = config if destination.id == "primary" else destination
+        try:
+            if destination.id == "primary":
+                lease_token, jobs = claim_mutation_jobs(config, limit=limit)
+            else:
+                lease_token, jobs = _claim_destination_jobs(destination, limit=limit)
+        except Exception as error:
+            failures.append((f"{destination.id} claim", error))
+            continue
+        result["claimed"] += len(jobs)
+        if not jobs:
             continue
 
-        try:
-            if account.user_managed:
-                assert_public_user_account(account)
-            projection = execute_mutation(config, account, job)
-        except MutationUnsupported as error:
-            report_mutation_result(config, job_id, lease_token, "unsupported", error=str(error))
-            result["unsupported"] += 1
-        except (MutationIdentityError, UnsafeMailTargetError) as error:
-            report_mutation_result(config, job_id, lease_token, "failed", error=str(error))
-            result["failed"] += 1
-        except Exception as error:
-            if _retryable(error):
-                attempts = max(1, int(job.get("attempts") or 1))
-                retry_ms = min(300_000, 5_000 * (2 ** max(0, attempts - 1)))
-                report_mutation_result(
-                    config, job_id, lease_token, "retry", error=str(error), retry_after_ms=retry_ms)
-                result["retried"] += 1
-            else:
-                report_mutation_result(config, job_id, lease_token, "failed", error=str(error))
-                result["failed"] += 1
-        else:
-            report_mutation_result(config, job_id, lease_token, "succeeded", projection=projection)
-            result["succeeded"] += 1
+        missing_ids = {str(job.get("account_id") or "") for job in jobs} - set(account_map)
+        account_fetch_failed = False
+        if missing_ids and not fetched_accounts:
+            try:
+                accounts = fetch_user_accounts(config.worker_base_url, config.admin_token, raise_on_error=True)
+                account_map.update((account.id, account) for account in accounts
+                                   if account.id not in account_map)
+                fetched_accounts = True
+            except Exception as error:
+                failures.append((f"{destination.id} account fetch", error))
+                account_fetch_failed = True
+                # Local credentials can still service other jobs/queues.
 
+        for job in jobs:
+            job_id = str(job.get("id") or "")
+            account = account_map.get(str(job.get("account_id") or ""))
+            status = "succeeded"
+            report = {}
+            if not account:
+                status = "retry" if account_fetch_failed else "failed"
+                report["error"] = "mail account configuration unavailable"
+                if account_fetch_failed:
+                    report["retry_after_ms"] = 5_000
+            else:
+                try:
+                    if account.user_managed:
+                        assert_public_user_account(account)
+                    report["projection"] = execute_mutation(config, account, job)
+                except MutationUnsupported as error:
+                    status, report = "unsupported", {"error": str(error)}
+                except (MutationIdentityError, UnsafeMailTargetError) as error:
+                    status, report = "failed", {"error": str(error)}
+                except Exception as error:
+                    status, report = "failed", {"error": str(error)}
+                    if _retryable(error):
+                        status = "retry"
+                        attempts = max(1, int(job.get("attempts") or 1))
+                        report["retry_after_ms"] = min(300_000, 5_000 * (2 ** max(0, attempts - 1)))
+            # Transport failure while reporting is not a provider failure and
+            # must never be turned into an acknowledged success/retry/failure.
+            try:
+                report_mutation_result(origin, job_id, lease_token, status, **report)
+            except Exception as error:
+                failures.append((f"{destination.id} result job {job_id}", error))
+                continue
+            result["retried" if status == "retry" else status] += 1
+
+    if failures:
+        raise MutationBatchError(failures, result) from failures[0][1]
     return result

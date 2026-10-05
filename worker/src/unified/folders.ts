@@ -16,7 +16,8 @@ export type UnifiedFolderRow = {
 const csv = (value?: string): string[] =>
     String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 
-const inClause = (values: string[]): string => values.map(() => "?").join(",");
+// Use a single JSON binding for each set, including combined account/source scopes.
+const inSet = (column: string): string => `${column} IN (SELECT value FROM json_each(?))`;
 
 const addSourceFilter = (
     where: string[],
@@ -31,9 +32,9 @@ const addSourceFilter = (
         SELECT 1 FROM emails e
          WHERE e.account_id = f.mail_account_id
            AND e.provider = f.provider
-           AND e.source IN (${inClause(sources)})
+           AND ${inSet("e.source")}
     )`);
-    params.push(...sources);
+    params.push(JSON.stringify(sources));
 };
 
 export async function resolveMoveTarget(
@@ -71,8 +72,8 @@ export async function listFolders(c: Context<HonoCustomType>) {
         if (requestedAccount) {
             const accounts = csv(requestedAccount);
             if (!accounts.length) return c.json({ results: [] });
-            where.push(`f.mail_account_id IN (${inClause(accounts)})`);
-            params.push(...accounts);
+            where.push(inSet("f.mail_account_id"));
+            params.push(JSON.stringify(accounts));
         }
         if (requestedSource) {
             const sources = csv(requestedSource);
@@ -86,8 +87,8 @@ export async function listFolders(c: Context<HonoCustomType>) {
         const accounts = csv(scoped.account_id);
         const sources = csv(scoped.source);
         if (accounts.length) {
-            where.push(`f.mail_account_id IN (${inClause(accounts)})`);
-            params.push(...accounts);
+            where.push(inSet("f.mail_account_id"));
+            params.push(JSON.stringify(accounts));
         }
         addSourceFilter(where, params, sources);
     }

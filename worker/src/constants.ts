@@ -3,7 +3,7 @@ export const CONSTANTS = {
 
     // DB Version
     DB_VERSION_KEY: 'db_version',
-    DB_VERSION: "v0.0.11",
+    DB_VERSION: "v0.0.12",
 
     // DB settings
     ADDRESS_BLOCK_LIST_KEY: 'address_block_list',
@@ -24,6 +24,7 @@ export const CONSTANTS = {
     TG_KV_SETTINGS_KEY: "temp-mail-telegram-settings",
     WEBHOOK_KV_SETTINGS_KEY: "temp-mail-webhook-settings",
     WEBHOOK_KV_USER_SETTINGS_KEY: "temp-mail-webhook-user-settings",
+    WEBHOOK_KV_ADMIN_MAIL_SETTINGS_KEY: "temp-mail-webhook-admin-mail-settings",
     EMAIL_KV_BLACK_LIST: "temp-mail-email-black-list",
     SEND_MAIL_LIMIT_COUNT_KEY_PREFIX: "send_mail_limit_count:",
     SEND_MAIL_LIMIT_CONFIG_KEY: "send_mail_limit_config",

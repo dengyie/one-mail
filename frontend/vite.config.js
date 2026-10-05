@@ -48,7 +48,9 @@ export default defineConfig({
       resolvers: [NaiveUiResolver()]
     }),
     VitePWA({
-      registerType: null,
+      // Keep the explicit no-PWA build usable for Pages/tag variants.
+      disable: process.env.VITE_PWA_DISABLED === 'true',
+      registerType: 'autoUpdate',
       devOptions: {
         enabled: false
       },

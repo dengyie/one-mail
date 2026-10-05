@@ -63,10 +63,17 @@ const receiveMail = async (c: Context<HonoCustomType>) => {
     const env = ai_extract_result
         ? { ...c.env, ...aiExtractEnvOverrides }
         : c.env;
+    // Hono declares only a subset of the Cloudflare runtime context.
+    const runtimeContext = c.executionCtx as ExecutionContext;
+    // Retain the no-op background hooks while using the real request context
+    // for runtime-owned members added by Workers (exports, tracing, abort).
     const executionContext: ExecutionContext = {
         waitUntil: () => {},
         passThroughOnException: () => {},
-        props: {}
+        props: {},
+        exports: runtimeContext.exports,
+        tracing: runtimeContext.tracing,
+        abort: (reason) => runtimeContext.abort(reason),
     };
     await emailHandler(mockMessage, env, executionContext);
 

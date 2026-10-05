@@ -1,5 +1,66 @@
 import json
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
+
+
+@dataclass(frozen=True)
+class WorkerDestination:
+    id: str
+    base_url: str
+    token: str = field(repr=False)
+    api_prefix: str = "/shard"
+
+    def api_url(self, path: str) -> str:
+        return f"{self.base_url}{self.api_prefix}{path}"
+
+    def headers(self) -> dict[str, str]:
+        if self.api_prefix == "/admin/unified":
+            return {"x-admin-auth": self.token}
+        return {"Authorization": f"Bearer {self.token}"}
+
+
+@dataclass(frozen=True)
+class ShardConfig:
+    id: str
+    base_url: str
+    token: str = field(repr=False)
+    accounts: list[str] | tuple[str, ...]
+
+    def __post_init__(self):
+        if not isinstance(self.id, str) or not self.id.strip() or self.id.strip() == "primary":
+            raise ValueError("shard id must be non-empty and cannot be primary")
+        if not isinstance(self.base_url, str):
+            raise ValueError("shard base_url must be an HTTPS origin")
+        base_url = self.base_url.strip().rstrip("/")
+        try:
+            url = urlsplit(base_url)
+            valid = (url.scheme == "https" and url.hostname and url.port != 0
+                     and url.username is None and url.password is None
+                     and not url.path and "?" not in base_url and "#" not in base_url
+                     and not any(c.isspace() or ord(c) < 32 for c in base_url)
+                     and "\\" not in base_url)
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("shard base_url must be an HTTPS origin without credentials, path, query or fragment")
+        if (not isinstance(self.token, str) or len(self.token) < 32
+                or any(c.isspace() or ord(c) < 32 for c in self.token)):
+            raise ValueError("shard token must contain at least 32 characters without whitespace")
+        if not isinstance(self.accounts, (list, tuple)):
+            raise ValueError("shard accounts must be an array of non-empty account IDs")
+        accounts = []
+        seen_accounts = set()
+        for account_id in self.accounts:
+            if not isinstance(account_id, str) or not account_id.strip():
+                raise ValueError("shard accounts must be an array of non-empty account IDs")
+            account_id = account_id.strip()
+            if account_id in seen_accounts:
+                raise ValueError("duplicate account assignment in shard")
+            seen_accounts.add(account_id)
+            accounts.append(account_id)
+        object.__setattr__(self, "id", self.id.strip())
+        object.__setattr__(self, "base_url", base_url)
+        object.__setattr__(self, "accounts", tuple(accounts))
 
 
 _VALID_PROTOCOLS = {"imap", "pop3", "auto"}
@@ -72,6 +133,55 @@ class Config:
     accounts: list[AccountConfig]
     state_path: str = "./sync_state.json"
     config_path: str | None = None   # load_config 回填，供 refresh_token 轮换写回
+    shards: list[ShardConfig] = field(default_factory=list)
+    _primary: WorkerDestination = field(init=False, repr=False)
+    _destinations: tuple[WorkerDestination, ...] = field(init=False, repr=False)
+    _account_destinations: dict[str, WorkerDestination] = field(init=False, repr=False)
+
+    def __post_init__(self):
+        if not isinstance(self.shards, list):
+            raise ValueError("shards must be an array")
+        self._primary = WorkerDestination(
+            "primary", self.worker_base_url.rstrip("/"), self.admin_token, "/admin/unified")
+        destinations = [self._primary]
+        account_destinations = {}
+        ids = {"primary"}
+        urls = {self._primary.base_url.lower()}
+        validated = []
+        for shard in self.shards:
+            if isinstance(shard, dict):
+                try:
+                    shard = ShardConfig(**shard)
+                except TypeError as error:
+                    raise ValueError("each shard requires only id, base_url, token and accounts") from error
+            if not isinstance(shard, ShardConfig):
+                raise ValueError("each shard must be an object")
+            if shard.id in ids:
+                raise ValueError("duplicate shard id")
+            if shard.base_url.lower() in urls:
+                raise ValueError("duplicate shard base_url or primary destination")
+            ids.add(shard.id)
+            urls.add(shard.base_url.lower())
+            destination = WorkerDestination(shard.id, shard.base_url, shard.token)
+            destinations.append(destination)
+            for account_id in shard.accounts:
+                if account_id in account_destinations:
+                    raise ValueError("account assigned to multiple shards")
+                account_destinations[account_id] = destination
+            validated.append(shard)
+        self.shards = validated
+        self._destinations = tuple(destinations)
+        self._account_destinations = account_destinations
+
+    @property
+    def destinations(self) -> tuple[WorkerDestination, ...]:
+        return self._destinations
+
+    def destination_for(self, row: dict) -> WorkerDestination:
+        # Email Routing belongs to the primary regardless of any account mapping.
+        if row.get("source") == "cf_routing":
+            return self._primary
+        return self._account_destinations.get(row.get("account_id"), self._primary)
 
 
 def load_config(path: str) -> Config:
@@ -84,4 +194,5 @@ def load_config(path: str) -> Config:
         accounts=accounts,
         state_path=raw.get("state_path", "./sync_state.json"),
         config_path=path,
+        shards=raw.get("shards", []),
     )

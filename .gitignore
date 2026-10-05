@@ -82,6 +82,10 @@ web_modules/
 .env.test.local
 .env.production.local
 .env.local
+.env.shard1
+.tmp-cdp-cf.mjs
+.tmp-shard-live-test.py
+worker/wrangler.shard1.toml
 
 # one-mail I1: frontend/.env.pages is a secret landing zone — never track (see frontend/.env.pages.example)
 frontend/.env.pages

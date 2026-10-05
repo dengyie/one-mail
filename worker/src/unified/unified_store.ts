@@ -76,6 +76,6 @@ export async function saveUnifiedEmail(
         row.is_read, row.flags_json, row.attachments_json, row.raw_ref, row.imap_uid, row.updated_at,
         row.provider, row.source_folder, row.source_folder_id, row.provider_message_id,
         row.provider_thread_id, row.message_id_header, row.in_reply_to, row.references_json,
-        row.has_attachments, row.source_key, row.sync_version,
+        row.has_attachments, row.source_key, row.sync_version, 0,
     ]);
 }

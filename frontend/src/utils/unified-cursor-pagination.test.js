@@ -104,6 +104,18 @@ describe('createCursorAwareListEmails', () => {
     await nextPage
   })
 
+  it('does not advance a cursor boundary after a degraded response', async () => {
+    const calls = []
+    const list = createCursorAwareListEmails(async (params) => {
+      calls.push(params)
+      if (calls.length === 1) return { results: [], count: null, degraded: ['s1'], has_more: true, next_cursor: 'unsafe-next' }
+      return { results: [], count: 0, has_more: false, next_cursor: null }
+    })
+    await list({ limit: 20, offset: 0 })
+    await list({ limit: 20, offset: 20 })
+    expect(calls[1]).toEqual({ limit: 20, offset: 20 })
+  })
+
   it('preserves explicit cursor calls and invalid pagination shapes unchanged', async () => {
     const calls = []
     const list = createCursorAwareListEmails(async (params) => {

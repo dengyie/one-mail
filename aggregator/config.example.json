@@ -2,6 +2,14 @@
   "worker_base_url": "https://one-mail.<subdomain>.workers.dev",
   "admin_token": "<wrangler.toml 里的 ADMIN_PASSWORDS[0]>",
   "state_path": "./sync_state.json",
+  "shards": [
+    {
+      "id": "shard1",
+      "base_url": "https://one-mail-shard1.example.workers.dev",
+      "token": "REPLACE_WITH_SHARD_TOKEN_32_CHARS_MINIMUM",
+      "accounts": ["qq-main"]
+    }
+  ],
   "accounts": [
     {"id": "qq-main", "source": "imap_qq", "host": "imap.qq.com", "port": 993,
      "username": "you@qq.com", "password": "<QQ授权码>", "folders": ["INBOX"], "use_ssl": true},

@@ -2,11 +2,11 @@ import { Context } from "hono";
 import { createMimeMessage } from "mimetext";
 import { CONSTANTS } from "./constants.ts";
 import { compressText } from "./gzip.ts";
-import { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
+import { getSetting, saveSetting, getJsonSetting, getJsonSettingStrict, deleteSetting } from './core/settings.ts';
 // settings 表读写唯一实现已迁至 core/settings.ts。此处既以 named re-export 保持
 // `import { getSetting, ... } from '../utils'` 调用方不变，又在 default 对象里引用同名
 // import 变量（简写 `getSetting` 等价 `getSetting: getSetting`），utils.getSetting 照常可用。
-export { getSetting, saveSetting, getJsonSetting, deleteSetting } from './core/settings.ts';
+export { getSetting, saveSetting, getJsonSetting, getJsonSettingStrict, deleteSetting } from './core/settings.ts';
 import { safeEqual } from './core/timing.ts';
 // admin 凭据的恒定时间比较 helper 迁至 core/timing.ts（review W1-2）。此处 named import
 // 供 checkIsAdmin 使用；core/timing.ts 只引 WebCrypto（crypto.subtle），node --test 可直跑。
@@ -506,6 +506,7 @@ export default {
     checkCfTurnstile,
     checkUserPassword,
     getJsonSetting,
+    getJsonSettingStrict,
     getJsonValue: getJsonObjectValue,
     getStringList: getStringArray
 }

@@ -97,6 +97,7 @@ type Bindings = {
     // cf turnstile
     CF_TURNSTILE_SITE_KEY: string | undefined
     CF_TURNSTILE_SECRET_KEY: string | undefined
+    ENABLE_GLOBAL_TURNSTILE_CHECK: string | boolean | undefined
 
     // AES-GCM 凭据加密密钥（32 字节 base64），加密 user_mail_accounts.cred_enc
     MAIL_CRED_ENCRYPTION_KEY: string | undefined
@@ -130,6 +131,15 @@ type Bindings = {
 
     // E2E testing
     E2E_TEST_MODE: string | boolean | undefined
+
+    // Thin-shard federation (docs/unified-inbox-sharding.md)
+    SHARD_MODE: string | boolean | number | undefined
+    SHARD_ID: string | undefined
+    SHARD_TOKEN: string | undefined
+    SHARD_FEDERATION_REQUIRED: string | boolean | undefined
+    PASSKEY_CHALLENGES: DurableObjectNamespace
+    D1_QUOTA_COORDINATOR?: DurableObjectNamespace
+    D1_QUOTA_KV?: KVNamespace
 }
 
 type JwtPayload = {
