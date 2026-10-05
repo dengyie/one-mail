@@ -17,6 +17,11 @@ export type PasskeyRpContext = {
     rpID: string;
 };
 
+export type PasskeyStorage = D1Database | {
+    DB?: D1Database;
+    PASSKEY_CHALLENGES?: DurableObjectNamespace;
+};
+
 const resultChanges = (
     result: { meta?: { changes?: number } } | null | undefined,
 ): number => Number(result?.meta?.changes ?? 0);
@@ -75,8 +80,32 @@ const challengeKey = (
     encodeURIComponent(challenge),
 ].join(":");
 
+const challengeObject = (
+    storage: PasskeyStorage,
+    key: string,
+): DurableObjectStub | null => {
+    if (!("PASSKEY_CHALLENGES" in storage) || !storage.PASSKEY_CHALLENGES) return null;
+    return storage.PASSKEY_CHALLENGES.getByName(key);
+};
+
+const callChallengeObject = async (
+    stub: DurableObjectStub,
+    action: "store" | "consume",
+    expiresAt: number,
+): Promise<boolean> => {
+    const response = await stub.fetch("https://passkey-challenge.internal/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, expiresAt }),
+    });
+    if (response.status === 404 && action === "consume") return false;
+    if (!response.ok) throw new Error(`passkey challenge store returned ${response.status}`);
+    const body = await response.json<{ ok?: boolean }>();
+    return body.ok === true;
+};
+
 export const storePasskeyChallenge = async (
-    db: D1Database,
+    storage: PasskeyStorage,
     kind: PasskeyChallengeKind,
     challenge: string,
     rp: PasskeyRpContext,
@@ -84,28 +113,51 @@ export const storePasskeyChallenge = async (
     now = Date.now(),
 ): Promise<boolean> => {
     if (!challenge) return false;
+    const db = "DB" in storage && storage.DB ? storage.DB : ("prepare" in storage ? storage as D1Database : null);
+    const key = challengeKey(kind, challenge, rp, userId);
+    const expiresAt = now + PASSKEY_CHALLENGE_TTL_MS;
+    const object = challengeObject(storage, key);
+    if (object) {
+        try {
+            return await callChallengeObject(object, "store", expiresAt);
+        } catch (error) {
+            console.error("storePasskeyChallenge authoritative store failed", error);
+            return false;
+        }
+    }
+
+    if (!db) return false;
     try {
+        // Keep the fallback in its own indexed table. The settings table is also
+        // used for unrelated configuration and must never be an auth nonce store.
         await db.prepare(
-            "DELETE FROM settings WHERE key LIKE ? AND CAST(value AS INTEGER) <= ?"
-        ).bind(`${PASSKEY_CHALLENGE_PREFIX}%`, now).run();
+            `DELETE FROM passkey_challenges
+             WHERE challenge_key IN (
+                 SELECT challenge_key
+                 FROM passkey_challenges
+                 WHERE expires_at <= ?
+                 ORDER BY expires_at
+                 LIMIT 100
+             )`,
+        ).bind(now).run();
         const result = await db.prepare(
-            "INSERT OR REPLACE INTO settings(key, value, updated_at) VALUES(?,?,datetime('now'))"
-        ).bind(
-            challengeKey(kind, challenge, rp, userId),
-            String(now + PASSKEY_CHALLENGE_TTL_MS),
-        ).run();
+            `INSERT OR REPLACE INTO passkey_challenges
+                (challenge_key, expires_at, created_at)
+             VALUES (?, ?, ?)`,
+        ).bind(key, expiresAt, now).run();
         return resultChanges(result) === 1;
-    } catch {
+    } catch (error) {
+        console.error("storePasskeyChallenge DB failed", error);
         return false;
     }
 };
 
 /**
- * Atomically consume a challenge. A concurrent replay races on the same D1
- * row; exactly one DELETE can report one changed row.
+ * Atomically consume a challenge. A concurrent replay races on the same
+ * row/key; exactly one consumer receives a true result.
  */
 export const consumePasskeyChallenge = async (
-    db: D1Database,
+    storage: PasskeyStorage,
     kind: PasskeyChallengeKind,
     challenge: string,
     rp: PasskeyRpContext,
@@ -113,12 +165,27 @@ export const consumePasskeyChallenge = async (
     now = Date.now(),
 ): Promise<boolean> => {
     if (!challenge) return false;
+    const db = "DB" in storage && storage.DB ? storage.DB : ("prepare" in storage ? storage as D1Database : null);
+    const key = challengeKey(kind, challenge, rp, userId);
+    const object = challengeObject(storage, key);
+    if (object) {
+        try {
+            return await callChallengeObject(object, "consume", now);
+        } catch (error) {
+            console.error("consumePasskeyChallenge authoritative store failed", error);
+            return false;
+        }
+    }
+
+    if (!db) return false;
     try {
         const result = await db.prepare(
-            "DELETE FROM settings WHERE key = ? AND CAST(value AS INTEGER) > ?"
-        ).bind(challengeKey(kind, challenge, rp, userId), now).run();
+            `DELETE FROM passkey_challenges
+             WHERE challenge_key = ? AND expires_at > ?`,
+        ).bind(key, now).run();
         return resultChanges(result) === 1;
-    } catch {
+    } catch (error) {
+        console.error("consumePasskeyChallenge DB failed", error);
         return false;
     }
 };

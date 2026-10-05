@@ -1,5 +1,10 @@
 import { Context } from "hono";
 import { INSERT_EMAIL_SQL } from "../core/ingest.ts";
+import { loadShardMap } from "./shard_map.ts";
+import { fetchShardJson } from "./shard_client.ts";
+import { isShardMode } from "../core/d1_quota.ts";
+import { IngestValidationError, insertArchive } from "./archival_ingest.ts";
+import { lifecycleState } from "./account_lifecycle_schema.ts";
 
 const jsonText = (value: unknown, fallback: unknown): string =>
     typeof value === "string" ? value : JSON.stringify(value ?? fallback);
@@ -28,8 +33,16 @@ const hasAttachments = (e: Record<string, unknown>): number | null => {
 export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowMs: number): unknown[] {
     // from_addr/to_addr/account_id 必须非空：account_id 是外部邮件稳定租户身份；
     // CF native 双写路径 account_id=toAddress 恒非空。
-    if (!e.from_addr || !e.to_addr || !e.account_id) {
+    if (![e.from_addr, e.to_addr, e.account_id].every(value => typeof value === "string" && value.length > 0)) {
         throw new Error("from_addr/to_addr/account_id required");
+    }
+    if (e.id != null && (typeof e.id !== "string" || !e.id.length || e.id.length > 200)) throw new Error("invalid email id");
+    for (const name of ["received_at", "internal_date", "updated_at"]) {
+        const value = e[name];
+        if (value != null && (typeof value !== "number" || !Number.isSafeInteger(value))) throw new Error(`invalid ${name}`);
+    }
+    for (const name of ["is_read", "is_starred"]) {
+        if (e[name] != null && e[name] !== 0 && e[name] !== 1) throw new Error(`invalid ${name}`);
     }
     const legacyImapUid = nullableText(e.imap_uid);
     // 兼容滚动部署：旧 aggregator 尚未发送 source_key 时，现有 imap_uid 本身已经
@@ -56,7 +69,7 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
         jsonText(e.attachments_json, []),
         e.raw_ref ?? null,
         legacyImapUid,
-        nowMs,
+        e.updated_at ?? nowMs,
         provider,
         nullableText(e.source_folder),
         nullableText(e.source_folder_id),
@@ -68,6 +81,7 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
         hasAttachments(e),
         sourceKey,
         nullableInteger(e.sync_version),
+        e.is_starred ?? 0,
     ];
 }
 
@@ -274,10 +288,18 @@ export async function upsertFolders(c: Context<HonoCustomType>, folders: unknown
 export async function insertEmails(c: Context<HonoCustomType>, emails: Record<string, unknown>[]): Promise<{ inserted: number; skipped: number }> {
     let inserted = 0, skipped = 0;
     if (emails.length === 0) return { inserted, skipped };
+    const activeEmails: Record<string, unknown>[] = [];
+    for (const email of emails) {
+        const accountId = nullableText(email.account_id);
+        if (!accountId || (await lifecycleState(c.env.DB, accountId)) == null) activeEmails.push(email);
+        else skipped++;
+    }
+    emails = activeEmails;
+    if (emails.length === 0) return { inserted, skipped };
 
     const nowMs = Date.now();
     const emailStatements = emails.map((e) => {
-        const params = toEmailInsertParams(e, crypto.randomUUID(), nowMs);
+        const params = toEmailInsertParams(e, nullableText(e.id) ?? crypto.randomUUID(), nowMs);
         return c.env.DB.prepare(INSERT_EMAIL_SQL).bind(...(params as never[]));
     });
 
@@ -308,11 +330,22 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
     return { inserted, skipped };
 }
 
+type IngestBody = {
+    emails?: Record<string, unknown>[];
+    folders?: unknown[];
+    migration?: boolean;
+};
+
 export const ingestHandler = async (c: Context<HonoCustomType>) => {
-    const body = await c.req.json<{
-        emails?: Record<string, unknown>[];
-        folders?: unknown[];
-    }>().catch(() => ({}));
+    let body: IngestBody;
+    try {
+        body = await c.req.json<IngestBody>();
+    } catch {
+        return c.json({ error: "invalid ingest JSON" }, 400);
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return c.json({ error: "ingest object required" }, 400);
+    }
     const emails = body?.emails;
     const folders = body?.folders;
 
@@ -332,12 +365,79 @@ export const ingestHandler = async (c: Context<HonoCustomType>) => {
         return c.json({ error: "max 200 emails or folders per request" }, 400);
     }
 
-    const result = await insertEmails(c, emailRows);
-    let foldersUpserted = 0;
-    try {
-        foldersUpserted = await upsertFolders(c, folderRows);
-    } catch (error) {
-        return c.json({ error: error instanceof Error ? error.message : "invalid folder catalog" }, 400);
+    if (body.migration != null && typeof body.migration !== "boolean") {
+        return c.json({ error: "migration must be a boolean" }, 400);
     }
-    return c.json({ ...result, folders_upserted: foldersUpserted });
+    if (body.migration) {
+        if (!isShardMode(c.env)) return c.json({ error: "archive ingest requires shard mode" }, 400);
+        try {
+            return c.json(await insertArchive(c, emailRows, folderRows));
+        } catch (error) {
+            if (error instanceof IngestValidationError) return c.json({ error: error.message }, 400);
+            throw error;
+        }
+    }
+    // Reject malformed catalogs before email writes, not after partial success.
+    if (folderRows.some(row => !parseCatalogFolder(row))) return c.json({ error: "invalid folder catalog entry" }, 400);
+    for (const row of emailRows) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) return c.json({ error: "invalid email row" }, 400);
+        try {
+            toEmailInsertParams(row, "validation", 0);
+        } catch (error) {
+            return c.json({ error: error instanceof Error ? error.message : "invalid email row" }, 400);
+        }
+    }
+    if (isShardMode(c.env)) {
+        if (emailRows.some(row => row.source === "cf_routing")) return c.json({ error: "native email belongs to primary" }, 400);
+        const result = await insertEmails(c, emailRows);
+        return c.json({ ...result, folders_upserted: await upsertFolders(c, folderRows) });
+    }
+    const map = await loadShardMap(c.env);
+    const endpoints = new Map(map.shards.map(shard => [shard.id, shard]));
+    const groups = new Map<string, { emails: Record<string, unknown>[]; folders: unknown[] }>();
+    const group = (owner: string) => {
+        let value = groups.get(owner);
+        if (!value) { value = { emails: [], folders: [] }; groups.set(owner, value); }
+        return value;
+    };
+    for (const row of emailRows) {
+        const accountId = String(row.account_id);
+        const owner = row.source !== "cf_routing" && Object.hasOwn(map.accounts, accountId) ? map.accounts[accountId] : "primary";
+        group(owner).emails.push(row);
+    }
+    for (const row of folderRows) {
+        const accountId = parseCatalogFolder(row)!.accountId;
+        group(Object.hasOwn(map.accounts, accountId) ? map.accounts[accountId] : "primary").folders.push(row);
+    }
+    const results = await Promise.all([...groups].map(async ([owner, rows]) => {
+        if (owner === "primary") {
+            return { ...await insertEmails(c, rows.emails), folders_upserted: await upsertFolders(c, rows.folders) };
+        }
+        const shard = endpoints.get(owner);
+        if (!shard) throw new Error("ingest destination missing");
+        const result = await fetchShardJson<{ inserted: number; skipped: number; folders_upserted: number }>(shard, "/shard/ingest", { method: "POST", body: rows });
+        if (!result.ok) {
+            console.error("shard ingest failed", { shard_id: result.shard_id, error: result.error, cause: result.cause });
+            return null;
+        }
+        const counts = result.data;
+        if (![counts.inserted, counts.skipped, counts.folders_upserted].every(value => Number.isSafeInteger(value) && value >= 0)
+            || counts.inserted + counts.skipped !== rows.emails.length
+            || counts.folders_upserted > rows.folders.length) {
+            console.error("invalid shard ingest acknowledgement", { shard_id: owner });
+            return null;
+        }
+        return counts;
+    }));
+    // A retry replays successful destinations idempotently. Never acknowledge
+    // failed uploads or fall back to primary after account ownership has changed.
+    if (results.some(result => result === null)) return c.json({ error: "shard ingest unavailable; retry batch" }, 503);
+    const total = { inserted: 0, skipped: 0, folders_upserted: 0 };
+    for (const result of results) {
+        if (!result) continue;
+        total.inserted += result.inserted;
+        total.skipped += result.skipped;
+        total.folders_upserted += result.folders_upserted;
+    }
+    return c.json(total);
 };

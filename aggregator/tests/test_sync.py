@@ -754,3 +754,56 @@ def test_run_once_unknown_oauth_provider_only_affects_that_account(tmp_path, mon
     assert synced == ["user-good"]
     # last_error 只回写坏用户账号；good 是 admin config 账号（非 user），不写回
     assert status == [("user-bad", "provider unsupported: some_unknown_provider")]
+
+
+@pytest.mark.parametrize("protocol", ["imap", "pop3"])
+def test_shard_later_chunk_failure_preserves_sync_state_until_safe_retry(
+        tmp_path, monkeypatch, protocol):
+    import requests
+    from one_mail_agg.uploader import UploadBatchError, upload_emails
+
+    account = _acc(protocol=protocol)
+    config = Config("https://primary.example", "admin", [account], shards=[
+        {"id": "s1", "base_url": "https://s1.example", "token": "x" * 32,
+         "accounts": [account.id]}])
+    state = SyncState(str(tmp_path / "state.json"))
+    monkeypatch.setattr(sync_mod, "maybe_sync_imap_folder_catalog", lambda *a, **k: 0)
+    monkeypatch.setattr(sync_mod, "connect_pop3", _PopFactory([
+        ("UL-1", b"From: a@b\r\nSubject: one\r\n\r\none\r\n"),
+        ("UL-2", b"From: a@b\r\nSubject: two\r\n\r\ntwo\r\n")]))
+    monkeypatch.setattr(sync_mod, "upload_emails", lambda cfg, rows:
+                        upload_emails(cfg, rows, max_retries=1, chunk_size=1))
+    accepted = set()
+    calls = []
+    failing = True
+
+    def fake_post(url, **kwargs):
+        assert url == "https://s1.example/shard/ingest"
+        assert kwargs["headers"]["Authorization"] == "Bearer " + "x" * 32
+        assert "x-admin-auth" not in kwargs["headers"]
+        rows = kwargs["json"]["emails"]
+        assert len(rows) == 1
+        key = rows[0]["imap_uid"]
+        calls.append(key)
+        if failing and len(calls) == 2:
+            raise requests.Timeout("shard unavailable")
+        skipped = key in accepted
+        accepted.add(key)
+        return type("Response", (), {"status_code": 200, "json": lambda self: {
+            "inserted": int(not skipped), "skipped": int(skipped)}})()
+
+    monkeypatch.setattr("one_mail_agg.uploader.requests.post", fake_post)
+    with pytest.raises(UploadBatchError):
+        sync_mod.sync_account(_imap_msgs_factory([101, 102]), config, account, state)
+    assert len(accepted) == 1
+    assert state.get_last_uid(account.id, "INBOX") == 0
+    assert state.get_pop3_seen(account.id, "INBOX") == set()
+
+    failing = False
+    sync_mod.sync_account(_imap_msgs_factory([101, 102]), config, account, state)
+    assert len(accepted) == 2  # First committed chunk is deduplicated on retry.
+    assert calls[:2] == calls[2:]
+    if protocol == "imap":
+        assert state.get_last_uid(account.id, "INBOX") == 102
+    else:
+        assert state.get_pop3_seen(account.id, "INBOX") == {"UL-1", "UL-2"}

@@ -8,6 +8,13 @@
 
 ## v1.11.0(main)
 
+- feat: |P3 本地| 统一收件箱迁移工具改为显式 `migration:true` 精确 archival ingest：保留原邮件 ID、正文、provider 元数据、已读/星标/时间状态，冲突不覆盖；copy/delta 要求 `--source-quiesced`，delta 从头对账以捕获迟到旧时间邮件，删除按 D1 实际 rows_written（含索引写放大）共享预算限速。Worker 主入口按 account_id 分流，聚合器保持原队列 origin；Worker 349、federation 23、backfill 29、aggregator 408 项本地回归通过。用户确认 UTC 00:00 后两个远程只读生产预检均通过，第二次请求为 `rows_read=99`、`rows_written=0`，无 code 7500；生产 P3 仍未执行，未写 SHARD_MAP、未复制、未切流、未删除源邮件。
+
+- fix: |Worker| 分片交付检查修复：远端详情/变更/任务/meta 均传递账号与来源权限；配置读取失败阻止删除；账号集合使用 JSON 绑定避免 D1 参数超限。请求体超时覆盖 3 秒全程，故障保留降级标记。遥测按 UTC 日期隔离并保持单 isolate 120 秒写入节流，新增无 D1 查询的管理诊断端点 `/admin/d1_quota`；用量明确为估算，跨 isolate 的全局 KV 写入预算仍待验收。补齐 Worker 严格类型检查及缺失的独立管理员邮件 webhook KV key；内部错误不再原样返回客户端。
+
+- feat: |Worker/Frontend| 统一收件箱薄分片 P0/P1：Worker 用 D1 `meta.rows_read/rows_written` 做 isolate 累计、每 ~2 分钟 KV flush，管理端 `/admin/statistics` 增加今日配额卡。`SHARD_MAP` 为空时列表/详情/变更/count/stats/verifcodes/meta/folders 仍走原路径（行为等价）；非空时网关按 account_id 扇出 `/shard/*` 归并，级联删除先分片后元数据。`SHARD_MODE=1` 只暴露 `/shard/*` + 精简 schema，retention 锁/KV 键加分片后缀。不改前端 API 契约、不改主站 wrangler.toml。
+- feat: |Worker| 薄分片 P2：第二 CF 账号部署 `one-mail-shard1`（`SHARD_MODE=1`，workers.dev，精简 D1 `one_mail_shard1` + 独立 KV）。配置在 gitignored `worker/wrangler.shard1.toml`（模板 `wrangler.shard1.toml.example`），凭据 `.env.shard1`。`/shard/health` token 鉴权 401/200 已通。未写主 KV `SHARD_MAP`、未迁邮件、未覆盖主账号 GitHub `CLOUDFLARE_*` / `BACKEND_TOML`。
+
 - feat: |Frontend/Worker| 发信工作台：侧栏合并为「发信」，`/sendmail` 三个 tab（写邮件 / 我发出的 / 系统与 API）。sendbox 双写正交 `source`/`channel`/`provider_message_id`（raw 仍 v2 追加 keys）；`GET /api/sendbox` 与 `/admin/sendbox` 支持 `source`/`channel`/`q` 与 `with_count=0` 探测（跳过 COUNT(*)）。`/sendbox` 重定向到 `?tab=self`。管理员 `/admin/sendbox` 与 `/admin/send-unknown`（未知投递走预约表，不是 sendbox）。网页带头 `x-one-mail-client: web`，SMTP 代理带头 `smtp-proxy`；CORS 放行该头。Deploy Backend 在 Worker 发布前 replay-safe 加 sendbox 列。列表轮询用 newest-id 探测，管理出站自动刷新默认关。不恢复 Brevo，不设全局 `RESEND_TOKEN`。
 
 - fix: |Frontend/Worker| 统一收件箱去掉 5 秒硬编码轮询，止损 D1 rows_read。旧轮询每次刷新都附带 `COUNT(*)` 全量计数，读取随 emails 表规模线性放大，开一个页面约 40–75 分钟即可烧穿 D1 免费套餐每日 500 万 rows_read。现在：①刷新间隔跟随「外观设置」的全局自动刷新间隔，并在 store 统一钳制 30s 频率上限（外观滑条最低从 5s 提到 30s，临时邮箱/域名邮箱等所有轮询视图一并生效）；②后台自动刷新改为增量探测——每次只取最新 1 封，`with_count=0` 让 Worker 跳过 `COUNT(*)`，最新邮件没变化就完全不拉列表、不做计数；`/api/unified/emails` 新增 `with_count=0` 参数（`handleListQuery` 支持 `skipCount`）。探测请求的读取量从 O(全表) 降到 O(1) 行。

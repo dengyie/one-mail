@@ -105,6 +105,10 @@
             <div class="flex-1"></div>
             <span class="text-xs text-zinc-400 font-mono">{{ t('list.total', { count }) }}</span>
           </div>
+          <div v-if="degradedShards.length" class="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 px-4 py-3 text-sm flex items-center justify-between gap-3">
+            <span>{{ t('list.incompleteResults') }} ({{ degradedShards.join(', ') }})</span>
+            <n-button text size="tiny" :loading="loading" @click="refreshList">{{ t('list.retryDegraded') }}</n-button>
+          </div>
           <div v-if="optionsError" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
             <span>{{ optionsError }}</span>
             <n-button text size="tiny" @click="retryOptions">重试</n-button>
@@ -424,6 +428,7 @@ const emails = ref([])
 const count = ref(0)
 const loading = ref(false)
 const listError = ref('')
+const degradedShards = ref([])
 const page = ref(1)
 const q = ref('')
 const sourceFilter = ref(null)
@@ -501,14 +506,18 @@ const loadList = async ({ background = false } = {}) => {
     if (requestedPage === 1 && emails.value.length > 0) {
       newestSeenKey = emailSortKey(emails.value[0])
     }
-    listError.value = ''
-    connected.value = true
+    degradedShards.value = Array.isArray(listRes.degraded) ? listRes.degraded : []
+    listError.value = degradedShards.value.length
+      ? '部分分片暂不可用，当前结果不完整'
+      : ''
+    connected.value = degradedShards.value.length === 0
     lastLoaded.value = new Date()
   } catch (e) {
     if (requestId !== listRequestSeq) return
     connected.value = false
     if (!background) {
       listError.value = e.message || 'error'
+      degradedShards.value = []
       emails.value = []
       count.value = 0
     }

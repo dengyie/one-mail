@@ -62,9 +62,9 @@ export default {
         // 查找地址
         const address = await c.env.DB.prepare(
             `SELECT * FROM address WHERE name = ?`
-        ).bind(email).first();
+        ).bind(email).first<{ id: number; name: string; password: string | null }>();
 
-        if (!address) {
+        if (!address || typeof address.name !== "string" || !Number.isInteger(address.id) || address.id <= 0) {
             return c.text(msgs.AddressNotFoundMsg, 404);
         }
 

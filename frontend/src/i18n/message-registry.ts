@@ -2075,6 +2075,14 @@ export const MESSAGE_REGISTRY = {
     "userCount": {
       "en": "User Count",
       "zh": "用户总数"
+    },
+    "d1QuotaToday": {
+      "en": "Estimated D1 usage today (read / write)",
+      "zh": "今日 D1 用量估算（读 / 写）"
+    },
+    "d1QuotaDetail": {
+      "en": "read {read} / {readLimit} · write {written} / {writtenLimit} · {shard} · {date}",
+      "zh": "读 {read} / {readLimit} · 写 {written} / {writtenLimit} · {shard} · {date}"
     }
   },
   "views.admin.SenderAccess": {

@@ -147,12 +147,15 @@ const clearSentItems = async (c: Context<HonoCustomType>) => {
 
 const showPassword = async (c: Context<HonoCustomType>) => {
     const { id } = c.req.param();
-    const name = await c.env.DB.prepare(
-        `SELECT name FROM address WHERE id = ? `
-    ).bind(id).first("name");
+    const row = await c.env.DB.prepare(
+        `SELECT id, name FROM address WHERE id = ? `
+    ).bind(id).first<{ id: number; name: string }>();
+    if (!row || typeof row.name !== "string" || !Number.isInteger(row.id) || row.id <= 0) {
+        return c.text(i18n.getMessagesbyContext(c).AddressNotFoundMsg, 404);
+    }
     const jwt = await signAddressJwt(c, {
-        address: name,
-        address_id: id,
+        address: row.name,
+        address_id: row.id,
     })
     return c.json({ jwt });
 };

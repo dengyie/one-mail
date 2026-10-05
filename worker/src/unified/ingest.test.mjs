@@ -13,7 +13,8 @@ test("toEmailInsertParams fills defaults and keeps legacy imap_uid as source_key
   assert.equal(p[11], 0);                 // is_read default
   assert.equal(p[15], "h:INBOX:1:5");     // legacy imap_uid
   assert.equal(p[26], "h:INBOX:1:5");     // rolling-deploy source_key fallback
-  assert.equal(p.length, 28);
+  assert.equal(p.length, 29);
+  assert.equal(p[28], 0);
 });
 
 test("toEmailInsertParams persists provider identity without promoting unknown fields", () => {
@@ -46,6 +47,21 @@ test("toEmailInsertParams persists provider identity without promoting unknown f
   assert.equal(p[25], 1);
   assert.equal(p[26], "graph:acc-1:msg-immutable");
   assert.equal(p[27], 1);
+});
+
+test("new inserts preserve supplied archive state and timestamp", async () => {
+  const { insertEmails } = await import("./ingest.ts");
+  const statements = [];
+  const row = { id: "original-id", source: "imap_qq", account_id: "qq", from_addr: "a@b", to_addr: "c@d", is_read: 1, is_starred: 1, received_at: 12, updated_at: 34 };
+  const db = { prepare: sql => ({ bind: (...params) => ({ sql, params }) }), batch: async rows => {
+    statements.push(...rows); return rows.map(() => ({ meta: { changes: 1 } }));
+  } };
+  await insertEmails({ env: { DB: db } }, [row]);
+  assert.equal(statements[0].params[0], row.id);
+  assert.equal(statements[0].params[8], 12);
+  assert.equal(statements[0].params[11], 1);
+  assert.equal(statements[0].params[16], 34);
+  assert.equal(statements[0].params[28], 1);
 });
 
 test("provider_message_id without provider fails closed", () => {
@@ -93,8 +109,10 @@ test("insertEmails prepares batch statements using INSERT_EMAIL_SQL", async () =
     { source: "imap_qq", account_id: "qq", from_addr: "a@b.com", to_addr: "me@qq.com" },
   ]);
   assert.equal(res.inserted, 1);
-  assert.equal(calls.length, 1);
-  assert.match(calls[0], /INSERT OR IGNORE INTO emails/);
+  const emailInsertCalls = calls.filter((sql) => /INSERT OR IGNORE INTO emails/.test(sql));
+  const identityRefreshCalls = calls.filter((sql) => /UPDATE emails SET/.test(sql));
+  assert.equal(emailInsertCalls.length, 1);
+  assert.equal(identityRefreshCalls.length, 0);
 });
 
 test("provider identity replay refreshes folder metadata without counting a new email", async () => {

@@ -7,7 +7,7 @@ import {
   LanguageFilled, AdminPanelSettingsFilled, PersonFilled,
   HomeFilled, InboxFilled
 } from '@vicons/material'
-import { GithubAlt } from '@vicons/fa'
+import { Github } from '@vicons/fa'
 import { useGlobalState } from '../../store'
 import { getRouterPathWithLang } from '../../utils'
 import { SUPPORTED_LOCALES, getLocaleLabel } from '../../i18n/locale-registry'
@@ -130,7 +130,7 @@ const navTo = (path) => {
         class="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         title="GitHub"
       >
-        <n-icon size="18" :component="GithubAlt" />
+        <n-icon size="18" :component="Github" />
       </a>
 
       <!-- User avatar / Login button -->

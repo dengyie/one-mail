@@ -91,7 +91,13 @@ export const createCursorAwareListEmails = (baseListEmails, getScopeKey = () => 
     // arrives, so an older/slower response cannot resurrect a stale snapshot.
     if (usedCursor && state && cursorsBySignature.get(signature) === state) {
       const nextOffset = page.offset + page.limit
-      if (result?.has_more === true && typeof result?.next_cursor === 'string' && result.next_cursor) {
+      // A degraded response is a partial snapshot. Do not advance the opaque
+      // boundary; the same page must be retried after the failed owner recovers.
+      if (Array.isArray(result?.degraded) && result.degraded.length) {
+        for (const offset of [...state.keys()]) {
+          if (offset >= nextOffset) state.delete(offset)
+        }
+      } else if (result?.has_more === true && typeof result?.next_cursor === 'string' && result.next_cursor) {
         state.set(nextOffset, result.next_cursor)
       } else {
         // The current boundary no longer has a following cursor. Remove this

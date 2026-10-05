@@ -50,6 +50,7 @@ export type LocaleMessages = {
     OperationFailedMsg: string
     RequiredFieldMsg: string
     InvalidInputMsg: string
+    RateLimitExceededMsg: string
 
     // Address related
     NameTooShortMsg: string

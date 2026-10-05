@@ -12,8 +12,8 @@ export const INSERT_EMAIL_SQL = `INSERT OR IGNORE INTO emails
    received_at,internal_date,headers_json,is_read,flags_json,attachments_json,
    raw_ref,imap_uid,updated_at,
    provider,source_folder,source_folder_id,provider_message_id,provider_thread_id,
-   message_id_header,in_reply_to,references_json,has_attachments,source_key,sync_version)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+   message_id_header,in_reply_to,references_json,has_attachments,source_key,sync_version,is_starred)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
 
 export const insertEmail = async (
   c: Context,

@@ -120,6 +120,20 @@
 >
 > Refer to [Configure worker to use wasm for email parsing](/en/guide/feature/mail_parser_wasm_worker)
 
+## Unified inbox thin shards
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `SHARD_MODE` | Text/JSON | Set to `1` on a shard Worker to serve only `/shard/*` data endpoints, without user login or outbound mail APIs | `1` |
+| `SHARD_ID` | Text | Instance shard identity; the primary defaults to `primary` | `shard1` |
+| `SHARD_TOKEN` | Secret | Separate inter-shard Bearer credential per shard, with at least 32 random bytes | Use `wrangler secret put SHARD_TOKEN` |
+
+The primary KV key `one-mail:shard-map` stores version `v:1`, `shards` (`id/base_url/token`), and `accounts` (account ID to shard ID). A missing or valid empty map preserves local routing. A read failure or invalid map rejects the request rather than continuing metadata deletion as if routing were local. `base_url` must be an HTTPS origin without a path, query, or user information. Never store real tokens in documentation or Git.
+
+The gateway passes server-resolved account and source scope. Detail, mutation, and job queries enforce equivalent ownership. Remote requests have a three-second deadline including the response body, with no retries. Partial failures return successful results plus `degraded` shard IDs. A non-empty map caps offset at 500; deeper pages use cursors. P3 migration must copy first, cut over, run a full delta reconciliation, perform exact verification, and only then delete source rows under the shared write budget; copy/delta/delete require the operator's `--source-quiesced` attestation. The user confirmed that both remote read-only production preflight checks passed after 00:00 UTC on 2026-10-05; the second used `rows_read=99` and `rows_written=0`, with no code 7500. No cutover or migration has run.
+
+`GET /admin/d1_quota` uses existing admin authentication and reads only KV and current-isolate telemetry, without D1 queries, so it remains available for diagnosis when D1 reads are exhausted. The admin card shows **estimated** UTC-day usage. Counters are separated by date; successful writes in one isolate are at least 120 seconds apart, and failed writes retain pending deltas. KV has no atomic increment and is eventually consistent: totals and the global write budget across isolates are not strictly guaranteed, and isolate eviction can lose pending data. This is not Cloudflare's official quota counter and must not gate ingest. A strict global 1,000-write/day guarantee remains a rollout acceptance gap.
+
 ## Webhook Related Variables
 
 | Variable Name    | Type      | Description                                       | Example            |

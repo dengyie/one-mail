@@ -27,6 +27,23 @@ workers_dev = false
 # Per-run limit for mail, sent-mail, and creation/activity-based address cleanup. Defaults to 3000, maximum 5000.
 # CLEANUP_BATCH_SIZE = 3000
 
+[[durable_objects.bindings]]
+name = "PASSKEY_CHALLENGES"
+class_name = "PasskeyChallengeDurableObject"
+
+# Optional authoritative per-shard D1 quota aggregation.
+[[durable_objects.bindings]]
+name = "D1_QUOTA_COORDINATOR"
+class_name = "D1QuotaCoordinatorDurableObject"
+
+[[migrations]]
+tag = "passkey-challenge-v1"
+new_sqlite_classes = ["PasskeyChallengeDurableObject"]
+
+[[migrations]]
+tag = "d1-quota-coordinator-v1"
+new_sqlite_classes = ["D1QuotaCoordinatorDurableObject"]
+
 # send_email must stay top-level. Wrangler 4 treats send_email inside
 # [triggers] as an unexpected field and drops the SEND_MAIL binding.
 # send_email = [
@@ -207,6 +224,10 @@ database_id = "xxx"
 # kv config for send email verification code
 # [[kv_namespaces]]
 # binding = "KV"
+# id = "xxxx"
+# Optional: bind the same namespace for authoritative D1 quota snapshots.
+# [[kv_namespaces]]
+# binding = "D1_QUOTA_KV"
 # id = "xxxx"
 
 # ratelimit config for /api/new_address

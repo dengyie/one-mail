@@ -3,6 +3,9 @@ import { CONSTANTS } from "../constants";
 import utils from "../utils";
 import { ensureSendMailLimitReservationSchema } from "../mails_api/send_mail_limit_utils";
 import { ensureProviderIdentitySchema } from "../unified/schema";
+import { isShardMode } from "../core/d1_quota.ts";
+import { initializeShardSchema } from "../unified/shard_schema.ts";
+import { ensureAccountLifecycleTable } from "../unified/account_lifecycle_schema.ts";
 
 const DB_INIT_QUERIES = `
 CREATE TABLE IF NOT EXISTS raw_mails (
@@ -74,8 +77,6 @@ CREATE TABLE IF NOT EXISTS sendbox (
 
 CREATE INDEX IF NOT EXISTS idx_sendbox_address ON sendbox(address);
 CREATE INDEX IF NOT EXISTS idx_sendbox_created_at ON sendbox(created_at);
-CREATE INDEX IF NOT EXISTS idx_sendbox_source ON sendbox(source);
-CREATE INDEX IF NOT EXISTS idx_sendbox_address_source ON sendbox(address, source);
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -83,6 +84,14 @@ CREATE TABLE IF NOT EXISTS settings (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS passkey_challenges (
+    challenge_key TEXT PRIMARY KEY,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_passkey_challenges_expires_at
+    ON passkey_challenges(expires_at);
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
@@ -128,7 +137,6 @@ CREATE TABLE IF NOT EXISTS user_passkeys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_passkeys_user_id ON user_passkeys(user_id);
-
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_passkeys_user_id_passkey_id ON user_passkeys(user_id, passkey_id);
 
 CREATE TABLE IF NOT EXISTS user_mail_accounts (
@@ -220,6 +228,26 @@ async function ensureSendboxSourceSchema(db: D1Database): Promise<void> {
     await db.exec(`CREATE INDEX IF NOT EXISTS idx_sendbox_address_source ON sendbox(address, source)`);
 }
 
+async function ensurePasskeySchema(db: D1Database): Promise<void> {
+    const duplicates = await db.prepare(
+        `SELECT passkey_id, COUNT(*) AS duplicate_count
+         FROM user_passkeys
+         GROUP BY passkey_id
+         HAVING COUNT(*) > 1
+         LIMIT 1`
+    ).all<{ passkey_id: string; duplicate_count: number }>();
+    const duplicate = duplicates.results?.[0];
+    if (duplicate) {
+        throw new Error(
+            `passkey_id uniqueness migration blocked by duplicate credential ${duplicate.passkey_id}`,
+        );
+    }
+    await db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_passkeys_passkey_id
+         ON user_passkeys(passkey_id)`,
+    );
+}
+
 async function ensurePop3Columns(db: D1Database): Promise<string[]> {
     const tableInfo = await db.prepare(`PRAGMA table_info(user_mail_accounts)`).all();
     const columns = new Set((tableInfo.results ?? []).map((column: any) => column.name));
@@ -279,12 +307,18 @@ function initQuery() {
 
 export default {
     initialize: async (c: Context<HonoCustomType>) => {
+        if (isShardMode(c.env)) {
+            await initializeShardSchema(c.env.DB);
+            return c.json({ message: "Shard database initialized" });
+        }
         // CREATE IF NOT EXISTS is safe for both a fresh and an existing D1.
         await c.env.DB.exec(initQuery());
         // CREATE TABLE does not add columns to an old table, so repair the
         // actual table shape even when db_version is missing or stale.
         await ensureLegacyColumns(c.env.DB);
         await ensureSendboxSourceSchema(c.env.DB);
+        await ensurePasskeySchema(c.env.DB);
+        await ensureAccountLifecycleTable(c.env.DB);
         await ensurePop3Columns(c.env.DB);
         await ensureUnifiedColumns(c.env.DB);
         await ensureProviderIdentitySchema(c.env.DB);
@@ -298,6 +332,10 @@ export default {
         return c.json({ message: "Database initialized" });
     },
     migrate: async (c: Context<HonoCustomType>) => {
+        if (isShardMode(c.env)) {
+            await initializeShardSchema(c.env.DB);
+            return c.json({ success: true, message: "Shard database migrated" });
+        }
         const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
 
         if (version && version <= "v0.0.2") {
@@ -359,6 +397,8 @@ export default {
         await c.env.DB.exec(initQuery());
         await ensureLegacyColumns(c.env.DB);
         await ensureSendboxSourceSchema(c.env.DB);
+        await ensurePasskeySchema(c.env.DB);
+        await ensureAccountLifecycleTable(c.env.DB);
         const migrationChanges = await ensurePop3Columns(c.env.DB);
         const unifiedChanges = await ensureUnifiedColumns(c.env.DB);
         const providerIdentityChanges = await ensureProviderIdentitySchema(c.env.DB);
@@ -381,6 +421,14 @@ export default {
         });
     },
     getVersion: async (c: Context<HonoCustomType>) => {
+        if (isShardMode(c.env)) {
+            return c.json({
+                need_initialization: false,
+                need_migration: false,
+                current_db_version: "shard",
+                code_db_version: CONSTANTS.DB_VERSION,
+            });
+        }
         const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
         return c.json({
             need_initialization: !version,

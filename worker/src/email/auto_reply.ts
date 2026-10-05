@@ -50,7 +50,12 @@ export const auto_reply = async (
                     data: results.message || "This is an auto-reply message, please reconact later."
                 });
                 if (getBooleanValue(env.E2E_TEST_MODE)) {
-                    await message.reply(msg.asRaw());
+                    await message.reply({
+                        from: { name: results.name || results.address, email: results.address },
+                        subject: results.subject || "Auto-reply",
+                        text: results.message || "This is an auto-reply message, please reconact later.",
+                        headers: { "In-Reply-To": message_id },
+                    });
                 } else {
                     const { EmailMessage } = await import('cloudflare:email');
                     const replyMessage = new EmailMessage(
@@ -58,7 +63,6 @@ export const auto_reply = async (
                         message.from,
                         msg.asRaw()
                     );
-                    // @ts-ignore
                     await message.reply(replyMessage);
                 }
             }

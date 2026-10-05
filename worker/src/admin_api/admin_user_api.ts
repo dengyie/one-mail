@@ -9,6 +9,7 @@ import i18n from '../i18n';
 import { mergeRoleAddressConfigs } from "../unified/rbac_config";
 import { hashPasswordForStorage } from "../core/password.ts";
 import { DEFAULT_MAX_ADDRESS_COUNT, HARD_MAX_UNIFIED_PAGE_SIZE } from "../quota.ts";
+import { hasRemoteShards, loadShardMap, purgeShardAccounts } from "../unified/federation.ts";
 
 export default {
     getSetting: async (c: Context<HonoCustomType>) => {
@@ -119,7 +120,18 @@ export default {
         // rows themselves are intentionally retained: they are global mailbox
         // records and may contain mail history; users_address is the ownership
         // link that must be removed before the user row.
+        // Thin-shard: purge remote emails first, then local metadata (spec §8).
         try {
+            const map = await loadShardMap(c.env);
+            if (hasRemoteShards(map)) {
+                const { results: accounts } = await c.env.DB.prepare(
+                    `SELECT id FROM user_mail_accounts WHERE user_id = ?`,
+                ).bind(user_id).all<{ id: string }>();
+                const ids = (accounts || []).map((row) => row.id);
+                if (ids.length && !(await purgeShardAccounts(map, ids))) {
+                    return c.text(msgs.FailedDeleteUserMsg, 500);
+                }
+            }
             const results = await c.env.DB.batch([
                 c.env.DB.prepare(
                     `DELETE FROM user_passkeys WHERE user_id = ?`

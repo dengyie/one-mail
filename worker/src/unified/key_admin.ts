@@ -4,10 +4,12 @@ import { hashKey } from "./api_keys";
 const genKey = (): string =>
     `omk_${Array.from(crypto.getRandomValues(new Uint8Array(24))).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 
+type CreateKeyBody = {
+    name?: string; role?: string; allowed_sources?: string[]; allowed_accounts?: string[];
+};
+
 export const createKey = async (c: Context<HonoCustomType>) => {
-    const body = await c.req.json<{
-        name?: string; role?: string; allowed_sources?: string[]; allowed_accounts?: string[];
-    }>().catch(() => ({}));
+    const body = await c.req.json<CreateKeyBody>().catch((): CreateKeyBody => ({}));
     if (!body.name) return c.json({ error: "name required" }, 400);
     const key = genKey();
     const id = crypto.randomUUID();

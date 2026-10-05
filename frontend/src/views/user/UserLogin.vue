@@ -147,15 +147,16 @@ const passkeyLogin = async () => {
   try {
     const opts = await api.fetch('/user_api/passkey/authenticate_request', {
       method: 'POST',
-      body: JSON.stringify({ domain: location.hostname })
+      body: JSON.stringify({
+        domain: location.hostname,
+        email: form.value.email.trim() || undefined,
+      })
     })
     const authResp = await startAuthentication({ optionsJSON: opts })
     const res = await api.fetch('/user_api/passkey/authenticate_response', {
       method: 'POST',
       body: JSON.stringify({
-        domain: location.hostname,
         credential: authResp,
-        origin: location.origin,
       })
     })
     userJwt.value = res.jwt

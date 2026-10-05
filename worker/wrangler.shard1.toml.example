@@ -1,0 +1,39 @@
+# Thin-shard Worker on a second Cloudflare account (docs/unified-inbox-sharding.md §5/§6 P2).
+# Copy to wrangler.shard1.toml (gitignored) and fill IDs. Never merge into
+# worker/wrangler.toml or GitHub BACKEND_TOML / CLOUDFLARE_* of the primary account.
+#
+# Deploy from worker/:
+#   export CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=...
+#   pnpm exec wrangler deploy --config wrangler.shard1.toml --minify
+name = "one-mail-shard1"
+main = "src/worker.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = [ "nodejs_compat" ]
+keep_vars = false
+workers_dev = true
+
+[triggers]
+crons = [ "*/10 * * * *" ]
+
+[vars]
+PREFIX = ""
+# Dummy domain so /health_check can pass. Shard workers do not accept Email Routing.
+DEFAULT_DOMAINS = ["shard.local"]
+DOMAINS = ["shard.local"]
+ENABLE_USER_CREATE_EMAIL = false
+ENABLE_USER_DELETE_EMAIL = false
+ENABLE_AUTO_REPLY = false
+SHARD_MODE = "1"
+SHARD_ID = "shard1"
+# After deploy:
+#   printf '%s' "$SHARD_TOKEN" | wrangler secret put SHARD_TOKEN --config wrangler.shard1.toml
+#   printf '%s' "$JWT_SECRET" | wrangler secret put JWT_SECRET --config wrangler.shard1.toml
+
+[[d1_databases]]
+binding = "DB"
+database_name = "one_mail_shard1"
+database_id = "<REDACTED>"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "<REDACTED>"

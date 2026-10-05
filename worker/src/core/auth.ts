@@ -14,8 +14,8 @@ import { JWT_DEFAULTS } from "@one-mail/shared";
  *  - verify 内部 try/catch → 失效返回 null；调用方按 null 处理（与原 catch 语义等价）
  */
 
-export const addressJwtExpSeconds = (c: Context): number => {
-  const daysRaw = (c.env as any)?.ADDRESS_JWT_TTL_DAYS;
+export const addressJwtExpSeconds = (c: Context<HonoCustomType>): number => {
+  const daysRaw = c.env?.ADDRESS_JWT_TTL_DAYS;
   const days = typeof daysRaw === "number" ? daysRaw
     : typeof daysRaw === "string" && daysRaw.trim() ? Number(daysRaw)
     : JWT_DEFAULTS.ADDRESS_TTL_DAYS;
@@ -25,21 +25,26 @@ export const addressJwtExpSeconds = (c: Context): number => {
 };
 
 export const signAddressJwt = async (
-  c: Context,
+  c: Context<HonoCustomType>,
   payload: { address: string; address_id: number },
 ): Promise<string> => {
   return await Jwt.sign({ ...payload, exp: addressJwtExpSeconds(c) }, c.env.JWT_SECRET, "HS256");
 };
 
 export const verifyAddressJwt = async (
-  c: Context,
+  c: Context<HonoCustomType>,
   token: string,
 ): Promise<AddressJwtPayload | null> => {
   try {
     const payload = await Jwt.verify(token, c.env.JWT_SECRET, "HS256");
     if (!payload.exp) return null;
     if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload as AddressJwtPayload;
+    if (typeof payload.address !== "string" || !payload.address) return null;
+    const rawAddressId = payload.address_id;
+    if (typeof rawAddressId !== "number" && typeof rawAddressId !== "string") return null;
+    const addressId = Number(rawAddressId);
+    if (!Number.isInteger(addressId) || addressId <= 0) return null;
+    return { ...payload, address: payload.address, address_id: addressId };
   } catch {
     return null;
   }
@@ -54,7 +59,7 @@ export const verifyAddressJwt = async (
  * prevents a token for an old row from inheriting a reused address name.
  */
 export const verifyActiveAddressJwt = async (
-  c: Context,
+  c: Context<HonoCustomType>,
   token: string,
 ): Promise<AddressJwtPayload | null> => {
   const payload = await verifyAddressJwt(c, token);
@@ -62,10 +67,7 @@ export const verifyActiveAddressJwt = async (
     return null;
   }
 
-  const rawAddressId = (payload as unknown as { address_id?: unknown }).address_id;
-  const addressId = typeof rawAddressId === "number"
-    ? rawAddressId
-    : Number(rawAddressId);
+  const addressId = payload.address_id;
   if (!Number.isInteger(addressId) || addressId <= 0) {
     return null;
   }
@@ -87,7 +89,7 @@ export const verifyActiveAddressJwt = async (
  * the project's stronger address-token semantics.
  */
 export const verifyActiveAddressBearer = async (
-  c: Context,
+  c: Context<HonoCustomType>,
   authorization: string | null,
 ): Promise<AddressJwtPayload | null> => {
   if (!authorization) return null;

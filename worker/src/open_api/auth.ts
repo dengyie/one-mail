@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 
 import utils, { checkCfTurnstile, getPasswords, getAdminPasswords, hashPassword } from '../utils';
 import { isAdminLockedOut, recordAdminFailure, clearAdminFailures } from '../unified/admin_lockout';
@@ -10,12 +10,14 @@ const api = new Hono<HonoCustomType>()
 // 空 / 非 JSON body 容错：c.req.json() 对空 body 抛 SyntaxError(Unexpected end of JSON input)，
 // 裸调用会让 /open_api/*_login 在探测者发空 POST 时返回 500。这里 catch 成 {}，
 // 后续各路由的 !password / !credential 判定即走 401（与密码错误同语义，不泄露 body 缺失 vs 密码错）。
-const parseLoginBody = async <T>(c: Parameters<Parameters<typeof api.post>[1]>[0]): Promise<T> => {
-    try { return await c.req.json<T>(); } catch { return {} as T; }
+type LoginBody = { password?: string; credential?: string; cf_token?: string };
+
+const parseLoginBody = async (c: Context<HonoCustomType>): Promise<LoginBody> => {
+    try { return await c.req.json<LoginBody>(); } catch { return {}; }
 }
 
 api.post('/open_api/site_login', async (c) => {
-    const { password, cf_token } = await parseLoginBody<{ password?: string; cf_token?: string }>(c);
+    const { password, cf_token } = await parseLoginBody(c);
     const msgs = i18n.getMessagesbyContext(c);
     if (utils.isGlobalTurnstileEnabled(c)) {
         try {
@@ -33,7 +35,7 @@ api.post('/open_api/site_login', async (c) => {
 })
 
 api.post('/open_api/admin_login', async (c) => {
-    const { password, cf_token } = await parseLoginBody<{ password?: string; cf_token?: string }>(c);
+    const { password, cf_token } = await parseLoginBody(c);
     const msgs = i18n.getMessagesbyContext(c);
     if (utils.isGlobalTurnstileEnabled(c)) {
         try {
@@ -61,7 +63,7 @@ api.post('/open_api/admin_login', async (c) => {
 })
 
 api.post('/open_api/credential_login', async (c) => {
-    const { credential, cf_token } = await parseLoginBody<{ credential?: string; cf_token?: string }>(c);
+    const { credential, cf_token } = await parseLoginBody(c);
     const msgs = i18n.getMessagesbyContext(c);
     if (utils.isGlobalTurnstileEnabled(c)) {
         try {

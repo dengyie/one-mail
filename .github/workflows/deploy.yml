@@ -54,17 +54,27 @@ jobs:
       - name: Run Worker tests
         run: |
           cd worker
-          node --experimental-strip-types --test src/core/*.test.mjs src/unified/*.test.mjs src/user_api/*.test.mjs src/email/*.test.mjs
+          node --experimental-strip-types --test \
+            $(find src -type f \( -name '*.test.mjs' -o -name '*.test.js' \) -print)
 
-      - name: Run Frontend tests (92 test cases)
+      - name: Worker typecheck, lint, and bundle gate
+        run: |
+          pnpm --filter @one-mail/worker exec tsc --noEmit
+          pnpm --filter @one-mail/worker lint
+          pnpm --filter @one-mail/worker build
+
+      - name: Run Frontend tests
         run: pnpm --filter @one-mail/frontend test
+
+      - name: Run DB tests
+        run: pnpm --dir db test
 
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
-      - name: Run Aggregator tests (136 test cases)
+      - name: Run Aggregator tests
         run: |
           cd aggregator
           python -m pip install --upgrade pip

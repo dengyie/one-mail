@@ -174,7 +174,7 @@ export const listUnknownSendMail = async (c: Context<HonoCustomType>) => {
 };
 
 export const resolveUnknownSendMail = async (c: Context<HonoCustomType>) => {
-    const id = c.req.param("id");
+    const { id } = c.req.param();
     let body: { outcome?: string };
     try {
         body = await c.req.json();

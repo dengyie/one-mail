@@ -8,7 +8,7 @@ import { Context } from "hono";
  */
 
 export const getSetting = async (
-  c: Context,
+  c: Context<HonoCustomType>,
   key: string,
 ): Promise<string | null> => {
   try {
@@ -23,7 +23,7 @@ export const getSetting = async (
 };
 
 export const saveSetting = async (
-  c: Context,
+  c: Context<HonoCustomType>,
   key: string,
   value: string,
 ): Promise<void> => {
@@ -34,14 +34,14 @@ export const saveSetting = async (
 };
 
 export const deleteSetting = async (
-  c: Context,
+  c: Context<HonoCustomType>,
   key: string,
 ): Promise<void> => {
   await c.env.DB.prepare(`DELETE FROM settings WHERE key = ?`).bind(key).run();
 };
 
 export const getJsonSetting = async <T = any>(
-  c: Context,
+  c: Context<HonoCustomType>,
   key: string,
 ): Promise<T | null> => {
   const value = await getSetting(c, key);
@@ -51,5 +51,26 @@ export const getJsonSetting = async <T = any>(
   } catch (e) {
     console.error(`GetJsonSetting: Failed to parse ${key}`, e);
     return null;
+  }
+};
+
+/** Read scheduled configuration without conflating an outage or malformed value with absence. */
+export const getJsonSettingStrict = async <T = unknown>(
+  c: Context<HonoCustomType>,
+  key: string,
+): Promise<T | null> => {
+  let value: string | null;
+  try {
+    value = await c.env.DB.prepare(
+      `SELECT value FROM settings WHERE key = ?`,
+    ).bind(key).first<string>("value");
+  } catch (cause) {
+    throw new Error(`Failed to read setting ${key}`, { cause });
+  }
+  if (value == null || value === "") return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch (cause) {
+    throw new Error(`Invalid JSON in setting ${key}`, { cause });
   }
 };

@@ -152,6 +152,7 @@ def test_public_hostname_connects_to_validated_numeric_address(guarded, monkeypa
     assert captured["address"] == ("93.184.216.34", 993)
 
 
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix sockets are unavailable on this platform")
 def test_non_tcp_unix_sockets_untouched(guarded):
     # Guard is TCP-only: unix socket connects pass through unchanged.
     path = f"/tmp/om-guard-{os.getpid()}.sock"

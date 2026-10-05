@@ -29,7 +29,7 @@ test("listEmails parses with_count out of the query string", () => {
 
 test("offset mode forwards skipCount to handleListQuery", () => {
     assert.ok(
-        indexSrc.includes("params, limit, offset, UNIFIED_EMAIL_ORDER, [], { skipCount: !withCount })"),
+        /params(?: as string\[\])?, limit, offset, UNIFIED_EMAIL_ORDER, \[\], \{ skipCount: !withCount \}\)/.test(indexSrc),
         "offset branch must pass skipCount so handleListQuery skips the count query",
     );
 });

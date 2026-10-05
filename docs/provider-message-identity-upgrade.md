@@ -20,7 +20,7 @@ Example migration command from `worker/`:
 wrangler d1 execute <database> --remote --file=../db/2026-09-12-provider-message-identity.sql
 ```
 
-The admin DB migration path (`/admin/db/migrate`) also repairs the schema by inspecting the real table shape rather than trusting `db_version`, but an explicit pre-deploy migration is preferred for production because it prevents any new Worker request from racing an unmodified database.
+The admin DB migration path (`POST /admin/db_migration`) also repairs the schema by inspecting the real table shape rather than trusting `db_version`, but an explicit pre-deploy migration is preferred for production because it prevents any new Worker request from racing an unmodified database.
 
 ## What the migration backfills
 

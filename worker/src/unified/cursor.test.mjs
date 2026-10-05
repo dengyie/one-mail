@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import test from "node:test";
 import { cursorPredicate, decodeEmailCursor, encodeEmailCursor } from "./cursor.ts";
 
@@ -25,6 +26,14 @@ test("decodeEmailCursor fails closed on malformed or unsupported cursors", () =>
   for (const raw of ["", "%%%", "eyJ2IjoyLCJzb3J0S2V5IjoxLCJpZCI6IngifQ", "e30"]) {
     assert.throws(() => decodeEmailCursor(raw), /invalid cursor/);
   }
+});
+
+test("cursor rejects missing or nonnumeric sort keys and keeps UTF-8 IDs", () => {
+  for (const sortKey of [undefined, null, "42"]) {
+    const cursor = Buffer.from(JSON.stringify({ v: 1, sortKey, id: "x" })).toString("base64url");
+    assert.throws(() => decodeEmailCursor(cursor), /invalid cursor/);
+  }
+  assert.equal(decodeEmailCursor(encodeEmailCursor(42, "邮件-1")).id, "邮件-1");
 });
 
 test("encodeEmailCursor rejects unsafe sort keys and oversized ids", () => {

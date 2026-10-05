@@ -6,7 +6,7 @@ import { getDomainResendToken, resolveSendMailChannel } from './core/send_mail_c
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { generateRandomPassword, hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
-import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, WebhookMail, WebhookSettings } from './models';
+import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, RawMailRow, WebhookMail, WebhookSettings } from './models';
 import { signAddressJwt } from './core/auth';
 import { isSafeWebhookUrl } from './unified/webhook_url';
 import i18n from './i18n';
@@ -731,7 +731,7 @@ export const handleMailListQuery = async (
     const resultsQuery = `${query} order by ${orderClause} limit ? offset ?`;
     const { results } = await c.env.DB.prepare(resultsQuery).bind(
         ...params, limit, offset
-    ).all();
+    ).all<RawMailRow>();
     const resolvedResults = await resolveRawEmailList(results);
     const count = offset == 0 ? await c.env.DB.prepare(
         countQuery
@@ -792,7 +792,11 @@ export const commonParseMail = async (parsedEmailContext: ParsedEmailContext): P
             attachments: (parsedEmail.attachments || []).map(att => ({
                 filename: att.filename || "attachment",
                 mimeType: att.mimeType || "application/octet-stream",
-                content: new Uint8Array(att.content),
+                // PostalMime defaults to arraybuffer attachment encoding; its
+                // DTO also covers callers opting into a string encoding.
+                content: typeof att.content === "string"
+                    ? new TextEncoder().encode(att.content)
+                    : new Uint8Array(att.content),
                 disposition: att.disposition || "attachment",
             })),
         };
