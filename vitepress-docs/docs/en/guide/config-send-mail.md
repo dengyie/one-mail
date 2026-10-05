@@ -21,7 +21,7 @@ Each `/api/send_mail` request matches channels in order; **the first hit sends**
 | — | None of the above | Throws | — |
 
 > [!WARNING] Do not use a global `RESEND_TOKEN` for multi-provider tests
-> Global `RESEND_TOKEN` is only a fallback when a domain has no per-domain config. To split Resend / Brevo / SMTP2GO by domain, set **only** `RESEND_TOKEN_<DOMAIN>`. Domain SMTP now beats the global Resend token.
+> Global `RESEND_TOKEN` is only a fallback when a domain has no per-domain config. To split Resend and generic SMTP by domain, set **only** `RESEND_TOKEN_<DOMAIN>`. Domain SMTP now beats the global Resend token.
 
 > [!NOTE]
 > Binding send failures return an error directly.
@@ -84,9 +84,18 @@ For a multi-provider test, use the per-domain secret only. Put Resend bounce MX 
 
 ## Send Emails Using SMTP
 
-The format of `SMTP_CONFIG` is as follows. **The key must be your own sending domain**, and the value is the SMTP configuration.
+The format of `SMTP_CONFIG` is as follows. **The key must be your own sending domain**, and the value is the SMTP configuration. Subdomains **do not** inherit a parent-domain entry.
 
 For SMTP configuration format details, refer to [zou-yu/worker-mailer](https://github.com/zou-yu/worker-mailer/blob/main/README_zh-CN.md)
+
+The Worker fail-closed validates each entry before opening a socket. Missing `host`, a non-integer `port`, mismatched TLS flags, or `authType` without username/password returns **HTTP 400** from `/api/send_mail`, releases the reservation / refunds balance, and **never** becomes HTTP 503 unknown. Invalid JSON is also a configuration error, not “no SMTP for this domain”.
+
+| Port | Requirement |
+|------|-------------|
+| `465` | `secure: true` (implicit TLS) |
+| `587` / `2525` | `startTls: true` and `secure: false` |
+| Other public ports | Explicit `secure: true` or `startTls: true`; plaintext is rejected |
+| `1025` | **Only** the Mailpit/loopback E2E exemption with no credentials; not for production |
 
 > [!warning] Important
 > The JSON key (e.g. `your-domain.com` in the example below) must be replaced with **your own domain** — the domain configured in your `DOMAINS` variable.
@@ -118,35 +127,18 @@ For SMTP configuration format details, refer to [zou-yu/worker-mailer](https://g
 | `host` | SMTP server address, e.g. `smtp.mailgun.org`, `smtp.gmail.com`, or your self-hosted SMTP server |
 | `port` | SMTP port, typically `465` (SSL) or `587` (STARTTLS) |
 | `secure` | Whether to use SSL/TLS. Set to `true` for port 465, `false` for port 587 |
-| `startTls` | Set `true` on port 587 (Brevo / SMTP2GO STARTTLS) |
+| `startTls` | Set `true` on port 587 / 2525 (STARTTLS) |
 | `authType` | Authentication method, typically `["plain", "login"]` |
 | `credentials.username` | SMTP server login username |
 | `credentials.password` | SMTP server login password |
 
-If you have **multiple domains** using different SMTP services, add multiple keys in the same JSON. Brevo uses the SMTP key (not the API key); SMTP2GO commonly uses `mail.smtp2go.com:2525`:
+If you have **multiple domains** using different SMTP services, add multiple keys in the same JSON.
 
-```json
-{
-    "mangoqwq.cc.cd": {
-        "host": "smtp-relay.brevo.com",
-        "port": 587,
-        "secure": false,
-        "startTls": true,
-        "authType": ["plain", "login"],
-        "credentials": { "username": "your-brevo-login", "password": "your-brevo-smtp-key" }
-    },
-    "mangoq.ccwu.cc": {
-        "host": "mail.smtp2go.com",
-        "port": 2525,
-        "secure": false,
-        "startTls": true,
-        "authType": ["plain", "login"],
-        "credentials": { "username": "your-smtp2go-username", "password": "your-smtp2go-password" }
-    }
-}
-```
+Production outbound uses the three Resend domains (`mangoqwq.com` / `otp.mangoqwq.com` / `verify.mangoqwq.com`) plus the `SEND_MAIL` binding. Other apexes are inbound-only; there is no need for a third-party SMTP vendor. Keep `SMTP_CONFIG` for generic SMTP (Mailpit E2E, or a future self-hosted relay). If the production secret still has a dead Brevo entry, delete that key or the whole secret, otherwise From on that domain will try the dead relay again.
 
-Configure Resend with per-domain secrets only (`RESEND_TOKEN_MANGOQWQ_COM` / `RESEND_TOKEN_OTP_MANGOQWQ_COM` / `RESEND_TOKEN_VERIFY_MANGOQWQ_COM`) — do not put them in `SMTP_CONFIG`, and do not set a global `RESEND_TOKEN`. Keep the root MX on Cloudflare Email Routing. Port 587 needs `startTls: true`. SMTP2GO SPF/DKIM uses the CNAMEs from its dashboard (DNS-only / gray cloud); do not rewrite the existing root SPF TXT.
+Configure Resend with per-domain secrets only (`RESEND_TOKEN_MANGOQWQ_COM` / `RESEND_TOKEN_OTP_MANGOQWQ_COM` / `RESEND_TOKEN_VERIFY_MANGOQWQ_COM`) — do not put them in `SMTP_CONFIG`, and do not set a global `RESEND_TOKEN`. Keep the root MX on Cloudflare Email Routing. Port 587 needs `startTls: true`.
+
+Registration OTP `verifyMailSender` must be a **live Resend domain listed in `DOMAINS`** (prefer `noreply@verify.mangoqwq.com`; if that subdomain is not in `DOMAINS`, use `noreply@mangoqwq.com`).
 
 Then execute the following command to add `SMTP_CONFIG` to secrets:
 

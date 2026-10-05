@@ -58,15 +58,14 @@ new_sqlite_classes = ["D1QuotaCoordinatorDurableObject"]
 #   wrangler secret put RESEND_TOKEN_OTP_MANGOQWQ_COM
 #   wrangler secret put RESEND_TOKEN_VERIFY_MANGOQWQ_COM
 #   wrangler secret put SMTP_CONFIG
-# Example SMTP_CONFIG (Brevo + SMTP2GO). Key must be a DOMAINS entry:
+# Optional generic SMTP_CONFIG (Mailpit E2E or a self-hosted relay). Production
+# outbound is Resend per-domain + SEND_MAIL; do not add a third-party SMTP
+# vendor. Key must be a DOMAINS entry. Worker fail-closed validates
+# host/port/TLS/credentials before opening a socket. Port 465 needs
+# secure=true; 587/2525 need startTls=true and secure=false.
 # {
-#   "mangoqwq.cc.cd": {
-#     "host": "smtp-relay.brevo.com", "port": 587, "secure": false,
-#     "startTls": true, "authType": ["plain", "login"],
-#     "credentials": { "username": "...", "password": "..." }
-#   },
-#   "mangoq.ccwu.cc": {
-#     "host": "mail.smtp2go.com", "port": 2525, "secure": false,
+#   "your-domain.com": {
+#     "host": "smtp.example.com", "port": 587, "secure": false,
 #     "startTls": true, "authType": ["plain", "login"],
 #     "credentials": { "username": "...", "password": "..." }
 #   }

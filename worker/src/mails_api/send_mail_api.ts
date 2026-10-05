@@ -6,10 +6,16 @@ import { WorkerMailer, WorkerMailerOptions } from 'worker-mailer';
 
 import i18n from '../i18n';
 import { CONSTANTS } from '../constants'
-import { getJsonSetting, getDomains, getBooleanValue, getJsonObjectValue, getDomainMapValue, getMailDomain, includesDomain } from '../utils';
+import { getJsonSetting, getDomains, getBooleanValue, getMailDomain, includesDomain } from '../utils';
 import { GeoData } from '../models'
 import { handleListQuery, isSendMailBindingEnabled, updateAddressUpdatedAt } from '../common'
 import { getDomainResendToken, resolveSendMailChannel } from '../core/send_mail_channel';
+import {
+    SmtpConfigError,
+    getSmtpConfigForDomain,
+    parseSmtpConfigMap,
+    validateSmtpOptions,
+} from '../core/smtp_config';
 import {
     buildSendboxListFilter,
     buildSendboxRaw,
@@ -192,11 +198,28 @@ export const sendMail = async (
     }
     // Resolve the dispatch path before taking any reservations. The actual provider
     // call stays inside one try/catch so every failed attempt releases both quotas.
-    const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
+    const domainResendToken = getDomainResendToken(c.env, mailDomain);
+    let smtpParseError: SmtpConfigError | null = null;
+    let smtpConfig: WorkerMailerOptions | null = null;
+    if (!domainResendToken) {
+        try {
+            const smtpConfigMap = parseSmtpConfigMap(c.env.SMTP_CONFIG);
+            smtpConfig = getSmtpConfigForDomain(
+                smtpConfigMap,
+                mailDomain,
+            ) as WorkerMailerOptions | null;
+        } catch (error) {
+            if (error instanceof SmtpConfigError) {
+                smtpParseError = error;
+            } else {
+                throw error;
+            }
+        }
+    }
     const channel = resolveSendMailChannel<WorkerMailerOptions>({
-        domainResendToken: getDomainResendToken(c.env, mailDomain),
+        domainResendToken,
         globalResendToken: c.env.RESEND_TOKEN,
-        smtpConfig: getDomainMapValue(smtpConfigMap, mailDomain),
+        smtpConfig,
         sendMailBindingEnabled: isSendMailBindingEnabled(c, mailDomain),
     });
     const verifiedAddressList = c.env.SEND_MAIL
@@ -206,6 +229,29 @@ export const sendMail = async (
     let sendMailLimitReservation: SendMailLimitReservation | null = null;
     let providerDispatchStarted = false;
     let providerMessageId: string | undefined;
+
+    // Config errors never touch a provider or take quota.
+    if (!sendByVerifiedAddressList) {
+        if (smtpParseError) {
+            throw new Error(
+                `${msgs.InvalidSmtpConfigMsg}: ${smtpParseError.message}`,
+                { cause: smtpParseError },
+            );
+        }
+        if (channel.kind === "smtp") {
+            try {
+                validateSmtpOptions(mailDomain, channel.options);
+            } catch (error) {
+                if (error instanceof SmtpConfigError) {
+                    throw new Error(
+                        `${msgs.InvalidSmtpConfigMsg}: ${error.message}`,
+                        { cause: error },
+                    );
+                }
+                throw error;
+            }
+        }
+    }
 
     // Reserve the server quota and sender balance immediately before dispatch.
     try {
@@ -236,8 +282,7 @@ export const sendMail = async (
             }
         }
 
-        // Validate that a provider is configured before marking the attempt
-        // unknown; a configuration error never touched an external service.
+        // Missing provider is still a config error: never mark the attempt unknown.
         if (!sendByVerifiedAddressList && channel.kind === "none") {
             throw new Error(msgs.EnableResendOrSmtpOrSendMailMsg + " (" + mailDomain + ")");
         }

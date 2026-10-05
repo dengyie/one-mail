@@ -71,6 +71,7 @@ export type LocaleMessages = {
     AlreadyRequestedMsg: string
     EnableResendOrSmtpMsg: string
     EnableResendOrSmtpOrSendMailMsg: string
+    InvalidSmtpConfigMsg: string
     ServerSendMailDailyLimitMsg: string
     ServerSendMailMonthlyLimitMsg: string
     InvalidToMailMsg: string

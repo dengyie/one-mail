@@ -1,8 +1,14 @@
 import { Context } from 'hono';
 import { WorkerMailerOptions } from 'worker-mailer';
 
-import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, getJsonObjectValue, getRandomSubdomainDomains, getDomainMapValue, normalizeDomains, trimLower } from './utils';
+import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, getRandomSubdomainDomains, normalizeDomains, trimLower } from './utils';
 import { getDomainResendToken, resolveSendMailChannel } from './core/send_mail_channel';
+import {
+    SmtpConfigError,
+    getSmtpConfigForDomain,
+    parseSmtpConfigMap,
+    validateSmtpOptions,
+} from './core/smtp_config';
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { generateRandomPassword, hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
@@ -36,11 +42,41 @@ export const isSendMailEnabled = (
     c: Context<HonoCustomType>,
     mailDomain: string
 ): boolean => {
-    const smtpConfigMap = getJsonObjectValue<Record<string, WorkerMailerOptions>>(c.env.SMTP_CONFIG);
+    const domainResendToken = getDomainResendToken(c.env, mailDomain);
+    if (domainResendToken) {
+        return true;
+    }
+    // Same order as sendMail: a present SMTP map entry beats global Resend.
+    // An invalid entry is not a usable channel and must not fall through.
+    let smtpConfig: WorkerMailerOptions | null = null;
+    try {
+        smtpConfig = getSmtpConfigForDomain(
+            parseSmtpConfigMap(c.env.SMTP_CONFIG),
+            mailDomain,
+        ) as WorkerMailerOptions | null;
+    } catch (error) {
+        if (!(error instanceof SmtpConfigError)) {
+            throw error;
+        }
+        console.error(`SMTP_CONFIG rejected for ${mailDomain}`, error);
+        return false;
+    }
+    if (smtpConfig != null) {
+        try {
+            validateSmtpOptions(mailDomain, smtpConfig);
+            return true;
+        } catch (error) {
+            if (!(error instanceof SmtpConfigError)) {
+                throw error;
+            }
+            console.error(`SMTP_CONFIG rejected for ${mailDomain}`, error);
+            return false;
+        }
+    }
     const channel = resolveSendMailChannel<WorkerMailerOptions>({
-        domainResendToken: getDomainResendToken(c.env, mailDomain),
+        domainResendToken: null,
         globalResendToken: c.env.RESEND_TOKEN,
-        smtpConfig: getDomainMapValue(smtpConfigMap, mailDomain),
+        smtpConfig: null,
         sendMailBindingEnabled: isSendMailBindingEnabled(c, mailDomain),
     });
     return channel.kind !== "none";

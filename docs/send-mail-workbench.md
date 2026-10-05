@@ -12,7 +12,7 @@ Phase A + B + C + D **已实现**，分支 `feat/send-mail-workbench`（从 `ori
 - frontend vitest：27 files / 188 pass
 - aggregator `test_render_sendbox_source_migration.py`：5 pass
 
-不恢复 Brevo。不设全局 `RESEND_TOKEN`。不改 gitignored `wrangler.toml`。`ENABLE_AUTO_REPLY` 保持 false。根 MX 仍在 Cloudflare Email Routing。
+出站走 Resend 三域 + `SEND_MAIL`。不接 SMTP2GO。不设全局 `RESEND_TOKEN`。不改 gitignored `wrangler.toml`。`ENABLE_AUTO_REPLY` 保持 false。根 MX 仍在 Cloudflare Email Routing。
 
 ## 产品
 
