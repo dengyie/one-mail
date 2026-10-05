@@ -59,6 +59,7 @@ jobs:
 
       - name: Worker typecheck, lint, and bundle gate
         run: |
+          cp worker/wrangler.toml.template worker/wrangler.toml
           pnpm --filter @one-mail/worker exec tsc --noEmit
           pnpm --filter @one-mail/worker lint
           pnpm --filter @one-mail/worker build
