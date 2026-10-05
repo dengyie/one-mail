@@ -242,10 +242,10 @@ async function ensurePasskeySchema(db: D1Database): Promise<void> {
             `passkey_id uniqueness migration blocked by duplicate credential ${duplicate.passkey_id}`,
         );
     }
-    await db.exec(
+    await db.prepare(
         `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_passkeys_passkey_id
          ON user_passkeys(passkey_id)`,
-    );
+    ).run();
 }
 
 async function ensurePop3Columns(db: D1Database): Promise<string[]> {
