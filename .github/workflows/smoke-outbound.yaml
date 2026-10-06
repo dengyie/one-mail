@@ -49,7 +49,7 @@ jobs:
             --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
           echo "=== user_mail_accounts ==="
           pnpm exec wrangler d1 execute DB --remote --command \
-            "SELECT id, user_id, source, username, enabled, can_send FROM user_mail_accounts ORDER BY created_at DESC LIMIT 20" \
+            "SELECT id, user_id, source, username, enabled, can_send, CASE WHEN cred_enc IS NOT NULL THEN 1 ELSE 0 END AS has_cred, CASE WHEN oauth_enc IS NOT NULL THEN 1 ELSE 0 END AS has_oauth FROM user_mail_accounts ORDER BY created_at DESC LIMIT 20" \
             --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
           echo "=== outbound_mail_jobs recent ==="
           pnpm exec wrangler d1 execute DB --remote --command \
@@ -84,8 +84,10 @@ jobs:
           "
           }
 
-          # 1. Pick a send-capable external account and its owner (join users for identity).
-          ACCOUNT_JSON=$(d1q "SELECT a.id AS account_id, a.user_id, a.source, a.username, u.user_email FROM user_mail_accounts a JOIN users u ON u.id=a.user_id WHERE a.source IN ('imap_qq','imap_163','imap_gmail','imap_outlook','msa','graph_outlook') ORDER BY a.created_at DESC LIMIT 1")
+          # 1. Pick a send-capable external account that actually has credentials.
+          #    QQ/163/custom need cred_enc (app-password); Gmail/Outlook need oauth_enc
+          #    (OAuth2 refresh token). Prefer app-password accounts first.
+          ACCOUNT_JSON=$(d1q "SELECT a.id AS account_id, a.user_id, a.source, a.username, u.user_email, CASE WHEN a.cred_enc IS NOT NULL THEN 1 ELSE 0 END AS has_cred, CASE WHEN a.oauth_enc IS NOT NULL THEN 1 ELSE 0 END AS has_oauth FROM user_mail_accounts a JOIN users u ON u.id=a.user_id WHERE (a.source IN ('imap_qq','imap_163','imap_custom') AND a.cred_enc IS NOT NULL) OR (a.source IN ('imap_gmail','imap_outlook','msa','graph_outlook') AND a.oauth_enc IS NOT NULL) ORDER BY CASE WHEN a.source IN ('imap_qq','imap_163','imap_custom') THEN 0 ELSE 1 END, a.created_at DESC LIMIT 1")
           if [ -z "$ACCOUNT_JSON" ]; then
             echo "RESULT: no external mail account exists in production; cannot run a live send test."
             exit 0

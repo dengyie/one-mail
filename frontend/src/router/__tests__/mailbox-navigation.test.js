@@ -15,16 +15,26 @@ const makeRouter = () => createRouter({
     },
     {
       path: '/unified',
-      alias: `/:lang(${LOCALE_PATH_PATTERN})/unified`,
+      component: Dummy,
+    },
+    {
+      path: `/:lang(${LOCALE_PATH_PATTERN})/unified`,
       component: Dummy,
     },
     {
       path: '/mailbox',
-      alias: [
-        `/:lang(${LOCALE_PATH_PATTERN})/mailbox`,
-        '/mailbox/',
-        `/:lang(${LOCALE_PATH_PATTERN})/mailbox/`,
-      ],
+      alias: '/mailbox/',
+      redirect: (to) => {
+        const target = resolveMailboxRedirect(to.fullPath)
+        if (!target) {
+          return { name: 'not-found' }
+        }
+        return target
+      },
+    },
+    {
+      path: `/:lang(${LOCALE_PATH_PATTERN})/mailbox`,
+      alias: `/:lang(${LOCALE_PATH_PATTERN})/mailbox/`,
       redirect: (to) => {
         const target = resolveMailboxRedirect(to.fullPath)
         if (!target) {
