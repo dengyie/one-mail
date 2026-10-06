@@ -53,7 +53,7 @@ jobs:
             --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
           echo "=== outbound_mail_jobs recent ==="
           pnpm exec wrangler d1 execute DB --remote --command \
-            "SELECT id, account_id, from_addr, to_addr, subject, provider, status, attempts, error FROM outbound_mail_jobs ORDER BY created_at DESC LIMIT 20" \
+            "SELECT id, account_id, from_addr, to_addr, subject, provider, status, attempts, last_error, provider_message_id FROM outbound_mail_jobs ORDER BY created_at DESC LIMIT 20" \
             --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
           echo "=== sendbox external_account recent ==="
           pnpm exec wrangler d1 execute DB --remote --command \
@@ -163,7 +163,7 @@ jobs:
           if [ -n "$JOB_ID" ]; then
             echo "=== final outbound job row ==="
             pnpm exec wrangler d1 execute DB --remote --command \
-              "SELECT status, attempts, provider_message_id, error, lease_token, attempts FROM outbound_mail_jobs WHERE id='${JOB_ID}'" \
+              "SELECT status, attempts, provider_message_id, last_error, completed_at FROM outbound_mail_jobs WHERE id='${JOB_ID}'" \
               --json 2>/dev/null | python3 -m json.tool || true
           fi
 
