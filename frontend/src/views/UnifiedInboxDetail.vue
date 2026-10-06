@@ -278,8 +278,19 @@ let aiTimer = null
 // Per-mail consent for remote images, mirroring MailContentRenderer.
 const showRemoteImages = ref(false)
 
-// 邮件 AI 分析轻量级内存缓存（以 email.id 为键，避免重复计算与状态丢失）
+// 邮件 AI 分析轻量级内存缓存（以 email.id 为键，避免重复计算与状态丢失，限制最大 50 条防止内存膨胀）
+const MAX_AI_CACHE_SIZE = 50
 const aiAnalysisCache = new Map()
+
+const setAiAnalysisCache = (id, data) => {
+  if (aiAnalysisCache.size >= MAX_AI_CACHE_SIZE) {
+    const oldestKey = aiAnalysisCache.keys().next().value
+    if (oldestKey !== undefined) {
+      aiAnalysisCache.delete(oldestKey)
+    }
+  }
+  aiAnalysisCache.set(id, data)
+}
 
 watch(() => email.value?.id, (newId) => {
   if (aiTimer) {
@@ -321,7 +332,7 @@ const generateAiAnalysis = () => {
     const codeLine = validCodes.length ? `- **提取验证码**：\`${validCodes.slice(0, 3).join(', ')}\`` : '- 未检测到明显验证码'
     const resultText = `### 📌 智能邮件要点速览\n- **发件人**：\`${sender}\`\n- **主题**：${subject}\n${codeLine}\n\n#### 核心正文提取\n> ${body.slice(0, 320).trim()}...`
     aiAnalysisText.value = resultText
-    aiAnalysisCache.set(analysisMailId, { text: resultText, duration: dur })
+    setAiAnalysisCache(analysisMailId, { text: resultText, duration: dur })
   }, 400)
 }
 

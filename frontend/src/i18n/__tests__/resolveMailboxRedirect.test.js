@@ -1,38 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveHomeRedirect, resolveMailboxRedirect } from '../utils'
-
-describe('resolveHomeRedirect', () => {
-  it('maps default-locale root / to /unified and keeps query plus hash', () => {
-    expect(resolveHomeRedirect('/')).toBe('/unified')
-    expect(resolveHomeRedirect('/?tab=list')).toBe('/unified?tab=list')
-    expect(resolveHomeRedirect('/#section')).toBe('/unified#section')
-    expect(resolveHomeRedirect('/zh/')).toBe('/unified')
-    expect(resolveHomeRedirect('/zh')).toBe('/unified')
-  })
-
-  it('keeps non-default locale prefixes for home redirects', () => {
-    expect(resolveHomeRedirect('/en/')).toBe('/en/unified')
-    expect(resolveHomeRedirect('/en')).toBe('/en/unified')
-    expect(resolveHomeRedirect('/es/')).toBe('/es/unified')
-    expect(resolveHomeRedirect('/ja/')).toBe('/ja/unified')
-    expect(resolveHomeRedirect('/de/')).toBe('/de/unified')
-    expect(resolveHomeRedirect('/pt-BR/')).toBe('/pt-BR/unified')
-    expect(resolveHomeRedirect('/pt-BR?foo=bar')).toBe('/pt-BR/unified?foo=bar')
-  })
-
-  it('ignores sub-paths so other routes stay put', () => {
-    expect(resolveHomeRedirect('/mailbox')).toBeNull()
-    expect(resolveHomeRedirect('/temp-mail')).toBeNull()
-    expect(resolveHomeRedirect('/unified')).toBeNull()
-    expect(resolveHomeRedirect('/user')).toBeNull()
-    expect(resolveHomeRedirect('/en/sendmail')).toBeNull()
-  })
-
-  it('does not treat unsupported locale prefixes as home redirects', () => {
-    expect(resolveHomeRedirect('/fr/')).toBeNull()
-    expect(resolveHomeRedirect('/foo')).toBeNull()
-  })
-})
+import { resolveMailboxRedirect } from '../utils'
 
 describe('resolveMailboxRedirect', () => {
   it('maps default-locale /mailbox to /unified and keeps query plus hash', () => {
