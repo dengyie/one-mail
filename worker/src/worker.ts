@@ -52,7 +52,18 @@ app.use('/*', cors({
 // error handler
 app.onError((err, c) => {
 	console.error("Worker request failed", { method: c.req.method, path: c.req.path, error: err });
-	return c.json({ error: "Internal server error" }, 500);
+	const res = c.json({ error: "Internal server error" }, 500);
+	// cors() 在 `await next()` 之后才回写响应头，请求阶段抛错会跳过中间件的
+	// 后置逻辑，500 响应丢掉 Access-Control-Allow-Origin，浏览器读不到响应体、
+	// 只能把这次失败当成 Network Error。这里显式补上与预检/正常响应一致的
+	// 来源决策，避免 500 被误报成 Network Error 掩盖真实根因。
+	const origin = c.req.raw.headers.get('Origin') ?? ''
+	const allowOrigin = resolveCorsOrigin(origin, c.env.FRONTEND_URL)
+	if (allowOrigin) {
+		res.headers.set('Access-Control-Allow-Origin', allowOrigin)
+		res.headers.append('Vary', 'Origin')
+	}
+	return res;
 })
 // global middlewares
 app.use('/*', async (c, next) => {

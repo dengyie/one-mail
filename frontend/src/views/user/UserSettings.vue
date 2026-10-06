@@ -16,8 +16,14 @@ const {
 } = useGlobalState()
 const message = useMessage()
 
-const showCreatePasskey = ref(false)
-const passkeyName = ref('')
+const creatingPasskey = ref(false)
+// 自动分配名字（分钟级时间戳），不再让用户手动命名；
+// 后端在 passkey_name 为空时也会兜底，但前端带上便于列表里区分。
+const autoPasskeyName = () => {
+    const now = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    return `Passkey ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+}
 const showPasskeyList = ref(false)
 const showRenamePasskey = ref(false)
 const currentPasskeyId = ref(null)
@@ -57,12 +63,15 @@ const handleChangePassword = async () => {
 }
 
 const createPasskey = async () => {
+    if (creatingPasskey.value) return
+    const passkeyName = autoPasskeyName()
+    creatingPasskey.value = true
     try {
         const options = await api.fetch(`/user_api/passkey/register_request`, {
             method: 'POST',
             body: JSON.stringify({
                 domain: location.hostname,
-                name: passkeyName.value
+                name: passkeyName
             })
         })
         const res = await startRegistration({ optionsJSON: options })
@@ -71,15 +80,15 @@ const createPasskey = async () => {
             body: JSON.stringify({
                 credential: res,
                 origin: location.origin,
-                passkey_name: passkeyName.value,
+                passkey_name: passkeyName,
             })
         })
         message.success(t('createPasskey') + " " + t('success'))
-        showCreatePasskey.value = false
-        passkeyName.value = ''
     } catch (error) {
         console.log(error)
         message.error(error.message || "error")
+    } finally {
+        creatingPasskey.value = false
     }
 }
 
@@ -179,18 +188,6 @@ const deletePasskey = async (id) => {
 
 <template>
     <div class="space-y-6">
-        <!-- 弹窗：新建 Passkey -->
-        <n-modal v-model:show="showCreatePasskey" preset="dialog" :title="t('createPasskey')" class="rounded-3xl">
-            <div class="py-2">
-                <n-input v-model:value="passkeyName" :placeholder="t('passkey_name')" class="rounded-xl" />
-            </div>
-            <template #action>
-                <n-button @click="createPasskey" type="primary" class="rounded-xl">
-                    {{ t('createPasskey') }}
-                </n-button>
-            </template>
-        </n-modal>
-
         <!-- 弹窗：重命名 Passkey -->
         <n-modal v-model:show="showRenamePasskey" preset="dialog" :title="t('renamePasskey')" class="rounded-3xl">
             <div class="py-2">
@@ -233,7 +230,7 @@ const deletePasskey = async (id) => {
                     </div>
 
                     <div class="flex items-center gap-3 pt-2">
-                        <n-button @click="showCreatePasskey = true" type="primary" secondary class="rounded-xl flex-1 font-medium">
+                        <n-button @click="createPasskey" :loading="creatingPasskey" type="primary" secondary class="rounded-xl flex-1 font-medium">
                             {{ t('createPasskey') || '+ 绑定新 Passkey' }}
                         </n-button>
                         <n-button @click="() => { fetchPasskeyList(); showPasskeyList = true; }" tertiary class="rounded-xl flex-1">
