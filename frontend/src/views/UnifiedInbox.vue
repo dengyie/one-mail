@@ -128,7 +128,22 @@
             <n-button text size="tiny" @click="retryOptions">重试</n-button>
           </div>
 
-          <div v-if="loading" class="py-20 text-center text-zinc-400 flex flex-col items-center gap-2">
+          <!-- 骨架屏：首屏与加载中时保持卡片高度与结构，避免视差抖动 -->
+          <div
+            v-if="loading && !emails.length"
+            class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl shadow-xs p-2 space-y-3"
+          >
+            <div v-for="i in 5" :key="i" class="px-4 py-3 flex items-center gap-3 animate-pulse">
+              <div class="w-2.5 h-2.5 rounded-full bg-zinc-200 dark:bg-zinc-700 shrink-0"></div>
+              <div class="w-8 h-8 rounded-xl bg-zinc-200 dark:bg-zinc-700 shrink-0"></div>
+              <div class="flex-1 space-y-2">
+                <div class="h-4 bg-zinc-200 dark:bg-zinc-700 rounded-md w-3/4"></div>
+                <div class="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-md w-1/3"></div>
+              </div>
+              <div class="w-16 h-3 bg-zinc-100 dark:bg-zinc-800 rounded-md shrink-0"></div>
+            </div>
+          </div>
+          <div v-else-if="loading" class="py-20 text-center text-zinc-400 flex flex-col items-center gap-2">
             <span class="animate-spin text-xl">⏳</span>
             <span>{{ t('list.loading') }}</span>
           </div>
@@ -630,13 +645,26 @@ const getSenderColorClass = (addr) => {
   return palettes[Math.abs(hash) % palettes.length]
 }
 
-// 提取邮件主题中 4-8 位验证码
+// 提取邮件主题中 4-8 位验证码（对齐后端 worker/src/unified/verifcode.ts 规则）
 const extractCardCode = (subject) => {
   if (!subject) return ''
-  const m = subject.match(/(?:code|验证码|verification\s*code|is|为)[:：\s]*([0-9]{4,8}|[A-Z0-9]{5,8})\b/i)
-  if (m && m[1]) return m[1]
-  const pureNum = subject.match(/\b([0-9]{4,8})\b/)
-  if (pureNum && !/^(19|20)\d\d$/.test(pureNum[1])) return pureNum[1]
+  // 1. 优先匹配 3+3 分隔格式（如 123-456 或 G-123456），排除电话号码
+  const splitMatch = subject.match(/(?:code|验证码|verification|otp|pin|安全码|动态码|校验码|授权码|口令|passcode)[^\d]{0,24}(\b\d{3})[\s-](\d{3}\b)(?![\s-]?\d)/i)
+  if (splitMatch) return splitMatch[1] + splitMatch[2]
+
+  // 2. 匹配常见验证码前缀型（如 G-123456）
+  const prefixMatch = subject.match(/\b([A-Z]-\d{4,8})\b/i)
+  if (prefixMatch) return prefixMatch[1]
+
+  // 3. 关键字邻近的 4-8 位验证码
+  const kwMatch = subject.match(/(?:code|验证码|verification\s*code|otp|pin|安全码|动态码|校验码|授权码|口令|passcode|is|为)[:：\s]*([0-9]{4,8}|[A-Z0-9]{5,8})(?!\d|[-/.]\d{1,2}|年)/i)
+  if (kwMatch && kwMatch[1]) return kwMatch[1]
+
+  // 4. 独立 6 位纯数字退化匹配（严谨排除年份 19xx/20xx 与订单序号/金额前缀）
+  const pureNum = subject.match(/(?<![#$¥€\d])\b(\d{6})\b(?!\d)/)
+  if (pureNum && !/^(19|20)\d\d$/.test(pureNum[1]) && !/(?:order|订单|no|item|ref|ticket)/i.test(subject)) {
+    return pureNum[1]
+  }
   return ''
 }
 
@@ -649,27 +677,32 @@ const copyQuickCode = async (code) => {
   }
 }
 
+// 乐观更新：即时修改列表视图状态，后台异步同步，失败时平滑回滚
 const toggleRowStar = async (row) => {
-  const targetStar = row.is_starred ? 0 : 1
+  const previousStar = row.is_starred
+  const targetStar = previousStar ? 0 : 1
+  row.is_starred = targetStar
   try {
     await api.unified.toggleStar(row.id, targetStar)
-    row.is_starred = targetStar
     message.success(targetStar ? '已星标保护' : '已取消星标')
   } catch (e) {
+    row.is_starred = previousStar
     message.error(e.message || '操作失败')
   }
 }
 
 const toggleRowRead = async (row) => {
-  const targetRead = !row.is_read
+  const previousRead = row.is_read
+  const targetRead = !previousRead
+  row.is_read = targetRead
   try {
     if (targetRead) {
       await api.unified.markRead(row.id)
     } else {
       await api.unified.markUnread(row.id)
     }
-    row.is_read = targetRead
   } catch (e) {
+    row.is_read = previousRead
     message.error(e.message || '操作失败')
   }
 }
