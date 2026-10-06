@@ -25,8 +25,8 @@ describe('mailbox to unified redirect contracts', () => {
     expect(LOCALE_PATH_PATTERN).toBe('zh|en|es|pt-BR|ja|de')
   })
 
-  it('routes root / directly to /unified and hosts temp-mail on /temp-mail', () => {
-    expect(router).toContain("resolveHomeRedirect")
+  it('routes root / to Home adaptive entry and hosts temp-mail on /temp-mail', () => {
+    expect(router).toContain("component: Home")
     expect(router).toContain("path: '/temp-mail'")
     expect(sendMail).toContain("getRouterPathWithLang('/temp-mail', locale)")
     expect(sendMail).toContain('前往即时收件箱生成邮箱')

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import Home from '../views/Home.vue'
 import Index from '../views/Index.vue'
 import User from '../views/User.vue'
 import UserOauth2Callback from '../views/user/UserOauth2Callback.vue'
@@ -22,31 +23,21 @@ const router = createRouter({
     routes: [
         {
             path: '/',
-            redirect: (to) => {
-                const target = resolveHomeRedirect(to.fullPath)
-                if (!target) {
-                    return { name: 'not-found' }
-                }
-                return target
-            },
+            component: Home
         },
         {
             path: `/:lang(${LOCALE_PATH_PATTERN})`,
             alias: `/:lang(${LOCALE_PATH_PATTERN})/`,
-            redirect: (to) => {
-                const target = resolveHomeRedirect(to.fullPath)
-                if (!target) {
-                    return { name: 'not-found' }
-                }
-                return target
-            },
+            component: Home
         },
         {
             path: '/temp-mail',
+            alias: '/temp-mail/',
             component: Index
         },
         {
             path: `/:lang(${LOCALE_PATH_PATTERN})/temp-mail`,
+            alias: `/:lang(${LOCALE_PATH_PATTERN})/temp-mail/`,
             component: Index
         },
         {
@@ -196,7 +187,11 @@ const router = createRouter({
         },
         {
             path: '/unified',
-            alias: '/:lang/unified',
+            alias: [
+                `/:lang(${LOCALE_PATH_PATTERN})/unified`,
+                '/unified/',
+                `/:lang(${LOCALE_PATH_PATTERN})/unified/`,
+            ],
             component: () => import('../views/UnifiedInbox.vue')
         },
         {
@@ -230,8 +225,12 @@ router.beforeEach((to, from, next) => {
         }
         const query = { ...to.query }
         delete query.jwt
+        const isRoot = to.path === '/' || to.path === `/${routeLocale}` || to.path === `/${routeLocale}/`
+        const targetPath = isRoot
+            ? (routeLocale ? `/${routeLocale}/temp-mail` : '/temp-mail')
+            : to.path
         next({
-            path: to.path,
+            path: targetPath,
             query,
             hash: to.hash,
             replace: true,
