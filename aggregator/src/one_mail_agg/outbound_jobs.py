@@ -96,17 +96,18 @@ def report_outbound_result(
 
 
 def _payload_from_job(job: dict) -> dict:
-    """Reconstruct the send payload from a claimed outbound job."""
+    """Reconstruct the send payload from a claimed outbound job.
+
+    The Worker stores the validated client payload (which uses ``to_mail`` /
+    ``content`` / ``is_html``) as ``payload_json``, and also writes denormalised
+    columns (``to_addr`` / ``body_text`` / ``body_html``) in parallel.  When
+    ``payload_json`` parses successfully we merge and normalise so the sender
+    adapters always see ``to_addr``, ``body_text`` and ``body_html`` regardless
+    of which side of the contract the data came from.
+    """
     import json
     payload_json = job.get("payload_json")
-    if isinstance(payload_json, str) and payload_json:
-        try:
-            parsed = json.loads(payload_json)
-            if isinstance(parsed, dict):
-                return parsed
-        except ValueError:
-            pass
-    return {
+    fallback = {
         "from_addr": str(job.get("from_addr") or ""),
         "to_addr": str(job.get("to_addr") or ""),
         "subject": str(job.get("subject") or ""),
@@ -114,6 +115,29 @@ def _payload_from_job(job: dict) -> dict:
         "body_html": job.get("body_html"),
         "is_html": bool(job.get("body_html")),
     }
+    if isinstance(payload_json, str) and payload_json:
+        try:
+            parsed = json.loads(payload_json)
+            if isinstance(parsed, dict):
+                out = {**fallback, **parsed}
+                # Normalise ``to_mail`` ↔ ``to_addr``
+                if out.get("to_mail") and not out.get("to_addr"):
+                    out["to_addr"] = out["to_mail"]
+                if out.get("to_addr") and not out.get("to_mail"):
+                    out["to_mail"] = out["to_addr"]
+                # Normalise ``content`` → ``body_text`` / ``body_html``
+                content = out.get("content")
+                if isinstance(content, str) and content:
+                    if out.get("is_html"):
+                        if not out.get("body_html"):
+                            out["body_html"] = content
+                    else:
+                        if not out.get("body_text"):
+                            out["body_text"] = content
+                return out
+        except ValueError:
+            pass
+    return fallback
 
 
 def execute_outbound(config: Config, account: AccountConfig, job: dict) -> dict | None:

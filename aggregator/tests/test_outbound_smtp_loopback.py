@@ -295,6 +295,55 @@ def test_full_outbound_loop_claim_send_report(smtp_sink):
         worker.close()
 
 
+def test_full_outbound_loop_worker_shaped_payload_json(smtp_sink):
+    """Regression: the Worker validates/stores the client payload which uses
+    ``to_mail`` and ``content``/``is_html`` (not ``to_addr``/``body_text``). The
+    aggregator must normalise those names from ``payload_json`` or the send would
+    fail with "outbound job has no recipient address" (seen in production).
+    """
+    payload_json = json.dumps({
+        "from_addr": "you@example.com",
+        "from_name": "Sender",
+        "to_mail": "to@example.com",
+        "to_name": "Recipient",
+        "subject": "Worker-shaped send",
+        "content": "hello from the worker-shaped path",
+        "is_html": False,
+    })
+    job = {
+        "id": "job-3",
+        "account_id": "acc-1",
+        "from_addr": "you@example.com",
+        "to_addr": "to@example.com",
+        "subject": "Worker-shaped send",
+        "body_text": None,
+        "body_html": None,
+        "payload_json": payload_json,
+        "attempts": 1,
+    }
+    worker = _StubWorker(job)
+    try:
+        config = _config_for(worker.base_url, [_outbound_account(smtp_sink.port)])
+        result = outbound.process_outbound_jobs(config, limit=5)
+
+        assert result == {
+            "claimed": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "retried": 0,
+            "unsupported": 0,
+        }
+        assert len(smtp_sink.delivered) == 1
+        raw = smtp_sink.delivered[0]
+        assert b"Worker-shaped send" in raw
+        assert b"hello from the worker-shaped path" in raw
+        # The content comes from payload_json.content, not the empty body column.
+        assert b"Recipient <to@example.com>" in raw
+        assert worker.reports[0]["status"] == "succeeded"
+    finally:
+        worker.close()
+
+
 def test_full_outbound_loop_rejects_spoofed_from_addr(smtp_sink):
     """Defense-in-depth: a spoofed From must fail and never reach the sink."""
     job = {
