@@ -344,6 +344,55 @@ def test_full_outbound_loop_worker_shaped_payload_json(smtp_sink):
         worker.close()
 
 
+def test_gmail_without_oauth_falls_back_to_app_password_smtp(smtp_sink):
+    """Regression: the product UI creates Gmail accounts with an app-password
+    (no OAuth blob), and IMAP sync already logs in with that password. The send
+    path must do the same instead of raising "has no OAuth config" — otherwise
+    every Gmail account a user can actually create is unable to send.
+    """
+    job = {
+        "id": "job-4",
+        "account_id": "acc-gmail",
+        "from_addr": "you@example.com",
+        "to_addr": "to@example.com",
+        "subject": "Gmail app-password send",
+        "body_text": "sent over app-password SMTP",
+        "attempts": 1,
+    }
+    account = AccountConfig(
+        id="acc-gmail",
+        source="imap_gmail",
+        host="imap.gmail.com",
+        port=993,
+        username="you@example.com",
+        password="app-password",
+        use_ssl=True,
+        smtp_host="127.0.0.1",
+        smtp_port=smtp_sink.port,
+        can_send=True,
+        oauth=None,
+    )
+    worker = _StubWorker(job)
+    try:
+        config = _config_for(worker.base_url, [account])
+        result = outbound.process_outbound_jobs(config, limit=5)
+
+        assert result == {
+            "claimed": 1,
+            "succeeded": 1,
+            "failed": 0,
+            "retried": 0,
+            "unsupported": 0,
+        }
+        assert len(smtp_sink.delivered) == 1
+        raw = smtp_sink.delivered[0]
+        assert b"Gmail app-password send" in raw
+        assert b"sent over app-password SMTP" in raw
+        assert worker.reports[0]["status"] == "succeeded"
+    finally:
+        worker.close()
+
+
 def test_full_outbound_loop_rejects_spoofed_from_addr(smtp_sink):
     """Defense-in-depth: a spoofed From must fail and never reach the sink."""
     job = {

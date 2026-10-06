@@ -158,8 +158,18 @@ def execute_outbound(config: Config, account: AccountConfig, job: dict) -> dict 
     if source in ("imap_qq", "imap_163", "imap_custom"):
         # App-password SMTP send with sent-folder reconciliation on ambiguity.
         provider_id = send_with_reconcile(account, payload, config)
-    elif source in ("imap_gmail", "imap_outlook", "msa", "graph_outlook"):
-        # OAuth/XOAUTH2/Graph send with provider-side reconciliation on ambiguity.
+    elif source in ("imap_gmail", "imap_outlook", "msa"):
+        # These providers may be provisioned either way (the product UI offers
+        # Gmail with an app-password and Outlook with an OAuth blob), and IMAP
+        # sync already selects auth by credential type. Use OAuth/XOAUTH2 when a
+        # blob is present, otherwise app-password SMTP via the endpoint defaults
+        # and Sent-folder reconciliation already defined in smtp_sender.
+        if account.oauth:
+            provider_id = send_oauth_with_reconcile(account, payload, config)
+        else:
+            provider_id = send_with_reconcile(account, payload, config)
+    elif source == "graph_outlook":
+        # Graph-only account: OAuth (Microsoft Graph sendMail) is mandatory.
         provider_id = send_oauth_with_reconcile(account, payload, config)
     else:
         raise OutboundUnsupported(
