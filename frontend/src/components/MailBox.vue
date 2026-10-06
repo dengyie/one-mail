@@ -1,5 +1,5 @@
 <script setup>
-import { watch, onMounted, ref, onBeforeUnmount, computed } from "vue";
+import { watch, onMounted, ref, onBeforeUnmount, onActivated, onDeactivated, computed } from "vue";
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
@@ -357,8 +357,26 @@ const multiActionDownload = async () => {
   }
 }
 
+let isFirstMount = true;
+
 onMounted(async () => {
   await refresh();
+  isFirstMount = false;
+});
+
+onActivated(async () => {
+  if (isFirstMount) return;
+  if (autoRefresh.value) {
+    setupAutoRefresh(true);
+    await refresh();
+  }
+});
+
+onDeactivated(() => {
+  if (timer.value) {
+    clearInterval(timer.value);
+    timer.value = null;
+  }
 });
 
 onBeforeUnmount(() => {

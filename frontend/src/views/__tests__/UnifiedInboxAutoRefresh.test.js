@@ -76,4 +76,13 @@ describe('unified inbox quiet auto refresh contract', () => {
     expect(view).toContain('stopAutoRefresh()')
     expect(view).toContain("document.removeEventListener('visibilitychange', handleVisibilityChange)")
   })
+
+  it('handles keep-alive lifecycle by pausing onDeactivated and resuming onActivated', () => {
+    expect(view).toContain('onActivated(() => {')
+    expect(view).toContain('if (isFirstMount) return')
+    expect(view).toContain('startAutoRefresh()')
+    expect(view).toContain('autoRefreshList()')
+    expect(view).toContain('onDeactivated(() => {')
+    expect(view).toContain('stopAutoRefresh()')
+  })
 })

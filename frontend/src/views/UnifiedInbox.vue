@@ -445,8 +445,8 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { SearchRound, RefreshRound } from '@vicons/material'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
@@ -459,6 +459,7 @@ import { getRouterPathWithLang } from '../utils'
 const { locale, t } = useScopedI18n('unified')
 const { unifiedApiKey, adminAuth, userJwt, userSettings, configAutoRefreshInterval } = useGlobalState()
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
 
 const isLoggedIn = computed(() => !!userJwt.value?.trim())
@@ -622,7 +623,10 @@ const refreshList = () => loadList()
 const applySearch = () => { page.value = 1; loadList() }
 const applyFilter = () => { page.value = 1; loadList() }
 const setPage = (p) => { page.value = p; loadList() }
-const openDetail = (id) => router.push({ path: `/unified/${id}` })
+const openDetail = (id) => router.push({
+  path: getRouterPathWithLang(`/unified/${encodeURIComponent(id)}`, locale.value || locale),
+  query: { from: route.fullPath },
+})
 
 // 辅助方法：发件人头像取字与渐变配色
 const getSenderInitial = (addr) => {
@@ -1134,6 +1138,8 @@ watch(activeTab, (tab) => {
   }
 })
 
+let isFirstMount = true
+
 onMounted(async () => {
   componentDisposed = false
   if (userJwt.value && !userSettings.value.user_id) {
@@ -1150,6 +1156,20 @@ onMounted(async () => {
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', handleVisibilityChange)
   }
+  isFirstMount = false
+})
+
+onActivated(() => {
+  if (componentDisposed) return
+  if (isFirstMount) return
+  if (autoRefresh.value) {
+    startAutoRefresh()
+    autoRefreshList()
+  }
+})
+
+onDeactivated(() => {
+  stopAutoRefresh()
 })
 
 onBeforeUnmount(() => {
