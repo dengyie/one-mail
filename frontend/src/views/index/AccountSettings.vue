@@ -38,7 +38,7 @@ const logout = async () => {
     unifiedApiKey.value = '';
     // H5：清除 store 之外的 LocalAddressCache（地址 JWT 缓存，防共享设备残留）
     clearLocalAddressCache();
-    await router.push(getRouterPathWithLang("/", locale.value))
+    await router.push(getRouterPathWithLang("/temp-mail", locale.value))
     location.reload()
 }
 
@@ -58,7 +58,7 @@ const deleteAccount = async () => {
         unifiedApiKey.value = '';
         // H5：清除 store 之外的 LocalAddressCache（地址 JWT 缓存，防共享设备残留）
         clearLocalAddressCache();
-        await router.push(getRouterPathWithLang("/", locale.value))
+        await router.push(getRouterPathWithLang("/temp-mail", locale.value))
         location.reload()
     } catch (error) {
         message.error(error.message || "error");

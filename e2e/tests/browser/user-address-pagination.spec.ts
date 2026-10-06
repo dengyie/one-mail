@@ -105,8 +105,8 @@ test.describe('User address pagination browser flow', () => {
           && url.searchParams.get('limit') === '100';
       });
       // Account sessions no longer expose the Temp Email sidebar tab; the
-      // mailbox page itself remains at `/` and still auto-selects a bound address.
-      await page.goto(`${FRONTEND_URL}/en/`);
+      // mailbox page itself remains at `/temp-mail` and still auto-selects a bound address.
+      await page.goto(`${FRONTEND_URL}/en/temp-mail`);
       const initialMailboxResponse = await initialMailboxAddressesResponse;
       expect(initialMailboxResponse.ok()).toBe(true);
       const mailboxAddressSelect = page.locator('.address-select').first();

@@ -88,7 +88,7 @@ const login = async () => {
             } catch (error) {
                 message.error(`${t('bindUserAddressError')}: ${error.message}`);
             }
-            await router.push(getRouterPathWithLang("/", locale.value));
+            await router.push(getRouterPathWithLang("/temp-mail", locale.value));
         } catch (error) {
             message.error(error.message || "error");
             loginTurnstileRef.value?.refresh?.();
@@ -114,7 +114,7 @@ const login = async () => {
         } catch (error) {
             message.error(`${t('bindUserAddressError')}: ${error.message}`);
         }
-        await router.push(getRouterPathWithLang("/", locale.value));
+        await router.push(getRouterPathWithLang("/temp-mail", locale.value));
     } catch (error) {
         message.error(error.message || "error");
         loginTurnstileRef.value?.refresh?.();
@@ -177,7 +177,7 @@ const newEmail = async () => {
         jwt.value = res["jwt"];
         addressPassword.value = res["password"] || '';
         await api.getSettings();
-        await router.push(getRouterPathWithLang("/", locale.value));
+        await router.push(getRouterPathWithLang("/temp-mail", locale.value));
         showAddressCredential.value = true;
         try {
             await props.bindUserAddress();

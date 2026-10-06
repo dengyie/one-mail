@@ -66,24 +66,15 @@ test.describe('Passkey Browser Flow', () => {
       await page.getByText('User Settings').click();
 
       // === Step 3: Create a passkey ===
+      // The bind button now auto-assigns a timestamped name and opens the
+      // browser WebAuthn dialog directly — no naming modal anymore. The
+      // virtual authenticator answers the ceremony automatically.
       await page.getByRole('button', { name: 'Create Passkey' }).click();
-
-      // Fill passkey name in the modal
-      const createModal = page.locator('.n-dialog');
-      await expect(createModal).toBeVisible({ timeout: 5_000 });
-      await createModal.getByRole('textbox').fill('E2E Test Passkey');
-
-      // Click the Create Passkey button inside the modal
-      await createModal.getByRole('button', { name: 'Create Passkey' }).click();
-
-      // Wait for success — modal should close
-      await expect(createModal).not.toBeVisible({ timeout: 10_000 });
 
       // === Step 4: Verify passkey appears in the list ===
       await page.getByRole('button', { name: 'Show Passkey List' }).click();
 
-      const listModal = page.locator('.n-card-header:has-text("Show Passkey List")').locator('..');
-      await expect(page.getByText('E2E Test Passkey')).toBeVisible({ timeout: 5_000 });
+      await expect(page.getByText(/^Passkey \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)).toBeVisible({ timeout: 15_000 });
 
       // Close the list modal
       await page.keyboard.press('Escape');
