@@ -163,7 +163,7 @@ jobs:
           if [ -n "$JOB_ID" ]; then
             echo "=== final outbound job row ==="
             pnpm exec wrangler d1 execute DB --remote --command \
-              "SELECT status, attempts, provider_message_id, error, lease_token, attempts FROM outbound_mail_jobs WHERE id='${JOB_ID}'" \
+              "SELECT status, attempts, provider_message_id, last_error, completed_at FROM outbound_mail_jobs WHERE id='${JOB_ID}'" \
               --json 2>/dev/null | python3 -m json.tool || true
           fi
 
