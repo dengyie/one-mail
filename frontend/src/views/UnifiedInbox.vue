@@ -31,19 +31,33 @@
     <!-- 登录用户走用户 JWT；游客可使用兼容的 API-key 通道 -->
     <div
       v-if="!hasAccess"
-      class="rounded-2xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 px-5 py-3.5 text-sm shadow-xs flex items-center justify-between gap-3"
+      class="relative overflow-hidden rounded-3xl border border-blue-500/30 bg-gradient-to-br from-blue-50/90 via-indigo-50/50 to-cyan-50/60 dark:from-blue-950/50 dark:via-slate-900/90 dark:to-slate-950 p-6 sm:p-8 shadow-lg shadow-blue-500/5 backdrop-blur-2xl transition-all duration-300 hover:shadow-xl hover:shadow-blue-500/10 space-y-6"
     >
-      <div class="flex items-center gap-2">
-        <span>⚠️</span>
-        <span>{{ t('auth.loginRequired') }}</span>
-      </div>
-      <div class="flex items-center gap-2 shrink-0">
-        <n-button size="small" type="primary" @click="router.push('/user')">
-          {{ t('auth.login') }}
-        </n-button>
-        <n-button size="small" ghost @click="activeTab = 'settings'">
-          {{ t('tabs.settings') }}
-        </n-button>
+      <div class="absolute -right-16 -top-16 w-64 h-64 bg-gradient-to-br from-blue-500/10 via-indigo-500/10 to-transparent rounded-full blur-3xl pointer-events-none"></div>
+      <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div class="space-y-2.5 max-w-2xl">
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold tracking-wide border border-blue-500/20 shadow-xs">
+            <span class="animate-pulse">✨</span>
+            <span>{{ t('landing.badge') }}</span>
+          </div>
+          <h2 class="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            {{ t('landing.heading') }}
+          </h2>
+          <p class="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+            {{ t('auth.loginRequired') }}
+          </p>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 shrink-0">
+          <n-button size="medium" type="primary" class="rounded-xl px-5 font-semibold shadow-md shadow-blue-500/25 transition-transform active:scale-95" @click="router.push(getRouterPathWithLang('/user', locale))">
+            {{ t('auth.login') }}
+          </n-button>
+          <n-button size="medium" secondary class="rounded-xl px-4 font-medium transition-transform active:scale-95" @click="router.push(getRouterPathWithLang('/temp-mail', locale))">
+            {{ t('landing.tempMail') }}
+          </n-button>
+          <n-button size="medium" ghost class="rounded-xl px-4 font-medium" @click="activeTab = 'settings'">
+            {{ t('tabs.settings') }}
+          </n-button>
+        </div>
       </div>
     </div>
     <div
@@ -129,38 +143,88 @@
           />
           <div
             v-else
-            class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white dark:bg-zinc-900/60 shadow-xs"
+            class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl shadow-xs"
           >
-            <button
+            <div
               v-for="row in emails"
               :key="row.id"
-              class="w-full text-left px-5 py-3.5 flex items-center gap-4 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer"
+              role="button"
+              tabindex="0"
+              class="group relative w-full text-left px-4 sm:px-5 py-3.5 flex items-center gap-3 sm:gap-4 hover:bg-blue-50/40 dark:hover:bg-slate-800/50 transition-all duration-150 cursor-pointer"
               @click="openDetail(row.id)"
+              @keydown.enter.self="openDetail(row.id)"
             >
-              <span
-                class="w-2.5 h-2.5 rounded-full shrink-0 transition-all"
-                :class="row.is_read ? 'bg-transparent border border-zinc-300 dark:border-zinc-700' : 'bg-emerald-500 shadow-xs shadow-emerald-500/50'"
-              ></span>
-              <span
-                v-if="row.is_starred"
-                class="text-amber-400 text-sm shrink-0"
-                title="已星标（受保护，不会被自动清理正文）"
-              >⭐</span>
+              <!-- 状态圆点 & 头像标识 -->
+              <div class="flex items-center gap-2.5 shrink-0">
+                <span
+                  class="w-2.5 h-2.5 rounded-full shrink-0 transition-all"
+                  :class="row.is_read ? 'bg-transparent border border-zinc-300 dark:border-zinc-700' : 'bg-emerald-500 shadow-xs shadow-emerald-500/60 ring-2 ring-emerald-500/20'"
+                ></span>
+                <div
+                  class="w-8 h-8 rounded-xl bg-gradient-to-br flex items-center justify-center text-xs font-bold border shadow-2xs shrink-0 select-none"
+                  :class="getSenderColorClass(row.from_addr)"
+                >
+                  {{ getSenderInitial(row.from_addr) }}
+                </div>
+              </div>
+
+              <!-- 主题与元信息 -->
               <div class="min-w-0 flex-1 space-y-1">
-                <div class="flex items-baseline gap-2 flex-wrap">
-                  <span class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span
+                    v-if="row.is_starred"
+                    class="text-amber-400 text-xs shrink-0 select-none"
+                    title="已星标（受保护，不会被自动清理正文）"
+                  >⭐</span>
+                  <span
+                    class="text-sm truncate transition-colors"
+                    :class="row.is_read ? 'text-zinc-700 dark:text-zinc-300 font-normal' : 'text-zinc-950 dark:text-zinc-50 font-semibold'"
+                  >
                     {{ row.subject || t('list.noSubject') }}
                   </span>
-                  <n-tag size="tiny" :bordered="false" type="info" class="shrink-0 font-mono">{{ row.source }}</n-tag>
-                  <n-tag v-if="row.account_id" size="tiny" :bordered="false" class="shrink-0 font-mono">{{ row.account_id }}</n-tag>
+                  <!-- 就地提取高亮验证码胶囊 -->
+                  <span
+                    v-if="extractCardCode(row.subject)"
+                    @click.stop="copyQuickCode(extractCardCode(row.subject))"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-mono text-[11px] font-bold border border-emerald-500/30 transition-all cursor-pointer shadow-2xs"
+                    title="点击快捷复制验证码"
+                  >
+                    <span>⚡</span>
+                    <span>{{ extractCardCode(row.subject) }}</span>
+                    <span class="text-[9px] opacity-75">复制</span>
+                  </span>
+                  <n-tag size="tiny" :bordered="false" type="info" class="shrink-0 font-mono text-[11px] rounded-md">{{ row.source }}</n-tag>
+                  <n-tag v-if="row.account_id" size="tiny" :bordered="false" class="shrink-0 font-mono text-[11px] rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">{{ row.account_id }}</n-tag>
                 </div>
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-2">
-                  <span>{{ row.from_addr }}</span>
+                  <span class="font-medium text-zinc-600 dark:text-zinc-300">{{ row.from_addr }}</span>
                   <span v-if="row.account_id" class="text-zinc-400">→ {{ row.account_id }}</span>
                 </div>
               </div>
-              <div class="text-xs text-zinc-400 shrink-0 font-mono">{{ fmtTime(row.received_at) }}</div>
-            </button>
+
+              <!-- 右侧快捷操作与时间 -->
+              <div class="flex items-center gap-2 shrink-0">
+                <div class="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="p-1.5 rounded-lg text-xs text-zinc-400 hover:text-amber-500 hover:bg-zinc-100 dark:hover:bg-zinc-700/60 transition-colors"
+                    :title="row.is_starred ? '取消星标' : '设为星标'"
+                    @click.stop="toggleRowStar(row)"
+                  >
+                    {{ row.is_starred ? '★' : '☆' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="p-1.5 rounded-lg text-xs text-zinc-400 hover:text-blue-500 hover:bg-zinc-100 dark:hover:bg-zinc-700/60 transition-colors"
+                    :title="row.is_read ? '标为未读' : '标为已读'"
+                    @click.stop="toggleRowRead(row)"
+                  >
+                    {{ row.is_read ? '✉️' : '✓' }}
+                  </button>
+                </div>
+                <div class="text-xs text-zinc-400 shrink-0 font-mono">{{ fmtTime(row.received_at) }}</div>
+              </div>
+            </div>
           </div>
 
           <n-pagination
@@ -207,31 +271,39 @@
             :description="t('codes.empty')"
             class="py-16"
           />
-          <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
             <div
               v-for="(c, i) in codes"
               :key="i"
-              class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 flex items-start justify-between gap-3 shadow-xs hover:border-emerald-500/40 transition-all"
+              class="group relative rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 flex items-start justify-between gap-4 shadow-xs hover:shadow-md hover:border-emerald-500/40 transition-all duration-200"
             >
-              <div class="min-w-0 space-y-1">
-                <div class="font-mono text-2xl font-bold text-emerald-600 dark:text-emerald-400 tracking-widest break-all select-all">
-                  {{ c.code }}
+              <div class="min-w-0 space-y-1.5 flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <div class="font-mono text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-wider break-all select-all">
+                    {{ c.code }}
+                  </div>
                 </div>
-                <div class="text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                <div class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                   {{ c.subject || t('list.noSubject') }}
                 </div>
-                <div class="text-xs text-zinc-400 truncate">
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-1.5">
                   <span v-if="c.to_addr">{{ c.from_addr }} → {{ c.to_addr }}</span>
                   <span v-else>{{ c.from_addr }}</span>
-                  · {{ fmtTime(c.received_at) }}
+                  <span>·</span>
+                  <span class="font-mono">{{ fmtTime(c.received_at) }}</span>
                 </div>
               </div>
               <button
                 type="button"
                 @click="copyCode(i, c.code)"
-                class="px-3 py-1.5 rounded-xl text-xs font-medium border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 transition-colors cursor-pointer shrink-0"
+                class="px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all duration-150 cursor-pointer shrink-0 shadow-2xs flex items-center gap-1.5 active:scale-95"
+                :class="copiedIndex === i
+                  ? 'bg-emerald-500 text-white border-emerald-600 shadow-emerald-500/30'
+                  : 'bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/30'"
               >
-                {{ copiedIndex === i ? t('codes.copied') : t('codes.copy') }}
+                <span>{{ copiedIndex === i ? '✓' : '📋' }}</span>
+                <span>{{ copiedIndex === i ? t('codes.copied') : t('codes.copy') }}</span>
               </button>
             </div>
           </div>
@@ -249,34 +321,34 @@
             </n-button>
           </div>
 
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
-              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
-                <span>✉️</span>
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-blue-500/30 transition-all">
+              <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+                <span class="p-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">✉️</span>
                 <span>{{ t('status.emails') }}</span>
               </div>
-              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono">{{ status.emails }}</div>
+              <div class="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono tracking-tight">{{ status.emails }}</div>
             </div>
-            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
-              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
-                <span>📬</span>
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-emerald-500/30 transition-all">
+              <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+                <span class="p-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">📬</span>
                 <span>{{ t('status.unread') }}</span>
               </div>
-              <div class="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-2 font-mono">{{ status.unread }}</div>
+              <div class="text-2xl sm:text-3xl font-bold text-emerald-600 dark:text-emerald-400 mt-2 font-mono tracking-tight">{{ status.unread }}</div>
             </div>
-            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
-              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
-                <span>🌐</span>
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-purple-500/30 transition-all">
+              <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+                <span class="p-1 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">🌐</span>
                 <span>{{ t('status.sources') }}</span>
               </div>
-              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono">{{ status.sources.length }}</div>
+              <div class="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono tracking-tight">{{ status.sources.length }}</div>
             </div>
-            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-4 shadow-xs">
-              <div class="text-xs text-zinc-500 flex items-center gap-1.5">
-                <span>👥</span>
+            <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-amber-500/30 transition-all">
+              <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
+                <span class="p-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">👥</span>
                 <span>{{ t('status.accounts') }}</span>
               </div>
-              <div class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono">{{ status.accounts.length }}</div>
+              <div class="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono tracking-tight">{{ status.accounts.length }}</div>
             </div>
           </div>
 
@@ -367,8 +439,9 @@ import { useGlobalState, MIN_AUTO_REFRESH_INTERVAL } from '../store'
 import StatusIndicator from '../components/ai/StatusIndicator.vue'
 import PromptChips from '../components/ai/PromptChips.vue'
 import { useMessage } from 'naive-ui'
+import { getRouterPathWithLang } from '../utils'
 
-const { t } = useScopedI18n('unified')
+const { locale, t } = useScopedI18n('unified')
 const { unifiedApiKey, adminAuth, userJwt, userSettings, configAutoRefreshInterval } = useGlobalState()
 const router = useRouter()
 const message = useMessage()
@@ -535,6 +608,71 @@ const applySearch = () => { page.value = 1; loadList() }
 const applyFilter = () => { page.value = 1; loadList() }
 const setPage = (p) => { page.value = p; loadList() }
 const openDetail = (id) => router.push({ path: `/unified/${id}` })
+
+// 辅助方法：发件人头像取字与渐变配色
+const getSenderInitial = (addr) => {
+  if (!addr) return '?'
+  const clean = addr.replace(/<.*>/, '').replace(/[@._-]/g, ' ').trim()
+  return (clean[0] || '?').toUpperCase()
+}
+
+const getSenderColorClass = (addr) => {
+  const palettes = [
+    'from-blue-500/20 to-indigo-500/30 text-blue-600 dark:text-blue-400 border-blue-500/30',
+    'from-emerald-500/20 to-teal-500/30 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    'from-purple-500/20 to-pink-500/30 text-purple-600 dark:text-purple-400 border-purple-500/30',
+    'from-amber-500/20 to-orange-500/30 text-amber-600 dark:text-amber-400 border-amber-500/30',
+    'from-sky-500/20 to-cyan-500/30 text-sky-600 dark:text-sky-400 border-sky-500/30',
+  ]
+  if (!addr) return palettes[0]
+  let hash = 0
+  for (let i = 0; i < addr.length; i++) hash = (hash << 5) - hash + addr.charCodeAt(i)
+  return palettes[Math.abs(hash) % palettes.length]
+}
+
+// 提取邮件主题中 4-8 位验证码
+const extractCardCode = (subject) => {
+  if (!subject) return ''
+  const m = subject.match(/(?:code|验证码|verification\s*code|is|为)[:：\s]*([0-9]{4,8}|[A-Z0-9]{5,8})\b/i)
+  if (m && m[1]) return m[1]
+  const pureNum = subject.match(/\b([0-9]{4,8})\b/)
+  if (pureNum && !/^(19|20)\d\d$/.test(pureNum[1])) return pureNum[1]
+  return ''
+}
+
+const copyQuickCode = async (code) => {
+  try {
+    await navigator.clipboard.writeText(code)
+    message.success(`验证码 ${code} 已复制`)
+  } catch (e) {
+    message.error(t('codes.copyFailed'))
+  }
+}
+
+const toggleRowStar = async (row) => {
+  const targetStar = row.is_starred ? 0 : 1
+  try {
+    await api.unified.toggleStar(row.id, targetStar)
+    row.is_starred = targetStar
+    message.success(targetStar ? '已星标保护' : '已取消星标')
+  } catch (e) {
+    message.error(e.message || '操作失败')
+  }
+}
+
+const toggleRowRead = async (row) => {
+  const targetRead = !row.is_read
+  try {
+    if (targetRead) {
+      await api.unified.markRead(row.id)
+    } else {
+      await api.unified.markUnread(row.id)
+    }
+    row.is_read = targetRead
+  } catch (e) {
+    message.error(e.message || '操作失败')
+  }
+}
 
 const probeNewestKey = async () => {
   // 探测请求只取 1 行，且 with_count=0 让 worker 跳过 COUNT(*) 全表扫描

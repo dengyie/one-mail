@@ -25,18 +25,18 @@ describe('mailbox to unified redirect contracts', () => {
     expect(LOCALE_PATH_PATTERN).toBe('zh|en|es|pt-BR|ja|de')
   })
 
-  it('keeps temp-mail generation on / so address sessions are not sent to the unified login wall', () => {
-    expect(sendMail).toContain("getRouterPathWithLang('/', locale)")
+  it('routes root / directly to /unified and hosts temp-mail on /temp-mail', () => {
+    expect(router).toContain("resolveHomeRedirect")
+    expect(router).toContain("path: '/temp-mail'")
+    expect(sendMail).toContain("getRouterPathWithLang('/temp-mail', locale)")
     expect(sendMail).toContain('前往即时收件箱生成邮箱')
     expect(sendMail).not.toContain("getRouterPathWithLang('/mailbox'")
-    expect(sendBox).toContain("getRouterPathWithLang('/', locale)")
-    expect(sendBox).not.toContain("getRouterPathWithLang('/mailbox'")
-    expect(addressManagement).toContain('getRouterPathWithLang("/", locale.value)')
+    expect(addressManagement).toContain('getRouterPathWithLang("/temp-mail", locale.value)')
     expect(addressManagement).not.toContain('getRouterPathWithLang("/mailbox"')
-    expect(sidebar).toContain("handleNavigate('/')")
+    expect(sidebar).toContain("handleNavigate('/temp-mail')")
     expect(sidebar).toContain('即时收件箱')
     expect(sidebar).toContain('v-if="!hasUserSession"')
-    expect(sidebar).not.toContain("handleNavigate('/mailbox')")
+    expect(sidebar).toContain("handleNavigate('/unified')")
   })
 
   it('sends inbox back-links to /unified and leaves /domain-mailbox unredirected', () => {

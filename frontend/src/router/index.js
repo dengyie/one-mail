@@ -10,6 +10,7 @@ import {
     getPreferredLocale,
     LOCALE_PATH_PATTERN,
     replaceLocaleInFullPath,
+    resolveHomeRedirect,
     resolveMailboxRedirect,
     resolveSupportedLocale,
 } from '../i18n/utils'
@@ -21,16 +22,47 @@ const router = createRouter({
     routes: [
         {
             path: '/',
-            alias: '/:lang/',
+            redirect: (to) => {
+                const target = resolveHomeRedirect(to.fullPath)
+                if (!target) {
+                    return { name: 'not-found' }
+                }
+                return target
+            },
+        },
+        {
+            path: `/:lang(${LOCALE_PATH_PATTERN})`,
+            alias: `/:lang(${LOCALE_PATH_PATTERN})/`,
+            redirect: (to) => {
+                const target = resolveHomeRedirect(to.fullPath)
+                if (!target) {
+                    return { name: 'not-found' }
+                }
+                return target
+            },
+        },
+        {
+            path: '/temp-mail',
+            component: Index
+        },
+        {
+            path: `/:lang(${LOCALE_PATH_PATTERN})/temp-mail`,
             component: Index
         },
         {
             path: '/mailbox',
-            alias: [
-                `/:lang(${LOCALE_PATH_PATTERN})/mailbox`,
-                '/mailbox/',
-                `/:lang(${LOCALE_PATH_PATTERN})/mailbox/`,
-            ],
+            alias: '/mailbox/',
+            redirect: (to) => {
+                const target = resolveMailboxRedirect(to.fullPath)
+                if (!target) {
+                    return { name: 'not-found' }
+                }
+                return target
+            },
+        },
+        {
+            path: `/:lang(${LOCALE_PATH_PATTERN})/mailbox`,
+            alias: `/:lang(${LOCALE_PATH_PATTERN})/mailbox/`,
             redirect: (to) => {
                 const target = resolveMailboxRedirect(to.fullPath)
                 if (!target) {

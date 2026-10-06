@@ -37,7 +37,7 @@ const changeMailAddress = async (address_id) => {
         }
         jwt.value = res.jwt
         await api.getSettings()
-        await router.push(getRouterPathWithLang("/", locale.value))
+        await router.push(getRouterPathWithLang("/temp-mail", locale.value))
     } catch (error) {
         console.log(error)
         message.error(error.message || "error")
