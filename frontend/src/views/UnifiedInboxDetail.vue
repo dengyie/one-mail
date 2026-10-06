@@ -301,10 +301,14 @@ const generateAiAnalysis = () => {
 const copyText = async (text, successMsg = '已复制') => {
   if (!text) return
   try {
-    await navigator.clipboard.writeText(text)
-    message.success(successMsg)
+    if (typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      message.success(successMsg)
+    } else {
+      message.error('当前环境不支持剪贴板复制，请手动复制')
+    }
   } catch {
-    message.error('复制失败')
+    message.error('复制失败，请手动选择复制')
   }
 }
 
