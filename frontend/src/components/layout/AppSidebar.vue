@@ -111,6 +111,7 @@ const activeRoute = computed(() => {
   
   if (p.includes('/domain-mailbox')) return 'domain_mailbox'
   if (p.includes('/unified')) return 'unified'
+  if (p.includes('/temp-mail')) return 'mailbox'
   if (p.includes('/sendmail') || p.includes('/sendbox')) return 'sendmail'
   if (p.includes('/webhook')) return 'webhook'
   
@@ -119,7 +120,7 @@ const activeRoute = computed(() => {
   if (p.includes('/user/settings')) return 'user_settings'
   if (p.includes('/user/appearance')) return 'user_appearance'
   if (p.includes('/user')) return 'user_addresses'
-  return 'mailbox'
+  return 'unified'
 })
 </script>
 
@@ -129,7 +130,7 @@ const activeRoute = computed(() => {
     :class="collapsed ? 'w-[72px]' : 'w-64'"
   >
     <!-- Brand / Logo Area -->
-    <div class="h-16 flex items-center px-4 gap-3 border-b border-slate-800/80 cursor-pointer shrink-0" @click="handleNavigate('/')">
+    <div class="h-16 flex items-center px-4 gap-3 border-b border-slate-800/80 cursor-pointer shrink-0" @click="handleNavigate('/unified')">
       <img src="/logo.png" alt="MangoHub Logo" class="w-10 h-10 rounded-2xl object-cover shadow-lg shadow-blue-500/20 shrink-0" />
       <div v-if="!collapsed" class="flex flex-col min-w-0">
         <span class="font-bold text-base tracking-tight text-white truncate flex items-center gap-1.5">
@@ -146,12 +147,12 @@ const activeRoute = computed(() => {
       <!-- 1. 未登录模式 -->
       <div v-if="!isLoggedIn" class="space-y-1.5">
         <button
-          @click="handleNavigate('/')"
+          @click="handleNavigate('/unified')"
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
-          :class="route.path === '/' || route.path.endsWith('/') ? 'bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/30' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
+          :class="route.path === '/' || route.path.endsWith('/') || route.path.includes('/unified') ? 'bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/30' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
         >
           <n-icon size="20" :component="HomeFilled" class="text-blue-400 shrink-0" />
-          <span v-if="!collapsed">首页 · 账号登录</span>
+          <span v-if="!collapsed">首页 · 统一收件箱</span>
         </button>
       </div>
 
@@ -166,7 +167,7 @@ const activeRoute = computed(() => {
           
           <button
             v-if="!hasUserSession"
-            @click="handleNavigate('/')"
+            @click="handleNavigate('/temp-mail')"
             class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
             :class="activeRoute === 'mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
           >

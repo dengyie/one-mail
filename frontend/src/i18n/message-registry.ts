@@ -3128,6 +3128,18 @@ export const MESSAGE_REGISTRY = {
       "en": "Using API-key access. Log in to automatically scope mail to your bound addresses.",
       "zh": "当前使用 API-key 访问。登录后会自动限制为你绑定地址的邮件。"
     },
+    "landing.badge": {
+      "en": "Welcome to MangoHub Smart Inbox",
+      "zh": "欢迎使用 MangoHub 智能收件箱"
+    },
+    "landing.heading": {
+      "en": "Multi-Account Aggregation & AI-Powered Mailbox Workbench",
+      "zh": "多源账号聚合归集与 AI 智能解析工作台"
+    },
+    "landing.tempMail": {
+      "en": "Instant Disposable Mail",
+      "zh": "即时临时邮箱"
+    },
     "tabs.list": {
       "en": "Mail List",
       "zh": "邮件列表"

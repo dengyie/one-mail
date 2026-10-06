@@ -8,9 +8,9 @@ const router = useRouter()
 const { locale } = useScopedI18n('views.Header')
 
 onMounted(() => {
-  const homePath = getRouterPathWithLang('/', locale)
+  const fallbackPath = getRouterPathWithLang('/unified', locale.value)
   router.replace({
-    path: getRouterPathWithLang('/sendmail', locale.value) || homePath,
+    path: getRouterPathWithLang('/sendmail', locale.value) || fallbackPath,
     query: { tab: 'self' },
   })
 })

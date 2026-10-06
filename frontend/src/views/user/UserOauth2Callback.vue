@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api';
+import { getRouterPathWithLang } from '../../utils'
 
 const {
     userJwt, userOauth2SessionState, userOauth2SessionClientID
@@ -15,7 +16,7 @@ const message = useMessage();
 const route = useRoute()
 const router = useRouter()
 const errorInfo = ref('')
-const { t } = useScopedI18n('views.user.UserOauth2Callback')
+const { locale, t } = useScopedI18n('views.user.UserOauth2Callback')
 
 onMounted(async () => {
     try {
@@ -44,7 +45,7 @@ onMounted(async () => {
             })
         });
         userJwt.value = res.jwt;
-        router.push('/user');
+        await router.push(getRouterPathWithLang('/unified', locale.value));
     } catch (error) {
         console.error(error);
         message.error(error.message || 'error');

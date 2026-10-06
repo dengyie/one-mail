@@ -103,7 +103,7 @@ const handleLogin = async () => {
     userJwt.value = res.jwt
     await api.getUserSettings(message)
     message.success('登录成功，正在进入工作台...')
-    await router.push(getRouterPathWithLang('/', locale.value))
+    await router.push(getRouterPathWithLang('/unified', locale.value))
   } catch (error) {
     message.error(error.message || '登录失败，请检查账号密码')
     loginTurnstileRef.value?.refresh?.()
@@ -162,7 +162,7 @@ const passkeyLogin = async () => {
     userJwt.value = res.jwt
     await api.getUserSettings(message)
     message.success('通行密钥认证成功！')
-    await router.push(getRouterPathWithLang('/', locale.value))
+    await router.push(getRouterPathWithLang('/unified', locale.value))
   } catch (error) {
     message.error(error.message || 'Passkey 登录失败')
   }

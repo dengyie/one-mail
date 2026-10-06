@@ -14,6 +14,19 @@ const makeRouter = () => createRouter({
       component: Dummy,
     },
     {
+      path: `/:lang(${LOCALE_PATH_PATTERN})`,
+      alias: `/:lang(${LOCALE_PATH_PATTERN})/`,
+      component: Dummy,
+    },
+    {
+      path: '/temp-mail',
+      component: Dummy,
+    },
+    {
+      path: `/:lang(${LOCALE_PATH_PATTERN})/temp-mail`,
+      component: Dummy,
+    },
+    {
       path: '/unified',
       component: Dummy,
     },
@@ -52,6 +65,21 @@ const makeRouter = () => createRouter({
 })
 
 describe('mailbox vue-router navigation', () => {
+  it('pushes root / without redirecting so locale and path stay stable', async () => {
+    const router = makeRouter()
+    await router.push('/?tab=list#anchor')
+    expect(router.currentRoute.value.fullPath).toBe('/?tab=list#anchor')
+  })
+
+  it('keeps non-default locale prefixes when pushing root', async () => {
+    const router = makeRouter()
+    await router.push('/en/')
+    expect(router.currentRoute.value.fullPath).toBe('/en/')
+
+    await router.push('/pt-BR')
+    expect(router.currentRoute.value.fullPath).toBe('/pt-BR')
+  })
+
   it('pushes /mailbox with query and hash onto /unified', async () => {
     const router = makeRouter()
     await router.push('/mailbox?foo=1#h')
