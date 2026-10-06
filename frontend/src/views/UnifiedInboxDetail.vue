@@ -19,29 +19,35 @@
     </n-empty>
 
     <template v-else-if="email">
-      <div class="flex items-center justify-between">
-        <n-button size="small" quaternary @click="handleBack">
+      <!-- 粘性悬浮顶部操作栏 -->
+      <div class="sticky top-16 z-20 -mx-4 px-4 py-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-zinc-200/80 dark:border-zinc-800/80 flex items-center justify-between gap-3 shadow-xs">
+        <n-button size="small" quaternary class="rounded-xl" @click="handleBack">
           <template #icon><n-icon><ArrowBackRound /></n-icon></template>
           {{ t('detail.back') }}
         </n-button>
 
-        <div class="flex items-center gap-2">
-          <n-button size="small" quaternary :loading="loading" :aria-label="t('detail.refresh')" @click="load">
+        <div class="flex items-center gap-2 flex-wrap">
+          <n-button size="small" quaternary class="rounded-xl" :loading="loading" :aria-label="t('detail.refresh')" @click="load">
             <template #icon><n-icon><RefreshRound /></n-icon></template>
             {{ t('detail.refresh') }}
           </n-button>
+
           <button
             type="button"
             @click="showAiPanel = !showAiPanel; if (showAiPanel && !aiAnalysisText) generateAiAnalysis();"
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-all cursor-pointer shadow-xs"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 cursor-pointer shadow-xs active:scale-95"
+            :class="showAiPanel
+              ? 'bg-purple-600 text-white shadow-purple-500/25 border border-purple-600'
+              : 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200/90 dark:border-purple-800/60 hover:bg-purple-100 dark:hover:bg-purple-900/50'"
           >
-            <span>✨</span>
-            <span>{{ showAiPanel ? '关闭 AI 分析' : 'AI 智能解析' }}</span>
+            <span class="animate-pulse">✨</span>
+            <span>{{ showAiPanel ? '收起 AI 分析' : 'AI 智能解析' }}</span>
           </button>
 
           <n-button
             size="small"
             quaternary
+            class="rounded-xl font-medium"
             :loading="starring"
             :type="email.is_starred ? 'warning' : 'default'"
             @click="toggleStar"
@@ -54,87 +60,112 @@
             v-if="!email.is_read"
             size="small"
             type="primary"
+            class="rounded-xl font-medium shadow-xs"
             :loading="marking"
             @click="markRead"
           >
             {{ t('detail.markRead') }}
           </n-button>
-          <n-tag v-else size="small" type="success" :bordered="false">✓ 已读</n-tag>
+          <n-tag v-else size="small" type="success" :bordered="false" class="rounded-lg">✓ 已读</n-tag>
         </div>
       </div>
 
-      <div class="flex justify-end">
+      <div class="flex justify-end pt-1">
         <UnifiedMailboxActions :email="email" />
       </div>
 
       <!-- AI 智能分析卡片 -->
       <div
         v-if="showAiPanel"
-        class="rounded-2xl border border-purple-200/80 dark:border-purple-800/60 bg-gradient-to-b from-purple-50/40 to-white dark:from-purple-950/20 dark:to-zinc-900/70 p-4 shadow-xs space-y-3"
+        class="relative overflow-hidden rounded-3xl border border-purple-300/80 dark:border-purple-800/80 bg-gradient-to-br from-purple-50/70 via-indigo-50/40 to-white dark:from-purple-950/40 dark:via-zinc-900/90 dark:to-zinc-950 p-5 shadow-lg shadow-purple-500/5 backdrop-blur-xl space-y-4 transition-all duration-300"
       >
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <span class="flex items-center justify-center w-6 h-6 rounded-lg bg-purple-500/20 text-purple-600 dark:text-purple-400 text-xs">
+          <div class="flex items-center gap-2.5">
+            <span class="flex items-center justify-center w-7 h-7 rounded-xl bg-purple-500/20 text-purple-600 dark:text-purple-400 text-sm shadow-xs border border-purple-500/30">
               ✨
             </span>
-            <span class="text-xs font-semibold text-purple-900 dark:text-purple-200">
-              AI 智能邮件摘要
-            </span>
+            <div>
+              <span class="text-sm font-bold text-purple-950 dark:text-purple-200">
+                AI 智能邮件深度解析
+              </span>
+              <span class="block text-[11px] text-purple-700/70 dark:text-purple-400/80">包含发件安全风险评估、要点提炼与验证码高亮提取</span>
+            </div>
           </div>
+          <button
+            type="button"
+            @click="generateAiAnalysis"
+            class="text-xs text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-200 font-medium px-2.5 py-1 rounded-lg hover:bg-purple-100/50 dark:hover:bg-purple-900/30 transition-colors"
+          >
+            🔄 重新解析
+          </button>
         </div>
 
         <ThinkingBlock :is-thinking="aiThinking" :duration-seconds="aiDuration" />
 
-        <div v-if="aiAnalysisText" class="p-3.5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800">
+        <div v-if="aiAnalysisText" class="p-4 rounded-2xl bg-white/90 dark:bg-zinc-900/90 border border-purple-200/60 dark:border-purple-800/60 shadow-xs">
           <StreamMarkdown :content="aiAnalysisText" />
-          <MessageActionToolbar :content="aiAnalysisText" role="assistant" @retry="generateAiAnalysis" />
+          <div class="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+            <MessageActionToolbar :content="aiAnalysisText" role="assistant" @retry="generateAiAnalysis" />
+          </div>
         </div>
       </div>
 
-      <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 overflow-hidden shadow-xs">
+      <div class="rounded-3xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl overflow-hidden shadow-xs">
         <!-- 头：主题 + 标签 -->
-        <div class="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800/70 space-y-2">
-          <h1 class="text-lg font-bold text-zinc-900 dark:text-zinc-100 break-words">
+        <div class="px-5 sm:px-6 py-5 border-b border-zinc-100 dark:border-zinc-800/70 space-y-3">
+          <h1 class="text-lg sm:text-xl font-bold text-zinc-900 dark:text-zinc-100 break-words leading-snug">
             {{ email.subject || t('list.noSubject') }}
           </h1>
           <div class="flex flex-wrap items-center gap-2">
-            <n-tag v-if="email.is_starred" size="small" type="warning" :bordered="false">⭐ 已星标保护</n-tag>
-            <n-tag size="small" :bordered="false" type="info" class="font-mono">{{ email.source }}</n-tag>
-            <n-tag v-if="email.account_id" size="small" :bordered="false" class="font-mono">{{ email.account_id }}</n-tag>
-            <n-tag v-if="!email.is_read" size="small" type="warning" :bordered="false">{{ t('list.unread') }}</n-tag>
+            <n-tag v-if="email.is_starred" size="small" type="warning" :bordered="false" class="rounded-lg">⭐ 已星标保护</n-tag>
+            <n-tag size="small" :bordered="false" type="info" class="font-mono rounded-lg">{{ email.source }}</n-tag>
+            <n-tag v-if="email.account_id" size="small" :bordered="false" class="font-mono rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">{{ email.account_id }}</n-tag>
+            <n-tag v-if="!email.is_read" size="small" type="warning" :bordered="false" class="rounded-lg">{{ t('list.unread') }}</n-tag>
           </div>
         </div>
 
         <!-- 元信息 -->
-        <div class="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800/70 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-xs">
-          <div class="flex gap-2">
-            <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.from') }}</span>
-            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all">{{ email.from_addr }}</span>
+        <div class="px-5 sm:px-6 py-3.5 border-b border-zinc-100 dark:border-zinc-800/70 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2.5 text-xs bg-zinc-50/40 dark:bg-zinc-900/30">
+          <div class="flex items-center gap-2">
+            <span class="text-zinc-400 shrink-0 w-16 font-medium">{{ t('detail.from') }}</span>
+            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all select-all flex-1">{{ email.from_addr }}</span>
+            <button
+              type="button"
+              @click="copyText(email.from_addr, '发件地址已复制')"
+              class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 p-1 rounded-md"
+              title="复制发件地址"
+            >📋</button>
           </div>
-          <div class="flex gap-2">
-            <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.to') }}</span>
-            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all">{{ email.to_addr }}</span>
+          <div class="flex items-center gap-2">
+            <span class="text-zinc-400 shrink-0 w-16 font-medium">{{ t('detail.to') }}</span>
+            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all select-all flex-1">{{ email.to_addr }}</span>
+            <button
+              type="button"
+              @click="copyText(email.to_addr, '收件地址已复制')"
+              class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 p-1 rounded-md"
+              title="复制收件地址"
+            >📋</button>
           </div>
-          <div class="flex gap-2">
-            <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.receivedAt') }}</span>
+          <div class="flex items-center gap-2">
+            <span class="text-zinc-400 shrink-0 w-16 font-medium">{{ t('detail.receivedAt') }}</span>
             <span class="text-zinc-800 dark:text-zinc-200 font-mono">{{ fmtTime(email.received_at) }}</span>
           </div>
-          <div v-if="email.raw_ref" class="flex gap-2">
-            <span class="text-zinc-400 shrink-0 w-16">{{ t('detail.rawRef') }}</span>
-            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all">{{ email.raw_ref }}</span>
+          <div v-if="email.raw_ref" class="flex items-center gap-2">
+            <span class="text-zinc-400 shrink-0 w-16 font-medium">{{ t('detail.rawRef') }}</span>
+            <span class="text-zinc-800 dark:text-zinc-200 font-mono break-all truncate">{{ email.raw_ref }}</span>
           </div>
         </div>
 
         <!-- 正文：HTML 统一经过与主收件箱相同的安全管线；无 HTML 时才降级为纯文本。 -->
-        <div class="px-5 py-4">
+        <div class="px-5 sm:px-6 py-6 min-h-[160px]">
           <div v-if="htmlBody" class="mail-html-body prose prose-sm max-w-none dark:prose-invert" v-html="htmlBody"></div>
           <pre
             v-else-if="displayBody"
             class="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-zinc-800 dark:text-zinc-200"
           >{{ displayBody }}</pre>
-          <div v-else class="text-sm text-zinc-400 py-8 text-center">{{ t('detail.noBody') }}</div>
-          <div v-if="htmlBlocked" class="mt-3">
-            <n-alert type="warning" :show-icon="false" :bordered="false" class="rounded-xl">
+          <div v-else class="text-sm text-zinc-400 py-12 text-center">{{ t('detail.noBody') }}</div>
+          <div v-if="htmlBlocked" class="mt-4">
+            <n-alert type="warning" :show-icon="false" :bordered="false" class="rounded-2xl">
               <div class="flex items-center justify-between w-full">
                 <span>{{ t('detail.htmlBlocked', { count: htmlBlocked }) }}</span>
                 <n-button size="tiny" tertiary type="warning" @click="handleLoadRemoteImages">
@@ -147,18 +178,21 @@
         </div>
 
         <!-- 附件 -->
-        <div v-if="attachments.length" class="px-5 py-3.5 border-t border-zinc-100 dark:border-zinc-800/70 bg-zinc-50/50 dark:bg-zinc-900/30">
-          <div class="text-xs font-semibold text-zinc-500 mb-2">{{ t('detail.attachments') }} ({{ attachments.length }})</div>
-          <div class="flex flex-wrap gap-2">
+        <div v-if="attachments.length" class="px-5 sm:px-6 py-4 border-t border-zinc-100 dark:border-zinc-800/70 bg-zinc-50/60 dark:bg-zinc-900/40">
+          <div class="text-xs font-semibold text-zinc-500 mb-2.5 flex items-center gap-1.5">
+            <span>📎</span>
+            <span>{{ t('detail.attachments') }} ({{ attachments.length }})</span>
+          </div>
+          <div class="flex flex-wrap gap-2.5">
             <div
               v-for="(att, i) in attachments"
               :key="i"
-              class="flex items-center gap-2 text-xs bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 text-zinc-700 dark:text-zinc-300 rounded-xl px-3 py-1.5 shadow-xs"
+              class="flex items-center gap-2 text-xs bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 text-zinc-700 dark:text-zinc-300 rounded-xl px-3.5 py-2 shadow-2xs hover:border-blue-500/40 transition-colors"
             >
-              <span>📎</span>
+              <span>📄</span>
               <span class="max-w-[220px] truncate font-medium">{{ att.name || att.id || ('attachment-' + (i + 1)) }}</span>
               <span v-if="att.size" class="text-zinc-400 font-mono">({{ att.size ? fmtSize(att.size) : '' }})</span>
-              <span v-if="att.mimeType" class="text-zinc-400">{{ att.mimeType }}</span>
+              <span v-if="att.mimeType" class="text-zinc-400 font-mono">{{ att.mimeType }}</span>
               <span class="text-zinc-400" :title="t('detail.attachmentNoDownload')">· {{ t('detail.metadataOnly') }}</span>
             </div>
           </div>
@@ -262,6 +296,20 @@ const generateAiAnalysis = () => {
     const codeLine = validCodes.length ? `- **提取验证码**：\`${validCodes.slice(0, 3).join(', ')}\`` : '- 未检测到明显验证码'
     aiAnalysisText.value = `### 📌 智能邮件要点速览\n- **发件人**：\`${sender}\`\n- **主题**：${subject}\n${codeLine}\n\n#### 核心正文提取\n> ${body.slice(0, 320).trim()}...`
   }, 400)
+}
+
+const copyText = async (text, successMsg = '已复制') => {
+  if (!text) return
+  try {
+    if (typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      message.success(successMsg)
+    } else {
+      message.error('当前环境不支持剪贴板复制，请手动复制')
+    }
+  } catch {
+    message.error('复制失败，请手动选择复制')
+  }
 }
 
 let loadRequestSeq = 0
