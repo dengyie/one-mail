@@ -1,5 +1,5 @@
 <!-- markdownlint-disable-file MD033 MD045 -->
-# 📮 One-Mail — Next-Gen AI-Native Unified Inbox & Edge Serverless Mail Hub
+# One-Mail — Next-Gen AI-Native Unified Inbox & Edge Serverless Mail Hub
 
 <p align="center">
   <a href="README.md"><img alt="简体中文" src="https://img.shields.io/badge/README-简体中文-blue.svg"></a>
@@ -15,48 +15,48 @@
 </p>
 
 <p align="center">
-  <b>Say goodbye to juggling dozens of email clients and digging through spam for verification codes!</b><br>
+  <b>Say goodbye to juggling dozens of email clients and digging through spam for verification codes.</b><br>
   Consolidate Gmail, Outlook, QQ, 163, and custom IMAP/POP3 mailboxes into a globally distributed Cloudflare edge network.<br>
   Featuring <b>Instant OTP / Code Extraction Capsules</b>, <b>AI-Powered Summarization</b>, <b>FIDO2 Passkeys Biometric Login</b>, and <b>Disposable / Custom Domain Inboxes</b>.
 </p>
 
 <p align="center">
-  <a href="#-key-features">✨ Key Features</a> •
-  <a href="#-system-architecture">📐 Architecture</a> •
-  <a href="#-why-one-mail">📊 Comparison</a> •
-  <a href="#-quick-start">🚀 Quick Start</a> •
-  <a href="#-open-api--developer-ecosystem">🔌 Open API</a> •
-  <a href="#-license">📄 License</a>
+  <a href="#key-features">Key Features</a> •
+  <a href="#system-architecture">Architecture</a> •
+  <a href="#why-one-mail">Comparison</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#open-api--developer-ecosystem">Open API</a> •
+  <a href="#license">License</a>
 </p>
 
 ---
 
-## 🌟 Why One-Mail?
+## Why One-Mail?
 
-Whether you are a developer, sysadmin, growth hacker, or digital nomad, managing multiple email accounts across Gmail, Outlook, 163, QQ, and company domains is notoriously painful. Traditional desktop clients are bloated, prone to IP throttling, lack smart code extraction, and require tedious per-device configuration. Meanwhile, commercial aggregation platforms risk your data privacy and charge hefty monthly fees.
+Whether managing systems, building products, or working remotely, juggling separate accounts for Gmail, Outlook, 163, QQ, and company domains is notoriously painful. Traditional desktop clients are heavy, prone to network limits, lack smart OTP extraction, and require manual device-by-device configuration. Meanwhile, commercial aggregation platforms introduce data privacy concerns along with recurring subscription fees.
 
-**One-Mail** was engineered from scratch to solve these pain points:
+One-Mail was engineered from scratch to resolve these challenges:
 - **100% Edge Serverless**: Core APIs run on Cloudflare Workers + D1 at the edge. Cold starts are near-zero, worldwide latency is sub-50ms, and everyday personal usage incurs **zero server or database cost**.
 - **Privacy & Zero-Trust Security**: Self-hosted sovereignty. All mailbox credentials and OAuth refresh tokens are encrypted at rest with AES-GCM-256 before hitting storage. Passkey passwordless login eliminates credential phishing.
 - **AI-Native Efficiency**: No need to scroll through marketing clutter—instant OTP capsules and key action summaries are front and center on the mail list cards.
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 | Module | Highlights | Technical Edge & Value |
 |---|---|---|
-| 📬 **Unified Multi-Account Inbox**<br>`Unified Inbox` | • Aggregates Gmail, Outlook / 365, QQ, 163, and custom IMAP/POP3<br>• **IMAP IDLE millisecond-level real-time push** + 60s fallback polling<br>• Smart protocol auto-downgrade (falls back to POP3 when IMAP is rejected)<br>• Process-level `redemption_lock` preventing concurrent OAuth token burn | Lightweight Python daemon + Cloudflare D1 idempotent upload, rock-solid without missed emails |
-| ⚡ **Instant OTP Extraction Capsule**<br>`Instant OTP Capsule` | • Detects 4-8 digit codes, `123-456` hyphens, and `G-123456` prefixes<br>• Negative lookaheads eliminate false positives (calendar years, dates, prices)<br>• **One-click copy capsule** displayed directly on email cards | High-precision multilingual regex engine; 90% time saved opening full mail |
-| 🤖 **AI-Native Email Insights**<br>`AI Summarization` | • Auto-extracts email intent, sender reputation, and action items<br>• Clean plain-text structured synthesis<br>• Client-side FIFO/LRU cache (capacity: 50) for instant zero-lag switching | Edge & frontend dual optimization; zero unnecessary API bills and zero memory leaks |
-| 🔐 **Passkeys / WebAuthn Biometrics**<br>`WebAuthn / Passkeys` | • Full support for Apple Touch ID, Face ID, Windows Hello, and YubiKeys<br>• Eliminates master passwords and cross-device password sync fatigue<br>• Automatic device fingerprint naming with seamless fallback | SimpleWebAuthn v13 + FIDO2 compliant; impervious to phishing attacks |
-| 🛡️ **Zero-Trust Credential Vault**<br>`Credential Vault` | • Mailbox authorization codes and OAuth tokens symmetrically encrypted<br>• Encryption keys strictly confined to Cloudflare Worker edge environment<br>• Granular API Key permissions (`readonly` / `admin` roles, source whitelist) | WebCrypto native AES-GCM-256 cryptography |
-| 🎨 **Modern Glassmorphic UI & UX**<br>`Awesome UI & UX` | • Vue 3 + Tailwind CSS + Naive UI glassmorphism design<br>• `<keep-alive>` lifecycle optimization: **pauses timers when tabs are hidden**<br>• Preserves deep query routes (keyword filters and pagination cursors)<br>• Smooth dark/light theme switching, responsive on mobile & desktop | Zero layout shift, optimized DOM footprint, and zero D1 quota waste |
-| 🧰 **All-in-One Disposable Mail Hub**<br>`Temp & Domain Mail` | • **Disposable Temp-Mail**: Powered by Cloudflare Email Routing; instant alias creation<br>• **Custom Domain Inboxes**: Multi-tenant isolation and virtual address routing<br>• **Outbound Sending (Send Mail)**: Resend/SMTP/CF with `x-idempotency-key` replay safety | Rust WASM MIME parser and delivery dispute reconciliation |
+| **Unified Multi-Account Inbox**<br>`Unified Inbox` | • Aggregates Gmail, Outlook / 365, QQ, 163, and custom IMAP/POP3<br>• **IMAP IDLE millisecond-level real-time push** + 60s fallback polling<br>• Smart protocol auto-downgrade (falls back to POP3 when IMAP is rejected)<br>• Process-level `redemption_lock` preventing concurrent OAuth token burn | Lightweight Python daemon + Cloudflare D1 idempotent upload, rock-solid without missed emails |
+| **Instant OTP Extraction Capsule**<br>`Instant OTP Capsule` | • Detects 4-8 digit codes, `123-456` hyphens, and `G-123456` prefixes<br>• Negative lookaheads eliminate false positives (calendar years, dates, prices)<br>• **One-click copy capsule** displayed directly on email cards | High-precision multilingual regex engine; 90% time saved opening full mail |
+| **AI-Native Email Insights**<br>`AI Summarization` | • Auto-extracts email intent, sender reputation, and action items<br>• Clean plain-text structured synthesis<br>• Client-side FIFO/LRU cache (capacity: 50) for instant zero-lag switching | Edge & frontend dual optimization; zero unnecessary API bills and zero memory leaks |
+| **Passkeys / WebAuthn Biometrics**<br>`WebAuthn / Passkeys` | • Full support for Apple Touch ID, Face ID, Windows Hello, and YubiKeys<br>• Eliminates master passwords and cross-device password sync fatigue<br>• Automatic device fingerprint naming with seamless fallback | SimpleWebAuthn v13 + FIDO2 compliant; impervious to phishing attacks |
+| **Zero-Trust Credential Vault**<br>`Credential Vault` | • Mailbox authorization codes and OAuth tokens symmetrically encrypted<br>• Encryption keys strictly confined to Cloudflare Worker edge environment<br>• Granular API Key permissions (`readonly` / `admin` roles, source whitelist) | WebCrypto native AES-GCM-256 cryptography |
+| **Modern Glassmorphic UI & UX**<br>`Awesome UI & UX` | • Vue 3 + Tailwind CSS + Naive UI glassmorphism design<br>• `<keep-alive>` lifecycle optimization: pauses timers when tabs are hidden<br>• Preserves deep query routes (keyword filters and pagination cursors)<br>• Smooth dark/light theme switching, responsive on mobile & desktop | Zero layout shift, optimized DOM footprint, and zero D1 quota waste |
+| **All-in-One Disposable Mail Hub**<br>`Temp & Domain Mail` | • Disposable Temp-Mail: Powered by Cloudflare Email Routing; instant alias creation<br>• Custom Domain Inboxes: Multi-tenant isolation and virtual address routing<br>• Outbound Sending (Send Mail): Resend/SMTP/CF with `x-idempotency-key` replay safety | Rust WASM MIME parser and delivery dispute reconciliation |
 
 ---
 
-## 📐 System Architecture
+## System Architecture
 
 ```text
   External Mail Providers
@@ -69,7 +69,7 @@ Whether you are a developer, sysadmin, growth hacker, or digital nomad, managing
                                      ▼
                       ┌──────────────────────────────┐
                       │     VPS Python Aggregator    │
-                      │         (aggregator/)        │
+                      │         aggregator/          │
                       │ ──────────────────────────── │
                       │ • IMAP preferred, POP3 auto  │
                       │ • Token lock avoids RT burn  │
@@ -103,7 +103,7 @@ Whether you are a developer, sysadmin, growth hacker, or digital nomad, managing
 
 ---
 
-## 📊 Why One-Mail?
+## Why One-Mail?
 
 | Evaluation Criteria | One-Mail | Traditional Desktop Clients | Commercial SaaS Aggregators |
 |---|:---:|:---:|:---:|
@@ -118,7 +118,7 @@ Whether you are a developer, sysadmin, growth hacker, or digital nomad, managing
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 One-Mail adopts a modern decoupled architecture composed of three main parts: **Cloudflare Worker API**, **Decoupled Web Frontend**, and **VPS Python Aggregator**.
 
@@ -217,7 +217,7 @@ server {
 
 ---
 
-## 🔌 Open API & Developer Ecosystem
+## Open API & Developer Ecosystem
 
 One-Mail provides clean, developer-friendly RESTful endpoints for custom integrations, bots, and CI/CD pipelines.
 
@@ -251,7 +251,7 @@ x-idempotency-key: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **Backend Edge**: Cloudflare Workers, Hono v4, Cloudflare D1 (SQLite), Cloudflare KV, SimpleWebAuthn
 - **Frontend SPA**: Vue 3.5, Vite 7, Tailwind CSS v4, Naive UI, Lucide Icons, Marked, DOMPurify
@@ -261,7 +261,7 @@ x-idempotency-key: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 
 ---
 
-## 🌍 Internationalization (i18n)
+## Internationalization (i18n)
 
 Full localization support across multiple languages:
 - 🇨🇳 简体中文 (`zh`)
@@ -273,15 +273,15 @@ Full localization support across multiple languages:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions, bug reports, and feature suggestions are warmly welcome!
 - Please check existing [Issues](https://github.com/dengyie/one-mail/issues) before opening a new one.
-- If One-Mail makes your digital life easier, please give us a **Star ⭐️**!
+- If One-Mail makes your digital life easier, please support the project by starring the repository.
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the [MIT License](LICENSE).
 You are free to use it for personal or commercial projects with attribution.
