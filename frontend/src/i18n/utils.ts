@@ -125,21 +125,6 @@ export const replaceLocaleInFullPath = (fullPath: string, locale: SupportedLocal
 
 const MAILBOX_BASE_PATH = '/mailbox'
 
-export const resolveHomeRedirect = (fullPath: string): string | null => {
-  const { path, suffix } = splitPathSuffix(fullPath || '/')
-  const pathLocale = resolveSupportedLocale(path.split('/')[1])
-  const basePath = stripLocaleFromPath(path)
-  const normalizedBase = basePath.length > 1 && basePath.endsWith('/')
-    ? basePath.slice(0, -1)
-    : basePath
-
-  if (normalizedBase !== '' && normalizedBase !== '/') {
-    return null
-  }
-
-  return `${getPathWithLocale('/unified', pathLocale || DEFAULT_LOCALE)}${suffix}`
-}
-
 export const resolveMailboxRedirect = (fullPath: string): string | null => {
   const { path, suffix } = splitPathSuffix(fullPath || '/')
   const pathLocale = resolveSupportedLocale(path.split('/')[1])

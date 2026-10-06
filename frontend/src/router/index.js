@@ -11,7 +11,6 @@ import {
     getPreferredLocale,
     LOCALE_PATH_PATTERN,
     replaceLocaleInFullPath,
-    resolveHomeRedirect,
     resolveMailboxRedirect,
     resolveSupportedLocale,
 } from '../i18n/utils'

@@ -642,7 +642,7 @@ const getSenderColorClass = (addr) => {
   if (!addr) return palettes[0]
   let hash = 0
   for (let i = 0; i < addr.length; i++) hash = (hash << 5) - hash + addr.charCodeAt(i)
-  return palettes[Math.abs(hash) % palettes.length]
+  return palettes[(hash >>> 0) % palettes.length]
 }
 
 // 提取邮件主题中 4-8 位验证码（对齐后端 worker/src/unified/verifcode.ts 规则）
