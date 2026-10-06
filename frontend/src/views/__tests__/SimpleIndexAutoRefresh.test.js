@@ -17,4 +17,12 @@ describe('SimpleIndex & MailBox auto refresh interval contracts', () => {
   it('drives MailBox reactive update when configAutoRefreshInterval changes', () => {
     expect(mailboxView).toContain('watch([autoRefresh, configAutoRefreshInterval]')
   })
+
+  it('pauses and resumes MailBox timer on keep-alive deactivation and activation', () => {
+    expect(mailboxView).toContain('onActivated(async () => {')
+    expect(mailboxView).toContain('if (isFirstMount) return')
+    expect(mailboxView).toContain('setupAutoRefresh(true)')
+    expect(mailboxView).toContain('onDeactivated(() => {')
+    expect(mailboxView).toContain('clearInterval(timer.value)')
+  })
 })

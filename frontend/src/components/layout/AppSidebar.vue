@@ -111,7 +111,7 @@ const activeRoute = computed(() => {
   
   if (p.includes('/domain-mailbox')) return 'domain_mailbox'
   if (p.includes('/unified')) return 'unified'
-  if (p.includes('/temp-mail')) return 'mailbox'
+  if (p.includes('/temp-mail') || route.query?.tab === 'temp' || Boolean(route.query?.mail_id)) return 'mailbox'
   if (p.includes('/sendmail') || p.includes('/sendbox')) return 'sendmail'
   if (p.includes('/webhook')) return 'webhook'
   

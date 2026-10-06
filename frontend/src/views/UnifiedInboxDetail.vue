@@ -22,7 +22,7 @@
     <n-alert v-else-if="!hasAccess" type="warning" :show-icon="false" class="mb-4 rounded-2xl">
       <div class="flex items-center justify-between gap-3">
         <span>{{ t('auth.loginRequired') }}</span>
-        <n-button size="small" type="primary" @click="router.push('/user')">{{ t('auth.login') }}</n-button>
+        <n-button size="small" type="primary" @click="router.push(getRouterPathWithLang('/user', locale.value || locale))">{{ t('auth.login') }}</n-button>
       </div>
     </n-alert>
 
@@ -224,6 +224,7 @@ import { sanitizeHtmlMail } from '../utils/sanitize-html-mail'
 import { blockRemoteContent } from '../utils/remote-content-policy'
 import { useScopedI18n } from '../i18n/app'
 import { getRouterPathWithLang } from '../utils'
+import { replaceLocaleInFullPath } from '../i18n/utils'
 import { api } from '../api'
 import { useGlobalState } from '../store'
 import UnifiedMailboxActions from '../components/UnifiedMailboxActions.vue'
@@ -241,13 +242,13 @@ const message = useMessage()
 const handleBack = () => {
   const fromQuery = route.query.from
   if (typeof fromQuery === 'string' && fromQuery.startsWith('/')) {
-    router.push(getRouterPathWithLang(fromQuery, locale.value))
+    router.push(replaceLocaleInFullPath(fromQuery, locale.value || locale))
     return
   }
   if (typeof window !== 'undefined' && window.history?.state?.back) {
     router.back()
   } else {
-    router.push(getRouterPathWithLang('/unified', locale.value))
+    router.push(getRouterPathWithLang('/unified', locale.value || locale))
   }
 }
 
@@ -319,8 +320,23 @@ const generateAiAnalysis = () => {
   const subject = email.value.subject || '（无主题）'
   const sender = email.value.from_addr || '未知发件人'
 
+  const foundCodes = []
+  const fullContent = `${subject} ${body}`
+  const splitMatches = fullContent.match(/(?:code|验证码|verification|otp|pin|安全码|动态码|校验码|授权码|口令|passcode)[^\d]{0,24}(\b\d{3})[\s-](\d{3}\b)(?![\s-]?\d)/gi) || []
+  for (const m of splitMatches) {
+    const sub = m.match(/(\b\d{3})[\s-](\d{3}\b)/)
+    if (sub) foundCodes.push(sub[1] + sub[2])
+  }
+  const prefixMatches = fullContent.match(/\b([A-Z]-\d{4,8})\b/gi) || []
+  foundCodes.push(...prefixMatches)
+  const kwMatches = fullContent.match(/(?:code|验证码|verification\s*code|otp|pin|安全码|动态码|校验码|授权码|口令|passcode|is|为)[:：\s]*([0-9]{4,8}|[A-Z0-9]{5,8})(?!\d|[-/.]\d{1,2}|年)/gi) || []
+  for (const m of kwMatches) {
+    const sub = m.match(/[:：\s]*([0-9]{4,8}|[A-Z0-9]{5,8})$/i)
+    if (sub && sub[1] && !/^(19|20)\d\d$/.test(sub[1])) foundCodes.push(sub[1])
+  }
   const codeMatches = body.match(/\b([0-9]{4,8}|[A-Z0-9]{5,8})\b/g) || []
-  const validCodes = codeMatches.filter(c => !/^(19|20)\d\d$/.test(c) && !/^\d{4}-\d{2}/.test(c))
+  const validCandidates = codeMatches.filter(c => !/^(19|20)\d\d$/.test(c) && !/^\d{4}-\d{2}/.test(c) && !/^(true|false|null|undefined)$/i.test(c))
+  const validCodes = [...new Set([...foundCodes, ...validCandidates])]
 
   if (aiTimer) clearTimeout(aiTimer)
   aiTimer = setTimeout(() => {
