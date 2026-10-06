@@ -12,6 +12,7 @@ export const SEND_MAIL_SOURCES = [
     "admin",
     "admin_binding",
     "system_otp",
+    "external_account",
     "unknown",
 ] as const;
 

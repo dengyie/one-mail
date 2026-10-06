@@ -533,11 +533,13 @@ def execute_mutation(config: Config, account: AccountConfig, job: dict) -> dict 
 def _retryable(error: Exception) -> bool:
     if isinstance(error, MutationOutcomeUnknown):
         return True
-    if isinstance(error, (requests.Timeout, requests.ConnectionError, OSError, IMAPClientAbortError)):
-        return True
+    # HTTPError is a subclass of OSError (via IOError), so its status-code
+    # discrimination must be checked before the generic OSError branch.
     if isinstance(error, requests.HTTPError):
         status = error.response.status_code if error.response is not None else 0
         return status == 408 or status == 429 or status >= 500
+    if isinstance(error, (requests.Timeout, requests.ConnectionError, OSError, IMAPClientAbortError)):
+        return True
     # IMAPClientError includes authentication/protocol failures. Retrying those
     # blindly hides a terminal account problem; normal sync will surface it too.
     if isinstance(error, IMAPClientError):

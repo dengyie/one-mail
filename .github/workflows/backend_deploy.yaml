@@ -233,6 +233,50 @@ jobs:
             echo "Remote D1 sendbox table is not initialized yet; fresh initialization will create the current schema"
           fi
 
+      - name: Ensure remote D1 outbound mail schema
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare credentials::D1 migrations require CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+          cd worker/
+          trap 'rm -f ../.d1-user-mail-accounts-schema.json ../.d1-can-send.sql' EXIT
+
+          # New outbound_mail_jobs table is created with CREATE IF NOT EXISTS
+          # (idempotent; safe to replay against an already-initialized D1).
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-10-05-outbound-mail-jobs.sql
+
+          # user_mail_accounts.can_send is a non-idempotent ALTER on an existing
+          # table. Render it only while the column is absent; every later deploy
+          # is a no-op here.
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --command "PRAGMA table_info(user_mail_accounts)" \
+            --json > ../.d1-user-mail-accounts-schema.json
+
+          python3 ../db/render_outbound_mail_migration.py \
+            --schema-json ../.d1-user-mail-accounts-schema.json \
+            --migration ../db/2026-10-05-user-mail-accounts-can-send.sql \
+            --output ../.d1-can-send.sql
+
+          if [ -s ../.d1-can-send.sql ]; then
+            pnpm exec wrangler d1 execute DB \
+              --remote \
+              --yes \
+              --file ../.d1-can-send.sql
+            echo "Remote D1 user_mail_accounts.can_send column added"
+          else
+            echo "Remote D1 outbound mail schema is current"
+          fi
+
       - name: Ensure remote D1 passkey challenge schema
         shell: bash
         env:
@@ -254,6 +298,15 @@ jobs:
             --yes \
             --file ../db/2026-10-05-passkey-challenges.sql
           echo "Remote D1 passkey challenge schema is current"
+          # The cron retention lock table is created by shard_schema/admin
+          # db_api init, but a primary D1 provisioned before those paths ran
+          # keeps the */10 cron failing with "no such table: scheduled_locks".
+          # Idempotent; safe to replay.
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-10-06-scheduled-locks.sql
+          echo "Remote D1 scheduled_locks schema is current"
 
       - name: Deploy Backend for ${{ github.ref_name }}
         shell: bash

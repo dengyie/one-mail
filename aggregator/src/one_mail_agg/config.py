@@ -86,6 +86,10 @@ class AccountConfig:
     initial_sync_limit: int = 50  # 首次同步时最多拉取最新 N 封（0 为不限/全量）
     user_managed: bool = False    # True = 用户自助账号（user_mail_accounts），RT 轮换回写 Worker
     poll_interval: int | None = None  # 独立增量轮询间隔（秒）；若未配置则按协议使用安全默认值（POP3 600s / IMAP 300s）
+    # 外部账号发信（见 docs/send-mail-external-accounts.md §4.3）
+    can_send: bool = False        # 凭据从「可读」升级为「可发」的显式开关，默认关闭
+    smtp_host: str = ""           # 发信 SMTP 主机（空则按 source 推导默认值）
+    smtp_port: int = 0            # 发信 SMTP 端口（0 = 按 source 推导默认值）
 
     def __post_init__(self):
         # Keep protocol semantics identical for local config and Worker payloads.
@@ -102,6 +106,12 @@ class AccountConfig:
         if self.poll_interval is not None:
             if not isinstance(self.poll_interval, int) or isinstance(self.poll_interval, bool) or self.poll_interval <= 0:
                 raise ValueError("poll_interval must be a positive integer or null")
+        if not isinstance(self.can_send, bool):
+            raise ValueError("can_send must be a boolean")
+        if not isinstance(self.smtp_host, str):
+            raise ValueError("smtp_host must be a string")
+        if not isinstance(self.smtp_port, int) or isinstance(self.smtp_port, bool) or self.smtp_port < 0 or self.smtp_port > 65535:
+            raise ValueError("smtp_port must be an integer between 0 and 65535")
         # STLS starts plaintext and upgrades it; it cannot be combined with
         # POP3S, including the inherited use_ssl=True default.
         if self.pop3_use_stls and self.resolve_pop3_use_ssl():

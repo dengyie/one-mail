@@ -45,6 +45,24 @@ const hasSendPermission = computed(() => isAdmin.value || (settings.value.send_b
 
 const { t, locale } = useScopedI18n('views.index.SendMail')
 
+// 外部账号发信（docs/send-mail-external-accounts.md §9）：已接入且管理员已开通
+// 发送（can_send=1）的外部邮箱可作为发件身份。默认身份仍是当前临时地址
+// （settings.address），选中外部账号后提交走 POST /api/send_mail/external。
+const externalAccounts = ref([])
+const selectedIdentity = ref('default')
+
+const selectedExternalAccount = computed(() =>
+    externalAccounts.value.find((account) => account.id === selectedIdentity.value) || null
+)
+
+const identityOptions = computed(() => [
+    { label: settings.value.address, value: 'default' },
+    ...externalAccounts.value.map((account) => ({
+        label: account.username,
+        value: account.id,
+    })),
+])
+
 const contentTypes = [
     { label: t('text'), value: 'text' },
     { label: t('html'), value: 'html' },
@@ -108,19 +126,37 @@ const send = async () => {
         return
     }
 
-    const payload = {
-        from_name: sendMailModel.value.fromName,
-        to_name: sendMailModel.value.toName,
-        to_mail: toMail,
-        subject,
-        is_html: isHtml,
-        content,
-    }
+    const externalAccount = selectedExternalAccount.value
+
+    const payload = externalAccount
+        ? {
+            account_id: externalAccount.id,
+            from_addr: externalAccount.username,
+            from_name: sendMailModel.value.fromName,
+            to_mail: toMail,
+            to_name: sendMailModel.value.toName,
+            subject,
+            content,
+            is_html: isHtml,
+        }
+        : {
+            from_name: sendMailModel.value.fromName,
+            to_name: sendMailModel.value.toName,
+            to_mail: toMail,
+            subject,
+            is_html: isHtml,
+            content,
+        }
 
     sending.value = true
     try {
-        await api.fetch(`/api/send_mail`,
-            {
+        if (externalAccount) {
+            await api.fetch(`/api/send_mail/external`, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            })
+        } else {
+            await api.fetch(`/api/send_mail`, {
                 method: 'POST',
                 body: JSON.stringify(payload),
                 headers: {
@@ -128,6 +164,7 @@ const send = async () => {
                     'x-one-mail-client': 'web',
                 },
             })
+        }
         sendMailModel.value = {
             fromName: "",
             toName: "",
@@ -141,13 +178,19 @@ const send = async () => {
         message.success(t("successSend"));
         emit('sent')
     } catch (error) {
-        if (error?.status !== 503) resetSendMailIdempotencyKey()
-        if (error?.status === 503) {
-            emit('send-unknown')
-            message.error(t('deliveryUnknown'))
-        } else {
+        if (externalAccount) {
+            resetSendMailIdempotencyKey()
             emit('send-error', error)
             message.error(error.message || "error")
+        } else {
+            if (error?.status !== 503) resetSendMailIdempotencyKey()
+            if (error?.status === 503) {
+                emit('send-unknown')
+                message.error(t('deliveryUnknown'))
+            } else {
+                emit('send-error', error)
+                message.error(error.message || "error")
+            }
         }
     } finally {
         sending.value = false
@@ -199,6 +242,19 @@ onMounted(async () => {
     try {
         if (!userSettings.value.user_id) await api.getUserSettings(message);
         await api.getSettings();
+        // 拉取已开通发送（can_send=1）的外部邮箱账号以便发件身份下拉追加。
+        // 非登录用户（无 userJwt）跳过（外部账号需要 x-user-token 鉴权）。
+        if (userJwt.value) {
+            try {
+                const res = await api.userMailAccounts.list();
+                externalAccounts.value = (res?.results || []).filter(
+                    (account) => account.enabled && account.can_send,
+                );
+            } catch {
+                // 外部账号列表拉取失败不阻塞发信工作台——用户仍可
+                // 用默认临时地址发送。
+            }
+        }
     } finally {
         initializing.value = false;
     }
@@ -219,8 +275,15 @@ onMounted(async () => {
                     <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">编写并发送邮件</h2>
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">使用当前临时地址或专属绑定发件渠道外发邮件</p>
                 </div>
-                <div class="px-3 py-1.5 rounded-xl bg-slate-200/60 dark:bg-slate-800/60 border border-slate-300/60 dark:border-slate-700/60 text-xs font-mono text-slate-700 dark:text-slate-300">
-                    发件身份: <span class="font-bold text-blue-600 dark:text-blue-400">{{ settings.address }}</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-medium text-slate-600 dark:text-slate-400">发件身份</span>
+                    <n-select
+                        v-model:value="selectedIdentity"
+                        :options="identityOptions"
+                        size="small"
+                        class="w-56"
+                        placeholder="选择发件身份"
+                    />
                 </div>
             </div>
 
@@ -247,7 +310,7 @@ onMounted(async () => {
                             <n-form-item :label="t('fromName')" label-placement="top">
                                 <n-input-group>
                                     <n-input v-model:value="sendMailModel.fromName" placeholder="发件人昵称" class="rounded-l-xl" />
-                                    <n-input :value="settings.address" disabled class="rounded-r-xl bg-slate-100 dark:bg-slate-800" />
+                                    <n-input :value="selectedExternalAccount?.username || settings.address" disabled class="rounded-r-xl bg-slate-100 dark:bg-slate-800" />
                                 </n-input-group>
                             </n-form-item>
                             <n-form-item :label="t('toName')" label-placement="top">

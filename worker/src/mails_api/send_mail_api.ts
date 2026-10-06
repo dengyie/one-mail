@@ -26,6 +26,12 @@ import {
 } from '../core/sendbox_source';
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
 import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError } from './send_mail_limit_utils';
+import {
+    OutboundPayload,
+    computeOutboundRequestHash,
+    providerForAccountSource,
+    validateOutboundPayload,
+} from '../core/outbound_mail';
 
 
 export const api = new Hono<HonoCustomType>()
@@ -564,4 +570,128 @@ api.delete('/api/sendbox/:id', async (c) => {
     return c.json({
         success: success
     })
+})
+
+// 外部账号发信：以已接入的外部邮箱身份发送邮件。
+// 该路由经 worker.ts 的 /api/* 中间件豁免地址 JWT，改用 x-user-token 鉴权；
+// checkUserPayload 已将有效 token 写入 userPayload。发送不占用域名配额，仅要求
+// 账号 enabled=1 且 can_send=1。请求幂等：同 account_id + 同内容 → 同 request_hash，
+// 由唯一索引 (account_id, request_hash) 去重，二次提交返回已有任务。
+api.post('/api/send_mail/external', async (c) => {
+    const msgs = i18n.getMessagesbyContext(c);
+    const userPayload = c.get("userPayload");
+    if (!userPayload?.user_id) {
+        return c.text(msgs.UserTokenExpiredMsg, 401);
+    }
+
+    const body = await c.req.json().catch(() => null);
+    const accountId = typeof body?.account_id === "string" ? body.account_id.trim() : "";
+    if (!accountId) {
+        return c.text("account_id is required", 400);
+    }
+
+    const validation = validateOutboundPayload(body);
+    if (!validation.ok) {
+        return c.text(validation.reason, 400);
+    }
+    const payload: OutboundPayload = validation.value;
+
+    // Ownership + send permission in one indexed lookup. A missing row is a
+    // distinct outcome from a present-but-not-authorized row, so the client can
+    // tell "no such account" apart from "admin has not enabled sending".
+    const account = await c.env.DB.prepare(
+        `SELECT id, source, username, enabled, can_send
+           FROM user_mail_accounts
+          WHERE id = ? AND user_id = ?`,
+    ).bind(accountId, userPayload.user_id).first<{
+        id: string; source: string; username: string; enabled: number; can_send: number;
+    }>();
+    if (!account) {
+        return c.text(msgs.ExternalAccountNotFoundMsg, 404);
+    }
+    if (account.enabled !== 1 || account.can_send !== 1) {
+        return c.text(msgs.ExternalAccountCannotSendMsg, 403);
+    }
+
+    // The authenticated send identity is the account's own address; a client may
+    // not spoof a different From header through this endpoint. Enforce the
+    // address match (case-insensitive) before the job is enqueued.
+    if (payload.from_addr.toLowerCase() !== account.username.toLowerCase()) {
+        return c.text("from_addr must match the account address", 400);
+    }
+
+    const provider = providerForAccountSource(account.source);
+    if (!provider) {
+        return c.text(`unsupported account source: ${account.source}`, 400);
+    }
+
+    const requestHash = await computeOutboundRequestHash({ account_id: accountId, payload });
+    const existing = await c.env.DB.prepare(
+        `SELECT id, status FROM outbound_mail_jobs
+          WHERE account_id = ? AND request_hash = ?
+          ORDER BY rowid DESC LIMIT 1`,
+    ).bind(accountId, requestHash).first<{ id: string; status: string }>();
+    if (existing) {
+        return c.json({
+            status: existing.status === "succeeded" ? "already_sent" : "queued",
+            job_id: existing.id,
+        });
+    }
+
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    const payloadJson = JSON.stringify(payload);
+    try {
+        await c.env.DB.prepare(
+            `INSERT INTO outbound_mail_jobs (
+                id, account_id, from_addr, to_addr, subject, body_text, body_html,
+                payload_json, request_hash, provider, status, attempts, next_attempt_at,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?)`,
+        ).bind(
+            id,
+            accountId,
+            payload.from_addr,
+            payload.to_mail,
+            payload.subject,
+            payload.is_html ? null : payload.content,
+            payload.is_html ? payload.content : null,
+            payloadJson,
+            requestHash,
+            provider,
+            now,
+            now,
+        ).run();
+    } catch (error) {
+        // A concurrent identical submission can beat the read above to the unique
+        // index. Re-read and return the winner's id instead of surfacing a 500.
+        const winner = await c.env.DB.prepare(
+            `SELECT id, status FROM outbound_mail_jobs
+              WHERE account_id = ? AND request_hash = ? LIMIT 1`,
+        ).bind(accountId, requestHash).first<{ id: string; status: string }>();
+        if (winner) {
+            return c.json({
+                status: winner.status === "succeeded" ? "already_sent" : "queued",
+                job_id: winner.id,
+            });
+        }
+        throw error;
+    }
+
+    // A pending outbound job is visible in the sendbox under its from-address so
+    // the workbench shows it as queued rather than silently omitting it.
+    await saveSendbox(c, payload.from_addr, {
+        from_name: payload.from_name ?? "",
+        to_mail: payload.to_mail,
+        to_name: payload.to_name ?? "",
+        subject: payload.subject,
+        content: payload.content,
+        is_html: payload.is_html,
+    }, {
+        source: "external_account",
+        channel: null,
+        reservation_id: null,
+    });
+
+    return c.json({ status: "queued", job_id: id });
 })

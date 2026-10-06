@@ -6,10 +6,14 @@ import { NButton, NTag, NPopconfirm, useMessage } from 'naive-ui'
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
 
-const { userJwt, userSettings } = useGlobalState()
+const { userJwt, userSettings, adminAuth } = useGlobalState()
 const message = useMessage()
 
 const { t } = useScopedI18n('views.user.UserMailAccounts')
+
+// 发送开关（can_send）仅管理员可见/可操作：外部账号凭据默认只读，管理员
+// 显式开启后该账号才会出现在发件身份下拉（docs/send-mail-external-accounts.md §8）。
+const isAdmin = computed(() => Boolean(userSettings.value?.is_admin || adminAuth.value))
 
 const list = ref([])
 const loading = ref(false)
@@ -180,6 +184,15 @@ const toggle = async (row) => {
     }
 }
 
+const toggleCanSend = async (row) => {
+    try {
+        await api.userMailAccounts.setCanSend(row.id, !row.can_send)
+        await fetchData()
+    } catch (e) {
+        message.error(e.message || 'error')
+    }
+}
+
 const remove = async (row) => {
     try {
         await api.userMailAccounts.remove(row.id)
@@ -212,6 +225,18 @@ const columns = [
             }, { default: () => (row.enabled ? (t('enabled') || '同步中') : (t('disabled') || '已暂停')) })
         }
     },
+    ...(isAdmin.value ? [{
+        title: t('canSend') || '允许发送',
+        key: 'can_send',
+        render(row) {
+            return h(NButton, {
+                size: 'small',
+                type: row.can_send ? 'warning' : 'default',
+                quaternary: true,
+                onClick: () => toggleCanSend(row),
+            }, { default: () => (row.can_send ? (t('canSendOn') || '已开通') : (t('canSendOff') || '未开通')) })
+        }
+    }] : []),
     {
         title: t('lastSync') || '最近同步',
         key: 'last_sync_at',

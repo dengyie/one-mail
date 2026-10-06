@@ -8,12 +8,13 @@ describe('send workbench phase D contracts', () => {
   it('keeps self/system source split and excludes OTP from the system tab', () => {
     expect(view).toContain("const SYSTEM_SOURCES = 'user_api,external_api,smtp_proxy,admin'")
     expect(view).toContain("if (activeTab.value === 'system') return SYSTEM_SOURCES")
-    expect(view).toContain("return 'user_ui'")
+    expect(view).toContain('return SELF_SOURCES')
     expect(view).not.toContain('system_otp')
   })
 
   it('shows self/system tab badges from sendbox counts', () => {
-    expect(view).toContain("api.fetch('/api/sendbox?source=user_ui&limit=1&offset=0')")
+    expect(view).toContain("const SELF_SOURCES = 'user_ui,external_account'")
+    expect(view).toContain('`/api/sendbox?source=${SELF_SOURCES}&limit=1&offset=0`')
     expect(view).toContain('`/api/sendbox?source=${SYSTEM_SOURCES}&limit=1&offset=0`')
     expect(view).toContain(':value="selfCount"')
     expect(view).toContain(':value="systemCount"')
@@ -22,7 +23,7 @@ describe('send workbench phase D contracts', () => {
   })
 
   it('probes badge newest-id with with_count=0 and only recounts on change', () => {
-    expect(view).toContain("api.fetch('/api/sendbox?source=user_ui&limit=1&offset=0&with_count=0')")
+    expect(view).toContain('`/api/sendbox?source=${SELF_SOURCES}&limit=1&offset=0&with_count=0`')
     expect(view).toContain('`/api/sendbox?source=${SYSTEM_SOURCES}&limit=1&offset=0&with_count=0`')
     expect(view).toContain('void probeBadges()')
     expect(view).toContain('if (changed)')
