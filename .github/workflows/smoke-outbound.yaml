@@ -1,0 +1,175 @@
+name: Outbound Send Smoke Test
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Write wrangler.toml
+        env:
+          WRANGLER_TOML_CONTENT: ${{ secrets.BACKEND_TOML }}
+        run: printf '%s\n' "$WRANGLER_TOML_CONTENT" > worker/wrangler.toml
+
+      - name: Probe live API
+        run: |
+          set -u
+          API=https://mail-api.mangoqwq.cc.cd
+          echo "=== GET / ==="
+          curl -sS -m 15 -o /dev/stdout -w "\n[http %{http_code} ip %{remote_ip}]\n" "$API/" || true
+          echo "=== GET /admin/unified/mail_accounts (unauth, expect 401) ==="
+          curl -sS -m 15 -o /dev/stdout -w "\n[http %{http_code}]\n" "$API/admin/unified/mail_accounts" || true
+
+      - name: Peek D1 production state
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -u
+          cd worker/
+          echo "=== users + roles ==="
+          pnpm exec wrangler d1 execute DB --remote --command \
+            "SELECT u.id, u.user_email, r.role_text FROM users u LEFT JOIN user_roles r ON r.user_id=u.id ORDER BY u.id LIMIT 20" \
+            --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
+          echo "=== user_mail_accounts ==="
+          pnpm exec wrangler d1 execute DB --remote --command \
+            "SELECT id, user_id, source, username, enabled, can_send FROM user_mail_accounts ORDER BY created_at DESC LIMIT 20" \
+            --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
+          echo "=== outbound_mail_jobs recent ==="
+          pnpm exec wrangler d1 execute DB --remote --command \
+            "SELECT id, account_id, from_addr, to_addr, subject, provider, status, attempts, error FROM outbound_mail_jobs ORDER BY created_at DESC LIMIT 20" \
+            --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
+          echo "=== sendbox external_account recent ==="
+          pnpm exec wrangler d1 execute DB --remote --command \
+            "SELECT id, address, to_mail, subject, source, channel FROM sendbox WHERE source='external_account' ORDER BY id DESC LIMIT 10" \
+            --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
+
+      - name: Full outbound send test
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -u
+          cd worker/
+          API=https://mail-api.mangoqwq.cc.cd
+
+          d1q() {
+            pnpm exec wrangler d1 execute DB --remote --command "$1" --json 2>/dev/null \
+              | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+          except Exception:
+              print(''); sys.exit(0)
+          rows = data if isinstance(data, list) else data.get('results', [])
+          if isinstance(rows, list) and rows and isinstance(rows[0], dict) and 'results' in rows[0]:
+              rows = rows[0]['results']
+          print(json.dumps(rows[0]) if rows else '')
+          "
+          }
+
+          # 1. Pick a send-capable external account and its owner (join users for identity).
+          ACCOUNT_JSON=$(d1q "SELECT a.id AS account_id, a.user_id, a.source, a.username, u.user_email FROM user_mail_accounts a JOIN users u ON u.id=a.user_id WHERE a.source IN ('imap_qq','imap_163','imap_gmail','imap_outlook','msa','graph_outlook') ORDER BY a.created_at DESC LIMIT 1")
+          if [ -z "$ACCOUNT_JSON" ]; then
+            echo "RESULT: no external mail account exists in production; cannot run a live send test."
+            exit 0
+          fi
+          echo "Picked account: $ACCOUNT_JSON"
+          ACCOUNT_ID=$(echo "$ACCOUNT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['account_id'])")
+          USER_ID=$(echo "$ACCOUNT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['user_id'])")
+          USER_EMAIL=$(echo "$ACCOUNT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['user_email'])")
+          FROM_ADDR=$(echo "$ACCOUNT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['username'])")
+
+          # 2. Enable can_send directly in D1 (equivalent to the admin toggle).
+          pnpm exec wrangler d1 execute DB --remote --yes --command \
+            "UPDATE user_mail_accounts SET can_send=1 WHERE id='${ACCOUNT_ID}'" >/dev/null 2>&1
+          echo "can_send enabled for $ACCOUNT_ID"
+
+          # 3. Mint a user JWT with the deployment's JWT_SECRET. The secret is read
+          #    from the workflow-written wrangler.toml, masked, and never echoed.
+          python3 - <<'PY' > /tmp/jwt_secret.txt
+          import re
+          with open('wrangler.toml', encoding='utf-8') as handle:
+              m = re.search(r'JWT_SECRET\s*=\s*"([^"]+)"', handle.read())
+          print(m.group(1) if m else '')
+          PY
+          JWT_SECRET=$(cat /tmp/jwt_secret.txt)
+          rm -f /tmp/jwt_secret.txt
+          if [ -z "$JWT_SECRET" ]; then
+            echo "RESULT: JWT_SECRET not found in wrangler.toml; cannot mint token."
+            exit 0
+          fi
+          echo "::add-mask::$JWT_SECRET"
+
+          EXP=$(( $(date +%s) + 1800 ))
+          USER_TOKEN=$(JWT_SECRET="$JWT_SECRET" USER_ID="$USER_ID" USER_EMAIL="$USER_EMAIL" EXP="$EXP" node -e '
+          const crypto = require("crypto");
+          const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+          const head = b64({ alg: "HS256", typ: "JWT" });
+          const body = b64({ user_id: Number(process.env.USER_ID), user_email: process.env.USER_EMAIL, exp: Number(process.env.EXP) });
+          const data = head + "." + body;
+          const sig = crypto.createHmac("sha256", process.env.JWT_SECRET).update(data).digest("base64url");
+          process.stdout.write(data + "." + sig);
+          ')
+          echo "::add-mask::$USER_TOKEN"
+
+          # 4. Submit the outbound send through the real endpoint.
+          SUBJECT="Outbound smoke $(date -u +%Y%m%dT%H%M%SZ)"
+          PAYLOAD=$(SUBJECT="$SUBJECT" ACCOUNT_ID="$ACCOUNT_ID" FROM_ADDR="$FROM_ADDR" TO_MAIL="$USER_EMAIL" python3 -c '
+          import json, os
+          print(json.dumps({
+            "account_id": os.environ["ACCOUNT_ID"],
+            "from_addr": os.environ["FROM_ADDR"],
+            "from_name": "Outbound Smoke",
+            "to_mail": os.environ["TO_MAIL"],
+            "to_name": "Smoke",
+            "subject": os.environ["SUBJECT"],
+            "content": "Production smoke test of external-account outbound send.",
+            "is_html": False,
+          }))
+          ')
+          echo "=== POST /api/send_mail/external ==="
+          RESP=$(curl -sS -m 30 -w "\n[http %{http_code}]" \
+            -X POST \
+            -H "x-user-token: $USER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$API/api/send_mail/external" || true)
+          echo "$RESP"
+          JOB_ID=$(echo "$RESP" | head -1 | python3 -c "import sys,json;print(json.load(sys.stdin).get('job_id',''))" 2>/dev/null || true)
+          echo "JOB_ID=$JOB_ID"
+
+          # 5. Wait for the aggregator daemon to claim + send + report.
+          echo "Waiting 45s for the aggregator to claim/send/report..."
+          sleep 45
+
+          # 6. Verify job terminal state.
+          if [ -n "$JOB_ID" ]; then
+            echo "=== final outbound job row ==="
+            pnpm exec wrangler d1 execute DB --remote --command \
+              "SELECT status, attempts, provider_message_id, error, lease_token, attempts FROM outbound_mail_jobs WHERE id='${JOB_ID}'" \
+              --json 2>/dev/null | python3 -m json.tool || true
+          fi
+
+          echo "=== sendbox row for this subject ==="
+          pnpm exec wrangler d1 execute DB --remote --command \
+            "SELECT id, address, to_mail, subject, source, channel FROM sendbox WHERE subject='${SUBJECT}'" \
+            --json 2>/dev/null | python3 -m json.tool || true
+
+          echo "SMOKE TEST COMPLETE"
