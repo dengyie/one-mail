@@ -80,6 +80,11 @@ def test_resolve_endpoint_explicit_overrides_win():
     assert smtp._resolve_smtp_endpoint(account) == ("mail.example.com", 2525, True)
 
 
+def test_resolve_endpoint_custom_imap_port_465_uses_ssl():
+    account = _smtp_account("imap_custom", smtp_host="mail.linux.do", smtp_port=465)
+    assert smtp._resolve_smtp_endpoint(account) == ("mail.linux.do", 465, True)
+
+
 def test_resolve_endpoint_unknown_source_has_no_host():
     account = _smtp_account("imap_unknown")
     assert smtp._resolve_smtp_endpoint(account) == ("", 0, False)

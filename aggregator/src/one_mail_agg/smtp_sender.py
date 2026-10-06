@@ -78,12 +78,18 @@ def _resolve_smtp_endpoint(account: AccountConfig) -> tuple[str, int, bool]:
     """Return (host, port, use_ssl) for the account's SMTP send path.
 
     Explicit smtp_host / smtp_port on the account override any per-source default.
+    Port 465 universally defaults to SSL, while 587 / 25 default to STARTTLS.
     """
     source = str(account.source or "").strip().lower()
     defaults = SMTP_DEFAULTS.get(source, ("", 0, False))
     host = account.smtp_host or defaults[0]
     port = account.smtp_port or defaults[1]
-    use_ssl = bool(defaults[2])
+    if port == 465:
+        use_ssl = True
+    elif port in (587, 25):
+        use_ssl = False
+    else:
+        use_ssl = bool(defaults[2])
     return host, port, use_ssl
 
 
