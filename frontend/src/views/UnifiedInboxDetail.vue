@@ -1,6 +1,20 @@
 <template>
   <div class="unified-detail max-w-4xl mx-auto px-4 py-6 text-left space-y-4">
-    <div v-if="loading" class="py-24 text-center text-zinc-400 flex flex-col items-center gap-2">
+    <!-- 骨架屏：首屏加载时呈现操作条与正文轮廓，彻底消除闪烁 -->
+    <div v-if="loading && !email" class="space-y-4 animate-pulse">
+      <div class="h-10 bg-zinc-200/80 dark:bg-zinc-800/80 rounded-2xl w-full"></div>
+      <div class="p-6 rounded-3xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/60 space-y-4">
+        <div class="h-6 bg-zinc-200 dark:bg-zinc-700 rounded-lg w-2/3"></div>
+        <div class="h-4 bg-zinc-100 dark:bg-zinc-800 rounded-lg w-1/2"></div>
+        <div class="pt-4 space-y-2.5">
+          <div class="h-4 bg-zinc-100 dark:bg-zinc-800 rounded w-full"></div>
+          <div class="h-4 bg-zinc-100 dark:bg-zinc-800 rounded w-5/6"></div>
+          <div class="h-4 bg-zinc-100 dark:bg-zinc-800 rounded w-4/6"></div>
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="loading" class="py-24 text-center text-zinc-400 flex flex-col items-center gap-2">
       <span class="animate-spin text-2xl">⏳</span>
       <span>{{ t('list.loading') }}</span>
     </div>
@@ -264,18 +278,29 @@ let aiTimer = null
 // Per-mail consent for remote images, mirroring MailContentRenderer.
 const showRemoteImages = ref(false)
 
-watch(() => email.value?.id, () => {
+// 邮件 AI 分析轻量级内存缓存（以 email.id 为键，避免重复计算与状态丢失）
+const aiAnalysisCache = new Map()
+
+watch(() => email.value?.id, (newId) => {
   if (aiTimer) {
     clearTimeout(aiTimer)
     aiTimer = null
   }
   aiThinking.value = false
-  aiAnalysisText.value = ''
   showRemoteImages.value = false
+
+  if (newId && aiAnalysisCache.has(newId)) {
+    const cached = aiAnalysisCache.get(newId)
+    aiAnalysisText.value = cached.text
+    aiDuration.value = cached.duration
+  } else {
+    aiAnalysisText.value = ''
+  }
 })
 
 const generateAiAnalysis = () => {
   if (!email.value) return
+  const analysisMailId = email.value.id
   aiThinking.value = true
   aiAnalysisText.value = ''
   const start = Date.now()
@@ -287,14 +312,16 @@ const generateAiAnalysis = () => {
   const validCodes = codeMatches.filter(c => !/^(19|20)\d\d$/.test(c) && !/^\d{4}-\d{2}/.test(c))
 
   if (aiTimer) clearTimeout(aiTimer)
-  const analysisMailId = email.value.id
   aiTimer = setTimeout(() => {
     if (email.value?.id !== analysisMailId) return
     aiTimer = null
     aiThinking.value = false
-    aiDuration.value = Number(((Date.now() - start) / 1000).toFixed(1))
+    const dur = Number(((Date.now() - start) / 1000).toFixed(1))
+    aiDuration.value = dur
     const codeLine = validCodes.length ? `- **提取验证码**：\`${validCodes.slice(0, 3).join(', ')}\`` : '- 未检测到明显验证码'
-    aiAnalysisText.value = `### 📌 智能邮件要点速览\n- **发件人**：\`${sender}\`\n- **主题**：${subject}\n${codeLine}\n\n#### 核心正文提取\n> ${body.slice(0, 320).trim()}...`
+    const resultText = `### 📌 智能邮件要点速览\n- **发件人**：\`${sender}\`\n- **主题**：${subject}\n${codeLine}\n\n#### 核心正文提取\n> ${body.slice(0, 320).trim()}...`
+    aiAnalysisText.value = resultText
+    aiAnalysisCache.set(analysisMailId, { text: resultText, duration: dur })
   }, 400)
 }
 

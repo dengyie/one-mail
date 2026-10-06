@@ -17,5 +17,10 @@ const showTempMail = computed(() => {
 </script>
 
 <template>
-  <component :is="showTempMail ? Index : UnifiedInbox" />
+  <keep-alive>
+    <component
+      :is="showTempMail ? Index : UnifiedInbox"
+      :key="showTempMail ? 'temp-mail-view' : 'unified-inbox-view'"
+    />
+  </keep-alive>
 </template>
