@@ -78,6 +78,10 @@ const messages: LocaleMessages = {
     ServerSendMailMonthlyLimitMsg: "服务器本月发信次数已达上限",
     InvalidToMailMsg: "收件人地址无效",
 
+    // External account sending
+    ExternalAccountNotFoundMsg: "外部邮箱账号不存在",
+    ExternalAccountCannotSendMsg: "该账号未被授权发信",
+
     // Admin related
     InvalidAddressIdMsg: "无效的 address_id",
     EnableKVMsg: "请先启用 KV",

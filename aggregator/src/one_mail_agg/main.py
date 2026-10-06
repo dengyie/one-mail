@@ -9,6 +9,7 @@ from .sync import sync_account, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .graph_source import sync_graph
 from .mutation_jobs import process_mutation_jobs
+from .outbound_jobs import process_outbound_jobs, OutboundBatchError
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .idle_worker import ensure_idle_workers
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
@@ -283,6 +284,28 @@ def _drain_mutation_jobs(config) -> int | None:
     return claimed
 
 
+def _drain_outbound_jobs(config) -> int | None:
+    """排空外部账号的出站发送队列。
+
+    与 mutation 共享同一个 tick 窗口，复用同一 redemption_lock；虽然发送频率远低于
+    读/星标/移动，但排空窗口统一避免拆成两个独立调度循环。
+    """
+    try:
+        result = process_outbound_jobs(config)
+    except OutboundBatchError as e:
+        result = e.result
+        log.error("outbound batch error: %s", e)
+    except Exception as e:
+        log.error("outbound claim error: %s", e)
+        return None
+    claimed = int(result.get("claimed", 0) or 0)
+    if claimed:
+        log.info("outbound batch claimed=%d succeeded=%d retried=%d failed=%d unsupported=%d",
+                 claimed, result.get("succeeded", 0), result.get("retried", 0),
+                 result.get("failed", 0), result.get("unsupported", 0))
+    return claimed
+
+
 def run_daemon(config_path: str, poll_interval: int = 60,
                mutation_interval: int = 5) -> int:
     """长期守护进程模式（单进程单写者）：
@@ -313,6 +336,7 @@ def run_daemon(config_path: str, poll_interval: int = 60,
                 _poll_pass(config, state, now=tick_started)
             elif tick_started >= next_mutation_at:
                 claimed = _drain_mutation_jobs(config)
+                _drain_outbound_jobs(config)
                 claim_every = mutation_claim_interval(mutation_interval, claimed)
                 next_mutation_at = tick_started + claim_every
         except Exception as e:

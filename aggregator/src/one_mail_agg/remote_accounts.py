@@ -131,6 +131,7 @@ def fetch_user_accounts(worker_base_url: str, admin_token: str, *,
                 pop3_port=_optional_int(a.get("pop3_port")),
                 pop3_ssl=_optional_bool(a.get("pop3_ssl")),
                 pop3_use_stls=_optional_bool(a.get("pop3_use_stls"), False),
+                can_send=_optional_bool(a.get("can_send"), False),
                 initial_sync_limit=_optional_int(a.get("initial_sync_limit"), 50),
                 user_managed=True,
             ))

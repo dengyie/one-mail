@@ -10,6 +10,9 @@ import SendHistoryPane from '../../components/SendHistoryPane.vue'
 import SendMail from './SendMail.vue'
 
 const SYSTEM_SOURCES = 'user_api,external_api,smtp_proxy,admin'
+// 本人发出的邮件：既含默认临时地址（user_ui），也含以已接入外部邮箱身份
+// 发出的邮件（external_account，见 docs/send-mail-external-accounts.md §5.3）。
+const SELF_SOURCES = 'user_ui,external_account'
 const VALID_TABS = ['compose', 'self', 'system']
 
 const route = useRoute()
@@ -60,7 +63,7 @@ const chips = computed(() => [
 const historySource = computed(() => {
   if (showAll.value) return ''
   if (activeTab.value === 'system') return SYSTEM_SOURCES
-  return 'user_ui'
+  return SELF_SOURCES
 })
 
 const historyEmpty = computed(() => {
@@ -131,7 +134,7 @@ const loadBadges = async () => {
   badgePending = true
   try {
     const [selfRes, systemRes] = await Promise.all([
-      api.fetch('/api/sendbox?source=user_ui&limit=1&offset=0'),
+      api.fetch(`/api/sendbox?source=${SELF_SOURCES}&limit=1&offset=0`),
       api.fetch(`/api/sendbox?source=${SYSTEM_SOURCES}&limit=1&offset=0`),
     ])
     if (componentDisposed) return
@@ -151,7 +154,7 @@ const probeBadges = async () => {
   badgePending = true
   try {
     const [selfRes, systemRes] = await Promise.all([
-      api.fetch('/api/sendbox?source=user_ui&limit=1&offset=0&with_count=0'),
+      api.fetch(`/api/sendbox?source=${SELF_SOURCES}&limit=1&offset=0&with_count=0`),
       api.fetch(`/api/sendbox?source=${SYSTEM_SOURCES}&limit=1&offset=0&with_count=0`),
     ])
     if (componentDisposed) return

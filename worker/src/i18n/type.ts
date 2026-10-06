@@ -76,6 +76,10 @@ export type LocaleMessages = {
     ServerSendMailMonthlyLimitMsg: string
     InvalidToMailMsg: string
 
+    // External account sending
+    ExternalAccountNotFoundMsg: string
+    ExternalAccountCannotSendMsg: string
+
     // Admin related
     InvalidAddressIdMsg: string
     EnableKVMsg: string

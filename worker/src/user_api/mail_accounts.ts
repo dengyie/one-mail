@@ -78,6 +78,7 @@ interface MailAccountRow {
     pop3_ssl: number | null;
     pop3_use_stls: number | null;
     enabled: number;
+    can_send: number;
     last_sync_at: number | null;
     last_error: string | null;
     created_at: number;
@@ -115,6 +116,7 @@ const safeRow = (r: MailAccountRow) => ({
     pop3_ssl: r.pop3_ssl == null ? null : r.pop3_ssl === 1,
     pop3_use_stls: r.pop3_use_stls == null ? false : r.pop3_use_stls === 1,
     enabled: r.enabled === 1,
+    can_send: r.can_send === 1,
     last_sync_at: r.last_sync_at,
     last_error: r.last_error,
     created_at: r.created_at,
@@ -469,7 +471,7 @@ const UserMailAccountsModule = {
         const { results } = await c.env.DB.prepare(
             `SELECT id, user_id, source, host, port, username, cred_enc, protocol,
                     folders_json, oauth_enc, use_ssl, pop3_host, pop3_port, pop3_ssl,
-                    pop3_use_stls FROM user_mail_accounts WHERE enabled = 1`
+                    pop3_use_stls, can_send FROM user_mail_accounts WHERE enabled = 1`
         ).all<MailAccountRow>();
         const out = [];
         for (const r of results || []) {
@@ -522,6 +524,7 @@ const UserMailAccountsModule = {
                     pop3_port: r.pop3_port ?? null,
                     pop3_ssl: r.pop3_ssl == null ? null : r.pop3_ssl === 1,
                     pop3_use_stls: r.pop3_use_stls == null ? false : r.pop3_use_stls === 1,
+                    can_send: r.can_send === 1,
                     oauth: oauth == null ? null : JSON.parse(oauth),
                 });
             } catch (e) {
@@ -595,6 +598,25 @@ const UserMailAccountsModule = {
             `UPDATE user_mail_accounts SET oauth_enc = ?, last_error = NULL WHERE id = ?`
         ).bind(oauthEnc, id).run();
         return c.json({ success: true });
+    },
+
+    /**
+     * 管理员发送开关（POST /admin/unified/mail_accounts/:id/can_send，
+     * x-admin-auth 保护）。外部账号凭据默认只读；仅管理员能显式把某账号的
+     * can_send 置 1，它才会出现在前端发件身份下拉、且聚合器才会为其建发送
+     * job（docs/send-mail-external-accounts.md §4 决策 4 / §8）。此端点独立于
+     * 用户自助 toggle（只切 enabled 同步开关），绝不把发送开关暴露给非管理员。
+     */
+    setCanSend: async (c: Context<HonoCustomType>) => {
+        const { id } = c.req.param();
+        const body = await c.req.json().catch(() => ({})) as { can_send?: unknown };
+        const canSend = body.can_send === true;
+        const { meta } = await c.env.DB.prepare(
+            `UPDATE user_mail_accounts SET can_send = ? WHERE id = ?`
+        ).bind(canSend ? 1 : 0, id).run();
+        const changes = (meta as { changes?: number })?.changes ?? 0;
+        if (changes === 0) return c.json({ error: "not found" }, 404);
+        return c.json({ success: true, can_send: canSend });
     },
 };
 

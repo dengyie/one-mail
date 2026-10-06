@@ -78,6 +78,10 @@ const messages: LocaleMessages = {
     ServerSendMailMonthlyLimitMsg: "Server monthly send quota has been reached",
     InvalidToMailMsg: "Invalid recipient address",
 
+    // External account sending
+    ExternalAccountNotFoundMsg: "External mail account not found",
+    ExternalAccountCannotSendMsg: "This account is not authorized to send mail",
+
     // Admin related
     InvalidAddressIdMsg: "Invalid address_id",
     EnableKVMsg: "Please enable KV first",

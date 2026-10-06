@@ -6,6 +6,7 @@ import { ensureProviderIdentitySchema } from "../unified/schema";
 import { isShardMode } from "../core/d1_quota.ts";
 import { initializeShardSchema } from "../unified/shard_schema.ts";
 import { ensureAccountLifecycleTable } from "../unified/account_lifecycle_schema.ts";
+import { ensureOutboundSendSchema } from "../unified/outbound_schema.ts";
 
 const DB_INIT_QUERIES = `
 CREATE TABLE IF NOT EXISTS raw_mails (
@@ -157,6 +158,7 @@ CREATE TABLE IF NOT EXISTS user_mail_accounts (
     pop3_ssl INTEGER,
     pop3_use_stls INTEGER DEFAULT 0,
     enabled INTEGER DEFAULT 1,
+    can_send INTEGER NOT NULL DEFAULT 0,
     last_sync_at INTEGER,
     last_error TEXT,
     created_at INTEGER
@@ -179,6 +181,33 @@ CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at 
 CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS outbound_mail_jobs (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    from_addr TEXT NOT NULL,
+    to_addr TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_text TEXT,
+    body_html TEXT,
+    payload_json TEXT,
+    request_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_until INTEGER,
+    provider_message_id TEXT,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    completed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_outbound_pending
+    ON outbound_mail_jobs (status, next_attempt_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outbound_request_hash
+    ON outbound_mail_jobs (account_id, request_hash);
 
 CREATE TABLE IF NOT EXISTS scheduled_locks (
     name TEXT PRIMARY KEY,
@@ -323,6 +352,7 @@ export default {
         await ensureUnifiedColumns(c.env.DB);
         await ensureProviderIdentitySchema(c.env.DB);
         await ensureSendMailLimitReservationSchema(c.env.DB);
+        await ensureOutboundSendSchema(c.env.DB);
 
         const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
         if (version) {
@@ -403,11 +433,13 @@ export default {
         const unifiedChanges = await ensureUnifiedColumns(c.env.DB);
         const providerIdentityChanges = await ensureProviderIdentitySchema(c.env.DB);
         await ensureSendMailLimitReservationSchema(c.env.DB);
+        const outboundChanges = await ensureOutboundSendSchema(c.env.DB);
         if (
             version != CONSTANTS.DB_VERSION ||
             migrationChanges.length > 0 ||
             unifiedChanges.length > 0 ||
-            providerIdentityChanges.length > 0
+            providerIdentityChanges.length > 0 ||
+            outboundChanges.length > 0
         ) {
             await utils.saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
             return c.json({

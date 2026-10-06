@@ -184,6 +184,13 @@ app.use('/api/*', async (c, next) => {
 		await next();
 		return;
 	}
+	if (c.req.path.startsWith("/api/send_mail/external")) {
+		// 外部账号发信以「登录用户」而非「域名地址」为鉴权主体：x-user-token
+		// 已由 checkUserPayload 写入 userPayload，跳过地址 JWT。
+		await checkUserPayload(c);
+		await next();
+		return;
+	}
 	if (c.req.path.startsWith("/api/settings")
 		|| c.req.path.startsWith("/api/send_mail")
 	) {
