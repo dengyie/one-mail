@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { marked } from 'marked'
+import { getRouterPathWithLang } from '../../utils'
 
 describe('awesome-ui-kit & AI UI Primitives', () => {
   describe('Markdown parsing (StreamMarkdown core)', () => {
@@ -73,8 +74,7 @@ describe('awesome-ui-kit & AI UI Primitives', () => {
   })
 
   describe('Router Locale Helpers (getRouterPathWithLang)', () => {
-    it('unwraps ref objects and string locales correctly', async () => {
-      const { getRouterPathWithLang } = await import('../../utils')
+    it('unwraps ref objects and string locales correctly', () => {
       expect(getRouterPathWithLang('/unified', 'en')).toBe('/en/unified')
       expect(getRouterPathWithLang('/unified', { value: 'en' })).toBe('/en/unified')
       expect(getRouterPathWithLang('/unified', { value: 'zh' })).toBe('/unified')
