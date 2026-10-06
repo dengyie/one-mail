@@ -157,14 +157,30 @@ jobs:
           JOB_ID=$(echo "$RESP" | head -1 | python3 -c "import sys,json;print(json.load(sys.stdin).get('job_id',''))" 2>/dev/null || true)
           echo "JOB_ID=$JOB_ID"
 
-          # 5. Wait for the aggregator daemon to claim + send + report.
-          echo "Waiting 45s for the aggregator to claim/send/report..."
-          sleep 45
+          # 5. Wait for the aggregator daemon to claim + send + report. The daemon
+          #    drains the outbound queue on its ~5s mutation tick, and a send plus
+          #    Sent-folder reconciliation can take time, so poll for a terminal
+          #    state instead of a fixed sleep.
+          echo "Polling for a terminal job state (up to 4 minutes)..."
+          STATUS=""
+          for i in $(seq 1 48); do
+            sleep 5
+            STATUS=$(d1q "SELECT status, attempts, COALESCE(last_error,'') AS last_error, COALESCE(provider_message_id,'') AS provider_message_id FROM outbound_mail_jobs WHERE id='${JOB_ID}'" 2>/dev/null)
+            if [ -n "$STATUS" ]; then
+              CUR=$(echo "$STATUS" | python3 -c "import sys,json;print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
+              echo "poll $i: status=$CUR"
+              case "$CUR" in
+                succeeded|failed|unsupported)
+                  STATUS="$STATUS"
+                  break ;;
+              esac
+            fi
+          done
 
           # 6. Verify job terminal state.
           if [ -n "$JOB_ID" ]; then
             echo "=== final outbound job row ==="
-            pnpm exec wrangler d1 execute DB --remote --command \
+            echo "$STATUS" | python3 -m json.tool || pnpm exec wrangler d1 execute DB --remote --command \
               "SELECT status, attempts, provider_message_id, last_error, completed_at FROM outbound_mail_jobs WHERE id='${JOB_ID}'" \
               --json 2>/dev/null | python3 -m json.tool || true
           fi
@@ -173,5 +189,54 @@ jobs:
           pnpm exec wrangler d1 execute DB --remote --command \
             "SELECT id, address, to_mail, subject, source, channel FROM sendbox WHERE subject='${SUBJECT}'" \
             --json 2>/dev/null | python3 -m json.tool || true
+
+          # 7. Second send: an app-password Gmail account (no OAuth blob) must now
+          #    route through app-password SMTP instead of "has no OAuth config".
+          GM=$(d1q "SELECT a.id AS account_id, a.source, a.username, u.user_email, CASE WHEN a.cred_enc IS NOT NULL THEN 1 ELSE 0 END AS has_cred, CASE WHEN a.oauth_enc IS NOT NULL THEN 1 ELSE 0 END AS has_oauth FROM user_mail_accounts a JOIN users u ON u.id=a.user_id WHERE a.source='imap_gmail' AND a.cred_enc IS NOT NULL ORDER BY a.created_at DESC LIMIT 1")
+          echo "Gmail account: $GM"
+          if [ -n "$GM" ]; then
+            GM_ID=$(echo "$GM" | python3 -c "import sys,json;print(json.load(sys.stdin)['account_id'])")
+            GM_ADDR=$(echo "$GM" | python3 -c "import sys,json;print(json.load(sys.stdin)['username'])")
+            pnpm exec wrangler d1 execute DB --remote --yes --command \
+              "UPDATE user_mail_accounts SET can_send=1 WHERE id='${GM_ID}'" >/dev/null 2>&1
+            GSUBJ="Gmail app-password smoke $(date -u +%Y%m%dT%H%M%SZ)"
+            GPAYLOAD=$(GSUBJ="$GSUBJ" ACCOUNT_ID="$GM_ID" FROM_ADDR="$GM_ADDR" TO_MAIL="$USER_EMAIL" python3 -c '
+            import json, os
+            print(json.dumps({
+              "account_id": os.environ["ACCOUNT_ID"],
+              "from_addr": os.environ["FROM_ADDR"],
+              "from_name": "Gmail Smoke",
+              "to_mail": os.environ["TO_MAIL"],
+              "to_name": "Smoke",
+              "subject": os.environ["GSUBJ"],
+              "content": "Gmail app-password outbound smoke test.",
+              "is_html": False,
+            }))
+            ')
+            echo "=== POST /api/send_mail/external (Gmail) ==="
+            GRESP=$(curl -sS -m 30 -w "\n[http %{http_code}]" \
+              -X POST \
+              -H "x-user-token: $USER_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$GPAYLOAD" \
+              "$API/api/send_mail/external" || true)
+            echo "$GRESP"
+            GJOB_ID=$(echo "$GRESP" | head -1 | python3 -c "import sys,json;print(json.load(sys.stdin).get('job_id',''))" 2>/dev/null || true)
+            echo "GJOB_ID=$GJOB_ID"
+            GSTATUS=""
+            for i in $(seq 1 48); do
+              sleep 5
+              GSTATUS=$(d1q "SELECT status, attempts, COALESCE(last_error,'') AS last_error, COALESCE(provider_message_id,'') AS provider_message_id FROM outbound_mail_jobs WHERE id='${GJOB_ID}'" 2>/dev/null)
+              if [ -n "$GSTATUS" ]; then
+                GCUR=$(echo "$GSTATUS" | python3 -c "import sys,json;print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
+                echo "gmail poll: status=$GCUR"
+                case "$GCUR" in
+                  succeeded|failed|unsupported) break ;;
+                esac
+              fi
+            done
+            echo "=== final Gmail outbound job row ==="
+            echo "$GSTATUS" | python3 -m json.tool
+          fi
 
           echo "SMOKE TEST COMPLETE"
