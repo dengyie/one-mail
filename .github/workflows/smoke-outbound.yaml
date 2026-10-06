@@ -57,7 +57,7 @@ jobs:
             --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
           echo "=== sendbox external_account recent ==="
           pnpm exec wrangler d1 execute DB --remote --command \
-            "SELECT id, address, to_mail, subject, source, channel FROM sendbox WHERE source='external_account' ORDER BY id DESC LIMIT 10" \
+            "SELECT id, address, source, channel, provider_message_id, created_at FROM sendbox WHERE source='external_account' ORDER BY id DESC LIMIT 10" \
             --json 2>/dev/null | python3 -m json.tool || echo "(query failed)"
 
       - name: Full outbound send test
@@ -187,7 +187,7 @@ jobs:
 
           echo "=== sendbox row for this subject ==="
           pnpm exec wrangler d1 execute DB --remote --command \
-            "SELECT id, address, to_mail, subject, source, channel FROM sendbox WHERE subject='${SUBJECT}'" \
+            "SELECT id, address, source, channel, provider_message_id, created_at FROM sendbox WHERE address='${FROM_ADDR}' ORDER BY id DESC LIMIT 3" \
             --json 2>/dev/null | python3 -m json.tool || true
 
           # 7. Second send: an app-password Gmail account (no OAuth blob) must now
@@ -200,19 +200,7 @@ jobs:
             pnpm exec wrangler d1 execute DB --remote --yes --command \
               "UPDATE user_mail_accounts SET can_send=1 WHERE id='${GM_ID}'" >/dev/null 2>&1
             GSUBJ="Gmail app-password smoke $(date -u +%Y%m%dT%H%M%SZ)"
-            GPAYLOAD=$(GSUBJ="$GSUBJ" ACCOUNT_ID="$GM_ID" FROM_ADDR="$GM_ADDR" TO_MAIL="$USER_EMAIL" python3 -c '
-            import json, os
-            print(json.dumps({
-              "account_id": os.environ["ACCOUNT_ID"],
-              "from_addr": os.environ["FROM_ADDR"],
-              "from_name": "Gmail Smoke",
-              "to_mail": os.environ["TO_MAIL"],
-              "to_name": "Smoke",
-              "subject": os.environ["GSUBJ"],
-              "content": "Gmail app-password outbound smoke test.",
-              "is_html": False,
-            }))
-            ')
+            GPAYLOAD=$(GSUBJ="$GSUBJ" ACCOUNT_ID="$GM_ID" FROM_ADDR="$GM_ADDR" TO_MAIL="$USER_EMAIL" python3 -c 'import json,os; print(json.dumps({"account_id":os.environ["ACCOUNT_ID"],"from_addr":os.environ["FROM_ADDR"],"from_name":"Gmail Smoke","to_mail":os.environ["TO_MAIL"],"to_name":"Smoke","subject":os.environ["GSUBJ"],"content":"Gmail app-password outbound smoke test.","is_html":False}))')
             echo "=== POST /api/send_mail/external (Gmail) ==="
             GRESP=$(curl -sS -m 30 -w "\n[http %{http_code}]" \
               -X POST \
