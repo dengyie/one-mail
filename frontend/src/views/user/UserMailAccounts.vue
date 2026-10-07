@@ -1,14 +1,18 @@
 <script setup>
 import MailIcon from '../../components/ui/MailIcon.vue'
 import { ref, computed, onMounted, h } from 'vue'
+import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useScopedI18n } from '@/i18n/app'
 import { NButton, NTag, NPopconfirm, useMessage } from 'naive-ui'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
+import { getRouterPathWithLang } from '../../utils'
 import { getProviderContextHint } from './onboarding_hints.js'
 
 const { userJwt, userSettings, adminAuth } = useGlobalState()
+const router = useRouter()
 const message = useMessage()
 
 const { t } = useScopedI18n('views.user.UserMailAccounts')
@@ -362,6 +366,18 @@ onMounted(async () => {
     if (userJwt.value) await fetchData()
 })
 const { t: w } = useScopedI18n('workspace')
+// locale 与命名空间无关，单独从全局 composer 取，避免与 w 的作用域读起来有绑定关系。
+const { locale } = useI18n({ useScope: 'global' })
+
+// 未登录时不能把列表渲染成"看起来是空的"——这正是本次要修的原始症状：
+// 无会话 → 跳过取数 → 恒空 list → 模板照渲染 n-data-table，用户误判"邮箱丢了"。
+//
+// 路由守卫（meta.requiresSession）已挡住匿名直达，这里是第二道兜底，覆盖的是
+// 会话在停留期间失效的情况：siteClient 的 401 自愈会清掉 userJwt，而复合提权
+// 会话（仍持有 adminAuth / unifiedApiKey）不会被重定向走，此时就落到这里。
+// 若只看守卫会以为这层多余从而删掉，那正好把原始 bug 放回来。
+const isAnonymous = computed(() => !userJwt.value)
+const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value))
 </script>
 
 <template>
@@ -540,12 +556,17 @@ const { t: w } = useScopedI18n('workspace')
                     <h2 class="text-sm font-semibold">{{ t('title') || '外部邮箱归集与同步 (IMAP/POP3)' }}</h2>
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('description') || '由后台聚合器自动拉取邮件并归集到统一收件箱。' }}</p>
                 </div>
-                <n-button @click="showModal = true" type="primary" class="rounded-xl font-medium shadow-xs">
+                <n-button v-if="!isAnonymous" @click="showModal = true" type="primary" class="rounded-xl font-medium shadow-xs">
                     <template #icon><MailIcon name="plus" :size="16" /></template>{{ t('connect') }}
                 </n-button>
             </div>
 
-            <div class="space-y-4">
+            <div v-if="isAnonymous" class="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-slate-900/90 p-10 flex flex-col items-center text-center">
+                <div class="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-4 text-xl font-bold">@</div>
+                <p class="text-sm text-slate-600 dark:text-slate-300">{{ t('sessionRequired') || '登录后才能查看与接入外部邮箱。' }}</p>
+                <n-button type="primary" secondary class="mt-5 rounded-xl px-5" @click="goToLogin">{{ t('sessionRequiredAction') || '去登录' }}</n-button>
+            </div>
+            <div v-else class="space-y-4">
                 <n-data-table :scroll-x="700" :columns="columns" :data="list" :loading="loading" :bordered="false" class="external-accounts-table rounded-2xl overflow-hidden" />
             </div>
         </div>

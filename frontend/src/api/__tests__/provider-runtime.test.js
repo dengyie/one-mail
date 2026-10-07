@@ -11,7 +11,7 @@ const response = data => ({ status: 200, data })
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 beforeEach(async () => {
   vi.resetModules()
-  ctx.state = Object.fromEntries(['loading', 'auth', 'jwt', 'showAuth', 'adminAuth', 'showAdminAuth', 'userJwt', 'unifiedApiKey'].map(key => [key, ref('')]))
+  ctx.state = Object.fromEntries(['loading', 'auth', 'jwt', 'showAuth', 'adminAuth', 'userJwt', 'unifiedApiKey'].map(key => [key, ref('')]))
   Object.assign(ctx.state, { settings: ref({}), openSettings: ref({}), userOpenSettings: ref({}), userSettings: ref({}), announcement: ref('') })
   ctx.state.userJwt.value = 'user-a'
   ctx.request.mockReset()

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { createApp, defineComponent, h, nextTick, reactive, ref } from 'vue'
+import { createApp, defineComponent, h, nextTick, reactive, ref, computed } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { I18N_MESSAGES } from '../../../i18n/messages'
@@ -21,7 +21,7 @@ const mounted = []
 beforeEach(() => {
   context.route = reactive({ path: '/unified', query: {} })
   context.state = Object.fromEntries(['userJwt', 'jwt', 'auth', 'adminAuth', 'addressPassword', 'userOauth2SessionState', 'userOauth2SessionClientID', 'unifiedApiKey'].map(key => [key, ref('')]))
-  Object.assign(context.state, { settings: ref({ address: '' }), userSettings: ref({ user_email: '', is_admin: false }), openSettings: ref({ enableSendMail: true, enableWebhook: true }), showAdminPage: ref(false) })
+  Object.assign(context.state, { settings: ref({ address: '' }), userSettings: ref({ user_email: '', is_admin: false }), openSettings: ref({ enableSendMail: true, enableWebhook: true }), showAdminPage: ref(false), hasUserSession: computed(() => Boolean(context.state.userJwt.value)) })
   context.push.mockReset().mockResolvedValue(undefined)
   context.clear.mockReset()
 })

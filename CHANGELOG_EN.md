@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| Fix the permanently empty external-account table seen by signed-out visitors. Promoting `/user/external-accounts`, `/user/addresses`, and `/user/settings` to standalone routes dropped the authentication check, so an anonymous visit skipped fetching and rendered an empty table that reads as lost mailboxes. Add a pure session guard in `router/session_guard.ts` that redirects signed-out visitors to `/user`, preserving the locale along with query and hash. Let `siteClient` self-heal the credential owned by the endpoint family on 401 (`/user_api` clears the user session, `/admin` clears the admin password) and only when the credential that was sent is still the current one, so a renewed session is never cleared. Render a sign-in prompt instead of an empty table when signed out. Move `hasUserSession` into the store so the sidebar shares one decision, and drop the unread `showAdminAuth` flag.
+
 - fix: |Frontend| Keep external account table headers and cells on one line so long error messages cannot squeeze adjacent columns into vertical text; narrow screens scroll horizontally inside the table.
 
 - fix: |Frontend| Route read/unread, star, move, and delete through the shared API client and await provider terminal state. Keep user/admin/API-key authentication consistent across writes and polling; bound in-flight requests with cancellation and deadlines. Refresh cursor boundaries and counts after filtered mutations, remove the obsolete pagination adapter, and cover the production API path and component disposal in regression tests.

@@ -15,9 +15,8 @@ const { t, locale } = useScopedI18n('workspace')
 const { t: headerT } = useScopedI18n('views.Header')
 const {
   settings, userSettings, openSettings, showAdminPage, userJwt, jwt, auth, adminAuth, addressPassword,
-  userOauth2SessionState, userOauth2SessionClientID, unifiedApiKey,
+  userOauth2SessionState, userOauth2SessionClientID, unifiedApiKey, hasUserSession,
 } = useGlobalState()
-const hasUserSession = computed(() => Boolean(userJwt.value))
 const hasAddressSession = computed(() => Boolean(jwt.value))
 const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value || Boolean(unifiedApiKey.value))
 const canUseDomainMailbox = computed(() => Boolean(userSettings.value.is_admin || adminAuth.value || (unifiedApiKey.value && !hasUserSession.value)))

@@ -36,7 +36,7 @@ import AdminSendMail from './admin/SendMail.vue'
 import UnknownSendMail from './admin/UnknownSendMail.vue'
 
 const {
-  adminAuth, showAdminAuth, adminTab, loading,
+  adminAuth, adminTab, loading,
   showAdminPage, adminLoginMode, userSettings,
   openSettings, userJwt
 } = useGlobalState()

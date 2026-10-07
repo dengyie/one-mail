@@ -91,3 +91,23 @@ describe('external mailbox provider form contract', () => {
         expect(view).toContain("proxy_policy: 'auto'")
     })
 })
+
+describe('external mailbox signed-out state', () => {
+    // 回归：匿名访客曾看到一张永远空白的表，并据此误判"邮箱丢了"。
+    it('renders an explicit sign-in prompt instead of an empty table', () => {
+        expect(view).toContain('const isAnonymous = computed(() => !userJwt.value)')
+        expect(view).toContain("v-if=\"isAnonymous\"")
+        expect(view).toContain("v-else class=\"space-y-4\"")
+        expect(view).toContain("t('sessionRequired')")
+        expect(view).toContain("t('sessionRequiredAction')")
+        expect(view).toContain('goToLogin')
+    })
+
+    it('hides the connect action while signed out, since it would only 401', () => {
+        expect(view).toContain('v-if="!isAnonymous" @click="showModal = true"')
+    })
+
+    it('still lets the fetch guard stand rather than deciding from the view', () => {
+        expect(view).toContain('if (userJwt.value) await fetchData()')
+    })
+})

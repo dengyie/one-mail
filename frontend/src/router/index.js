@@ -14,8 +14,9 @@ import {
     resolveMailboxRedirect,
     resolveSupportedLocale,
 } from '../i18n/utils'
+import { resolveSessionRedirect } from './session_guard'
 
-const { jwt, preferredLocale } = useGlobalState()
+const { jwt, preferredLocale, hasUserSession } = useGlobalState()
 
 const router = createRouter({
     history: createWebHistory(),
@@ -89,18 +90,34 @@ const router = createRouter({
             component: User
         },
         {
+            // meta.requiresSession = 该页面的唯一鉴权主体是用户会话（x-user-token），
+            // 无会话时必须拦回登录页，否则匿名访客会看到未受保护的渲染结果
+            //（历史上 /user/* 就是因为漏了它才出现"空表格"误判）。
+            //
+            // 判据不是"需要登录"，而是"只调 /user_api/*"：该前缀在
+            // worker.ts 的鉴权中间件里只认 x-user-token，地址会话(jwt)、
+            // 管理密码(adminAuth)、API-Key(unifiedApiKey) 通不过。
+            // 因此以下路由**故意不声明**它——它们的鉴权主体另有其人：
+            //   /sendmail、/webhook  → /api/*，走地址 bearer（AppSidebar 也按
+            //                             hasAddressSession 决定是否展示入口）
+            //   /telegram_mail       → /telegram/get_mail，走 Telegram initData，
+            //                             深链用户不可能持有 userJwt
+            // 接线见 beforeEach 末尾的 resolveSessionRedirect。
             path: '/user/addresses',
             alias: '/:lang/user/addresses',
+            meta: { requiresSession: true },
             component: () => import('../views/user/AddressManagement.vue')
         },
         {
             path: '/user/external-accounts',
             alias: '/:lang/user/external-accounts',
+            meta: { requiresSession: true },
             component: () => import('../views/user/UserMailAccounts.vue')
         },
         {
             path: '/user/settings',
             alias: '/:lang/user/settings',
+            meta: { requiresSession: true },
             component: () => import('../views/user/UserSettings.vue')
         },
         {
@@ -246,6 +263,22 @@ router.beforeEach((to, from, next) => {
 
     if (routeLocale === DEFAULT_LOCALE) {
         return next(replaceLocaleInFullPath(to.fullPath, DEFAULT_LOCALE))
+    }
+
+    // 登录态守卫必须放在最后：上面各段会因locale 规范化多次 next(...) 提前
+    // return 并重新触发导航，放前面会在规范化过程中产生一次多余跳转。
+    // 放在这里意味着守卫只对"已规范化的最终路径"生效一次。
+    // 只有显式声明 meta.requiresSession 的路由会被拦；未声明的一律放行，
+    // 因为它们各自已有正确的鉴权落点（就地鉴权 UI，或非用户会话的鉴权主体）——
+    // 详见 /user/addresses 上方的约定注释。
+    const sessionGuard = resolveSessionRedirect({
+        fullPath: to.fullPath,
+        locale: resolvedLocale,
+        requiresSession: to.meta.requiresSession === true,
+        hasUserSession: hasUserSession.value,
+    })
+    if (sessionGuard.kind === 'redirect') {
+        return next(sessionGuard.to)
     }
 
     next()
