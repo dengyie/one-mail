@@ -2,6 +2,8 @@
 
 状态：P0 遥测 + P1 空 map 行为等价联邦已落地（SHARD_MAP 为空时生产路径不变）。P2 账号 B 已部署 SHARD_MODE Worker（未切流，主 KV 的 SHARD_MAP 仍空）。P3 本地迁移工具、无损 archival ingest、分流与回归已完成；用户确认 UTC 00:00 后两个远程只读生产预检均通过，第二次请求消耗 `rows_read=99`、`rows_written=0`，无 code 7500。生产仍未复制、未写 map、未切流、未删除源邮件。
 日期：2026-10-05
+
+2026-10-08 预备更新：账号 B 分片已更新到当前 main 源码并补齐 `attachment_gc` / `mail_account_lifecycle`；健康鉴权与 archival 输入校验通过，目标邮件仍为 0，未切流。首批建议迁移 3,647 封外部邮件，详见 `docs/superpowers/plans/2026-10-08-shard1-load-distribution.md`；维护窗口待确认。迁移对账现使用 received_at/id 复合游标及目标主键批量查验，避免按 UUID 反复排序扫描整个邮箱。
 前置：PR #66（探测式刷新 + 30s 下限）已上线——本方案的所有预算估算以它为基线。
 
 ## 1. 背景与目标

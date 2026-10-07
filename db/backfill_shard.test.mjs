@@ -69,6 +69,35 @@ function harness(sourceRows = []) {
 async function prepared(rows) { const h = harness(rows); await h.run('copy'); await h.run('verify'); return h; }
 const deletions = h => h.source.calls.filter(c => c.sql.startsWith('DELETE'));
 
+test('verification uses indexed source keysets and bounded target ID lookups', async () => {
+    const h = harness(Array.from({ length: 40 }, (_, i) => email(`id-${40 - i}`, i)));
+    h.source.sqlite.exec('CREATE INDEX account_received_idx ON emails(account_id, received_at DESC)');
+    await h.run('copy');
+    h.source.calls.length = 0;
+    h.target.calls.length = 0;
+    const result = await h.run('verify', { chunkSize: 5 });
+    assert.equal(result.sourceCount, 40);
+    const pages = h.source.calls.filter(call => call.sql.includes('FROM emails'));
+    for (const call of pages.slice(1)) {
+        const plan = h.source.sqlite.prepare(`EXPLAIN QUERY PLAN ${call.sql}`).all(...call.params);
+        assert.ok(plan.some(row => /account_received_idx.*received_at>/.test(row.detail)), JSON.stringify(plan));
+    }
+    const targetPages = h.target.calls.filter(call => call.sql.includes('FROM emails') && !call.sql.includes('COUNT(*)'));
+    assert.equal(targetPages.length, 8);
+    assert.ok(targetPages.every(call => call.sql.includes('WHERE id IN (') && call.params.length === 5));
+});
+
+test('verification allows target extras but rejects changed source timestamps', async () => {
+    const h = await prepared([email('a', 10), email('b', 20)]);
+    h.target.put(email('extra-before', 1));
+    h.target.put(email('extra-after', 100));
+    const result = await h.run('verify');
+    assert.equal(result.sourceCount, 2);
+    assert.equal(result.targetCount, 4);
+    h.target.sqlite.exec("UPDATE emails SET received_at = 99 WHERE id = 'a'");
+    await assert.rejects(h.run('verify'), /Verification failed/);
+});
+
 test('composite received_at,id cursor preserves equal timestamps, zero/negative dates and every column', async () => {
     const originals = [email('a', -1), email('b', 0), email('c'), email('d'), email('e')];
     const h = harness(originals);
