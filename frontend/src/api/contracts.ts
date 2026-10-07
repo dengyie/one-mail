@@ -36,6 +36,8 @@ export interface UnifiedListResponse {
   next_cursor?: string | null
   has_more?: boolean
   degraded?: string[]
+  incomplete?: boolean
+  unavailable_mailbox_ids?: string[]
 }
 
 export interface RequestOptions {

@@ -11,6 +11,22 @@ describe('unified inbox isolation and lifecycle', () => {
     expect(host.querySelectorAll('.inbox-message')).toHaveLength(1)
     expect(host.textContent).toContain('shard-b')
   })
+  it('retains the displayed boundary during partial refresh, deduplicates, then replaces on recovery', async () => {
+    ctx.api.unified.listEmails.mockResolvedValueOnce({ results: [email('old', 'Previously loaded')], count: 2, next_cursor: 'next', has_more: true })
+    const { host } = await mount(UnifiedInbox)
+    ctx.api.unified.listEmails.mockResolvedValue({ results: [email('healthy', 'Healthy shard')], count: null, incomplete: true, degraded: ['shard-b'], next_cursor: null, has_more: true })
+    host.querySelector('button[aria-label="Refresh mail"]').click(); await flush()
+    expect(host.textContent).toContain('Previously loaded')
+    expect(host.textContent).toContain('Healthy shard')
+    host.querySelector('button[aria-label="Refresh mail"]').click(); await flush()
+    expect(host.querySelectorAll('.inbox-message')).toHaveLength(2)
+    expect(host.querySelector('button[aria-label="Next page"]').disabled).toBe(true)
+    ctx.api.unified.listEmails.mockResolvedValue({ results: [email('recovered', 'Recovered boundary')], count: 1, incomplete: false, next_cursor: null, has_more: false })
+    host.querySelector('button[aria-label="Refresh mail"]').click(); await flush()
+    expect(host.textContent).not.toContain('Previously loaded')
+    expect(host.textContent).toContain('Recovered boundary')
+    expect(ctx.api.unified.listEmails.mock.calls.at(-1)[0].cursor).toBeUndefined()
+  })
   it('invalidates data when an attached admin credential is removed', async () => {
     ctx.state.adminAuth.value = 'admin-a'
     const { host } = await mount(UnifiedInbox)

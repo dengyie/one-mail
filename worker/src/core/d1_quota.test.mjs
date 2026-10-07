@@ -96,9 +96,9 @@ test("utcDateOf is always the UTC calendar day", () => {
     assert.equal(d1QuotaKvKey("2026-10-04"), "one-mail:d1quota:2026-10-04");
 });
 
-test("metaDelta treats missing and negative meta as zero", () => {
+test("metaDelta keeps numeric shape while invalid meta is excluded and flagged", () => {
     assert.deepEqual(metaDelta(undefined), { rows_read: 0, rows_written: 0 });
-    assert.deepEqual(metaDelta({ rows_read: 12.9, rows_written: -3 }), { rows_read: 12, rows_written: 0 });
+    assert.deepEqual(metaDelta({ rows_read: 12.9, rows_written: -3 }), { rows_read: 0, rows_written: 0 });
 });
 
 test("percentOf clamps to 0..100 at one decimal", () => {
@@ -181,7 +181,7 @@ test("wrapD1 batch unwraps statements and sums each result meta", async () => {
     assert.deepEqual(peekD1QuotaPendingForTests(), { rows_read: 5, rows_written: 5 });
 });
 
-test("flush is skipped when another isolate wrote within the 2 minute window", async () => {
+test("flush is skipped when another isolate wrote within the five minute window", async () => {
     const t0 = Date.UTC(2026, 9, 4, 12, 0, 0);
     resetD1QuotaStateForTests(makeClock(t0));
     const kv = makeKv();
@@ -361,7 +361,7 @@ test("successful-write throttle spans midnight even if today's KV key is missing
     assert.equal(kv.puts.length, 2);
 });
 
-test("force obeys both observed remote throttle and local 120s throttle under stale KV", async () => {
+test("force obeys both observed remote throttle and local 300s throttle under stale KV", async () => {
     const t0 = Date.UTC(2026, 9, 4, 12);
     const clock = makeClock(t0);
     resetD1QuotaStateForTests(clock);
@@ -379,7 +379,7 @@ test("force obeys both observed remote throttle and local 120s throttle under st
     assert.equal(kv.gets.length, 2, "no read after successful put");
     recordD1Quota({ rows_read: 10, rows_written: 2 });
     first.rows_read = 0; // Returned snapshots cannot mutate the local cache.
-    for (const elapsed of [0, 30_000, 60_000, 29_999]) {
+    for (const elapsed of [0, 30_000, 60_000, D1_QUOTA_FLUSH_INTERVAL_MS - 90_001]) {
         clock.advance(elapsed);
         assert.equal((await flushD1Quota(env, { force: true })).rows_read, 150);
         assert.equal(kv.puts.length, 1);
@@ -576,7 +576,7 @@ test("maybeFlush uses 30s attempt throttle and schedules failures for entrypoint
     assert.equal(kv.puts.length, 2);
 });
 
-test("single-isolate force calls cannot exceed 720 successful writes in one UTC day", async () => {
+test("single-isolate force calls cannot exceed 288 successful writes in one UTC day", async () => {
     const clock = makeClock(Date.UTC(2026, 9, 4));
     resetD1QuotaStateForTests(clock);
     const kv = makeKv();
@@ -586,11 +586,11 @@ test("single-isolate force calls cannot exceed 720 successful writes in one UTC 
         await flushD1Quota({ KV: kv }, { force: true });
         clock.advance(30_000);
     }
-    assert.equal(kv.puts.length, 720);
+    assert.equal(kv.puts.length, 288);
     const last = JSON.parse(kv.puts.at(-1).value);
-    assert.equal(last.flush_count, 720);
-    assert.equal(last.rows_read, 2_877);
-    assert.deepEqual(peekD1QuotaPendingForTests("2026-10-04"), { rows_read: 3, rows_written: 3 });
+    assert.equal(last.flush_count, 288);
+    assert.equal(last.rows_read, 2_871);
+    assert.deepEqual(peekD1QuotaPendingForTests("2026-10-04"), { rows_read: 9, rows_written: 9 });
 });
 
 test("view started before a commit reconciles stale KV with the successful local write", async () => {
@@ -702,6 +702,85 @@ test("missing KV keeps dated pending and reports unavailable aggregation", async
         pending_unflushed: { rows_read: 7, rows_written: 1 },
         flushed_at: null, flush_count: 0,
         aggregation_mode: "unavailable",
+        confidence: "partial",
+        accounting_issues: ["UNAVAILABLE"],
     });
     assert.deepEqual(peekD1QuotaPendingForTests("2026-10-04"), { rows_read: 50, rows_written: 2 });
+});
+
+
+test("D0 quota publication replaces 120 seconds with a five minute budget", () => {
+    assert.equal(D1_QUOTA_FLUSH_INTERVAL_MS, 300_000);
+});
+
+test("expired coordinator backlog reports loss once then permits current-day flush", async () => {
+    const clock = makeClock(Date.UTC(2026, 9, 1, 12));
+    resetD1QuotaStateForTests(clock);
+    recordD1Quota({ rows_read: 100, rows_written: 2 });
+    clock.advance(4 * 86400000);
+    recordD1Quota({ rows_read: 3, rows_written: 1 });
+    const requests = [];
+    const coordinator = { getByName() { return { async fetch(url, init) {
+        if (!init) return Response.json({ snapshot: snapshot(clock.now(), { rows_read: 3, rows_written: 1 }) });
+        const body = JSON.parse(init.body); requests.push(body);
+        if (body.utc_date === "2026-10-01") return Response.json({ error_code: "QUOTA_DELTA_EXPIRED" }, { status: 410 });
+        return Response.json({ snapshot: snapshot(clock.now(), { rows_read: body.rows_read, rows_written: body.rows_written }) });
+    } }; } };
+    const env = { D1_QUOTA_COORDINATOR: coordinator };
+    await assert.rejects(flushD1Quota(env), error => error instanceof QuotaTelemetryError);
+    const current = await flushD1Quota(env);
+    assert.equal(current.rows_read, 3);
+    assert.deepEqual(requests.map(body => body.utc_date), ["2026-10-01", "2026-10-05"]);
+    const view = await viewD1Quota(env);
+    assert.equal(view.confidence, "partial");
+    assert.ok(view.accounting_issues.includes("EXPIRED_DELTA"));
+});
+
+test("unknown and malformed D1 meta remain visible as incomplete accounting", async () => {
+    resetD1QuotaStateForTests(makeClock(Date.UTC(2026, 9, 4, 12)));
+    const db = wrapD1({ prepare: () => makeStmt({ meta: { rows_read: Number.MAX_SAFE_INTEGER + 1, rows_written: -1 } }) });
+    await db.prepare("SQL").run();
+    const view = await viewD1Quota({ KV: makeKv() });
+    assert.equal(view.confidence, "partial");
+    assert.ok(view.accounting_issues.includes("INVALID_META"));
+    assert.deepEqual(view.pending_unflushed, { rows_read: 0, rows_written: 0 });
+});
+
+test("missing KV snapshot is distinguishable from observed zero", async () => {
+    resetD1QuotaStateForTests(makeClock(Date.UTC(2026, 9, 4, 12)));
+    const view = await viewD1Quota({ KV: makeKv() });
+    assert.equal(view.confidence, "partial");
+    assert.ok(view.accounting_issues.includes("MISSING_SNAPSHOT"));
+});
+
+test("generic HTTP 410 does not discard a batch without the expiry error code", async () => {
+    resetD1QuotaStateForTests(makeClock(Date.UTC(2026, 9, 4, 12)));
+    recordD1Quota({ rows_read: 8, rows_written: 2 });
+    const env = { D1_QUOTA_COORDINATOR: { getByName() { return { async fetch() {
+        return Response.json({ error_code: "ENDPOINT_RETIRED" }, { status: 410 });
+    } }; } } };
+    await assert.rejects(flushD1Quota(env), error => error instanceof QuotaTelemetryError && error.status === undefined);
+    assert.deepEqual(peekD1QuotaPendingForTests(), { rows_read: 8, rows_written: 2 });
+});
+
+test("invalid coordinator acknowledgement retains the same batch for retry", async () => {
+    const now = Date.UTC(2026, 9, 4, 12);
+    resetD1QuotaStateForTests(makeClock(now));
+    recordD1Quota({ rows_read: 8, rows_written: 2 });
+    const ids = [];
+    const env = { D1_QUOTA_COORDINATOR: { getByName() { return { async fetch(url, init) {
+        ids.push(JSON.parse(init.body).delta_id);
+        const rows_read = ids.length === 1 ? Number.MAX_SAFE_INTEGER + 1 : 8;
+        return Response.json({ snapshot: snapshot(now, { rows_read }) });
+    } }; } } };
+    await assert.rejects(flushD1Quota(env), error => error instanceof QuotaTelemetryError);
+    assert.deepEqual(peekD1QuotaPendingForTests(), { rows_read: 8, rows_written: 2 });
+    assert.equal((await flushD1Quota(env)).rows_read, 8);
+    assert.equal(ids[0], ids[1]);
+});
+
+test("counter addition refuses overflow without partially changing either field", () => {
+    const target = { rows_read: 1, rows_written: Number.MAX_SAFE_INTEGER };
+    assert.throws(() => addQuotaDelta(target, { rows_read: 1, rows_written: 1 }), RangeError);
+    assert.deepEqual(target, { rows_read: 1, rows_written: Number.MAX_SAFE_INTEGER });
 });

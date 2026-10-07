@@ -34,6 +34,26 @@ test("mergeSortedEmailPages offset slices after the merged stream", () => {
     assert.deepEqual(mergeSortedEmailPages([], 5), []);
 });
 
+test("12-shard heap merge matches the complete order with ties and offset without touching every head per row", () => {
+    let timestampReads = 0;
+    const pages = Array.from({ length: 12 }, (_, page) => Array.from({ length: 80 }, (_, item) => ({
+        id: `${String(80 - item).padStart(3, "0")}-${String(page).padStart(2, "0")}`,
+        get received_at() { timestampReads++; return 100 - item; },
+    })));
+    const expected = pages.flat().sort(compareEmailOrder).slice(300, 350);
+    timestampReads = 0;
+    const actual = mergeSortedEmailPages(pages, 50, 300);
+    assert.deepEqual(actual, expected);
+    assert.ok(timestampReads < 6_000, `merge read timestamp ${timestampReads} times`);
+});
+
+test("identical sort keys retain page order and input pages are unchanged", () => {
+    const pages = [[{ ...row("a", 100), source: "first" }], [], [{ ...row("a", 100), source: "third" }]];
+    const original = structuredClone(pages);
+    assert.deepEqual(mergeSortedEmailPages(pages, 10).map((item) => item.source), ["first", "third"]);
+    assert.deepEqual(pages, original);
+});
+
 test("mergeCounts sums finite numbers and stays null when every shard skipped count", () => {
     assert.equal(mergeCounts([1, 2, 3]), 6);
     assert.equal(mergeCounts([null, 4, undefined]), 4);

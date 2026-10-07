@@ -1,6 +1,8 @@
 # one-mail D1 动态分片与百人服务开发规范
 
-> 状态：设计草案，供后续开发与验收；不是已上线能力。版本：0.1，日期：2026-10-08。
+> 状态：分阶段实现中；目标协议仍待完整验收，不是已上线能力。版本：0.2，日期：2026-10-08。
+>
+> 开发进度：观测采集、配额清理、registry 核心与 observe HTTP 接口、查询有界化已落盘。自动分配、所有写者的事务级 gate、受控迁移和百人灰度尚未完成；运行时只接受 legacy-static / observe。详见[实现检查点与验证记录](d1-fleet-implementation.md)。
 >
 > 规划口径：保留现有 2 个 Cloudflare 账户，再接入 10 个新账户，最多 12 个账户；每个账户第一阶段配置 1 个 D1。账户数是可配置的容量上限，不要求一次启用全部账户，不代表已经创建或验证这些账户。
 >
@@ -17,7 +19,7 @@
 3. [首批分片迁移准备（PR #92 分支）](https://github.com/dengyie/one-mail/blob/ops/shard1-load-distribution/docs/superpowers/plans/2026-10-08-shard1-load-distribution.md)：试迁前检查、配额预算与维护窗口；该文件尚未进入本文的 main 基线。
 4. [PR #92](https://github.com/dengyie/one-mail/pull/92)：迁移验证分页优化；截至本文基准尚未合并，动态迁移开发依赖其合入或等价修复，不能假设 main 已包含。
 
-代码阅读基线为 main 的 29f3c17。分片 B 的准备版本和线上邮件数据来自 2026-10-08 已记录的核验；本文没有重新扫描生产邮件。
+规格创建时的代码阅读基线为 main 的 29f3c17；实现分支基于更新后的 84066cb。下表记录规格创建时的现状，最新实现差异见实现检查点。分片 B 的准备版本和线上邮件数据来自 2026-10-08 已记录的核验；本文没有重新扫描生产邮件。
 
 | 模块 | 当前代码依据 | 当前行为与扩展缺口 |
 | --- | --- | --- |
@@ -210,7 +212,7 @@ FleetRegistry DO 是拟建控制面，负责低频分配、状态转换和预算
 
 ### 5.2 类型字段
 
-以下为开发合同，不是已经存在的 TypeScript 导出。跨语言 JSON 字段使用 snake_case；容量/计量为安全整数，超过 Number.MAX_SAFE_INTEGER 拒绝解析并报计量溢出；代次是十进制字符串，在服务端按整数比较。所有 API 时间用 UTC ISO-8601；既有邮件时间字段按原合同保留，迁移不改时间基准。
+以下为目标开发合同，当前已落盘的严格类型以 worker/src/fleet/contracts.ts 与实现检查点为准；表中迁移实体尚未接入运行时。跨语言 JSON 字段使用 snake_case；容量/计量为安全整数，超过 Number.MAX_SAFE_INTEGER 拒绝解析并报计量溢出；代次是十进制字符串，在服务端按整数比较。所有 API 时间用 UTC ISO-8601；既有邮件时间字段按原合同保留，迁移不改时间基准。
 
 | 实体 | 必需字段 |
 | --- | --- |
@@ -226,7 +228,7 @@ Shard.state 为 prepared/healthy/draining/degraded/exhausted/disabled。MailboxR
 
 credential_ref 仅由可信服务解析；浏览器、公共接口和 KV 路由快照均不得出现真实 token。现有 v1 中随端点存放的 token 在迁入 v2 时转存服务端私有凭据仓，不在新旧两处长期保存。
 
-路由公共字段的 TypeScript 合同如下，可放入拟建 worker/src/fleet/contracts.ts；仅表达数据边界，不引入框架依赖：
+路由公共字段的 TypeScript 目标合同如下；当前 contracts.ts 的分配返回值还区分 pending 与已确认 route，避免把预算预订误当成可同步状态。合同仅表达数据边界，不引入框架依赖：
 
 ~~~typescript
 export type Epoch = string;
@@ -580,7 +582,7 @@ Time Travel 恢复后先隔离该库，核验 route epoch、删除 tombstone、�
 
 ## 12. 开发阶段与文件责任
 
-新增路径是拟建文件，不能据此认定已存在。每阶段独立评审、测试、灰度；下一阶段不得越过前一阶段安全门槛。
+下表是完整开发责任清单；路径是否已实现、是否接入运行时以[实现检查点](d1-fleet-implementation.md)为准。每阶段独立评审、测试、灰度；下一阶段不得越过前一阶段安全门槛。
 
 | 阶段 | 文件与责任 | 可交付行为 | 放行条件 |
 | --- | --- | --- | --- |
@@ -625,7 +627,7 @@ D1/D3改变协议，先发布只支持识别但默认关闭的schema与客户端
 
 ### 13.2 验证命令与环境
 
-以下是后续实现阶段应运行的命令；本文仅改文档，不声称已执行整套应用测试。复用现有依赖环境，安装或下载大于10MB的单个软件包需按工作区规则另行处理。
+以下是实现阶段的验证命令；已经执行的命令、结果与尚未验收项记录在实现检查点。复用现有依赖环境，安装或下载大于10MB的单个软件包需按工作区规则另行处理。
 
 ~~~bash
 pnpm --filter @one-mail/shared build
@@ -638,7 +640,7 @@ pnpm --filter @one-mail/frontend test
 pnpm --filter @one-mail/frontend build
 ~~~
 
-Worker完整测试以 .github/workflows/deploy.yml 的递归发现为准；新建fleet子目录后须确认package script包含全部新测试，不能因shell glob遗漏而报告全绿。聚合器在已安装项目依赖的Python环境中，于aggregator目录运行 python -m pytest。E2E复用e2e目录的Docker/Playwright配置，新增fleet拓扑必须在本地/测试数据上运行；现有 pnpm --dir e2e test 不能被误称为已覆盖12分片。
+Worker package script 已改为 Node test runner 自动递归发现，与 CI 的 src 递归清单核对，包含 fleet、根目录 scheduled 和 cors 测试。聚合器在已安装项目依赖的Python环境中，于aggregator目录运行 python -m pytest。E2E复用e2e目录的Docker/Playwright配置，新增fleet拓扑必须在本地/测试数据上运行；现有 pnpm --dir e2e test 不能被误称为已覆盖12分片。
 
 ### 13.3 百人验收数据集与门槛
 

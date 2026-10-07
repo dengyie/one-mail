@@ -4,6 +4,8 @@ import { registerHooks } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import ts from "typescript";
 import { DatabaseSync } from "node:sqlite";
+import { Buffer } from "node:buffer";
+import { setImmediate } from "node:timers";
 
 // Exercise real routes without external auth/settings/providers. Extensionless
 // imports are resolved like the Worker bundler; only unrelated boundaries stub.
@@ -87,6 +89,11 @@ async function withFetch(impl, run) {
 }
 const headers = { "x-user-token": "verified-at-test-boundary" };
 
+const applyRoute = (path, init) => {
+    const { app, env } = gateway(db());
+    return app.request(`https://gateway.invalid${path.replace("/shard/", "/api/unified/")}`, { ...init, headers }, env);
+};
+
 test("remote single-row reads, mutations and status carry fail-closed ownership scope", async () => {
     const seen = [];
     await withFetch(async (_url, init) => {
@@ -96,7 +103,7 @@ test("remote single-row reads, mutations and status carry fail-closed ownership 
         return Response.json({ error: "forbidden" }, { status: 403 });
     }, async () => {
         for (const [path, init] of [["/shard/emails/other", {}], ["/shard/emails/other/read", { method: "POST" }], ["/shard/mutations/other", {}]]) {
-            const response = init.method ? await federation.fanOutApply(context(), map, path, init) : await federation.fanOutGet(context(), map, path);
+            const response = init.method ? await applyRoute(path, init) : await federation.fanOutGet(context(), map, path);
             assert.equal(response.status, 403);
         }
     });
@@ -123,11 +130,13 @@ test("readonly source and account scope reaches list and every extra endpoint", 
     }
 });
 
-test("unrestricted readonly accounts remain unrestricted, not silently empty", async () => {
+test("unrestricted readonly accounts read every active owner but not orphan shard copies", async () => {
+    let accountIds;
     await withFetch(async (_url, init) => {
-        assert.equal(JSON.parse(init.body).account_ids, null);
+        accountIds = JSON.parse(init.body).account_ids;
         return Response.json({ results: [], count: 0 });
     }, () => federation.federatedListEmails(context({ ...readonly, allowed_accounts: null }), map, { rest: {}, limit: 1, withCount: false }));
+    assert.deepEqual(accountIds, ["mine", "other"]);
 });
 
 test("negative limit and invalid/deep offsets reject before DB/fetch", async () => {
@@ -154,7 +163,7 @@ test("global remote exclusion uses one binding even for thousands of accounts", 
 
 test("remote unsupported response survives; network and 5xx are not false misses", async () => {
     for (const status of [400, 403, 409]) await withFetch(async () => Response.json({ error: "provider mutation unsupported", status: "unsupported" }, { status }), async () => {
-        const response = await federation.fanOutApply(context(), map, "/shard/emails/id", { method: "DELETE" });
+        const response = await applyRoute("/shard/emails/id", { method: "DELETE" });
         assert.equal(response.status, status);
         assert.equal((await response.json()).status, "unsupported");
     });
@@ -171,6 +180,8 @@ test("degraded pagination exposes incomplete results without count or cursor adv
         const body = await (await federation.federatedListEmails(context(null, { rows: [{ id: "a", received_at: 100 }], owned: ["mine2"] }), registry, { rest: {}, limit: 1, withCount: true })).json();
         assert.equal(body.count, null);
         assert.equal(body.next_cursor, null);
+        assert.equal(body.incomplete, true);
+        assert.deepEqual(body.unavailable_mailbox_ids, ["mine2"]);
         assert.equal(body.has_more, true);
         assert.deepEqual(body.degraded, ["s2"]);
     });
@@ -406,7 +417,7 @@ test("main+shard SQLite topology merges lists/cursors/counts/codes and excludes 
 });
 
 for (const [action, method, body, operation, desired] of mutationCases) {
-    test(`main+shard SQLite ${action || "delete"} queues only on owning shard without a locator request`, async () => {
+    test(`main+shard SQLite ${action || "delete"} locates then queues only on the owning shard`, async () => {
         const t = await topology();
         try {
             await withFetch(t.fetchRemote, async () => {
@@ -574,5 +585,230 @@ test("offset with_count=0 retains legacy null count, cursor keeps zero", async (
             const response = await federation.federatedListEmails(context(), map, { rest: {}, limit: 1, offset, withCount: false });
             assert.equal((await response.json()).count, expected);
         }
+    });
+});
+
+const fleetMap = {
+    v: 1,
+    shards: Array.from({ length: 12 }, (_, index) => ({ id: `s${index}`, base_url: `https://s${index}.invalid`, token: "t".repeat(32) })),
+    accounts: Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`mail${index}`, `s${index}`])),
+};
+const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
+
+test("twelve-shard list has at most four active fetches and preserves global tie order", async () => {
+    const pending = [];
+    let active = 0, peak = 0;
+    await withFetch(async (url) => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => pending.push(resolve));
+        active--;
+        return Response.json({ results: [{ id: new URL(url).host, received_at: 100 }], count: 1 });
+    }, async () => {
+        const result = federation.federatedListEmails(context(null, { owned: Object.keys(fleetMap.accounts) }), fleetMap, { rest: {}, limit: 12, withCount: true });
+        await nextTurn();
+        const firstWave = pending.length;
+        while (pending.length) {
+            pending.splice(0).forEach(resolve => resolve());
+            await nextTurn();
+        }
+        const body = await (await result).json();
+        assert.equal(firstWave, 4);
+        assert.equal(peak, 4);
+        assert.equal(body.count, 12);
+        assert.deepEqual(body.results.map(row => row.id), fleetMap.shards.map(shard => new URL(shard.base_url).host).sort().reverse());
+    });
+});
+
+test("cancelled gateway requests do not start shard reads", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const c = context(null, { owned: Object.keys(fleetMap.accounts) });
+    c.req.raw = new Request("https://gateway.invalid/emails", { signal: controller.signal });
+    let calls = 0;
+    await withFetch(async () => { calls++; return Response.json({ results: [], count: 0 }); }, async () => {
+        const result = await (await federation.federatedListEmails(c, fleetMap, { rest: {}, limit: 10, withCount: true })).json();
+        assert.equal(calls, 0);
+        assert.equal(result.incomplete, true);
+        assert.equal(result.next_cursor, null);
+        assert.equal(result.unavailable_mailbox_ids.length, 12);
+    });
+});
+
+test("after a partial page the same cursor recovers missing higher-ranked mail", async () => {
+    const c = () => context(null, { owned: ["mail0", "mail1"] });
+    let outage = true;
+    await withFetch(async (url) => {
+        if (new URL(url).host === "s1.invalid") return outage ? new Response("offline", { status: 503 }) : Response.json({ results: [{ id: "newer", received_at: 200 }], count: 1 });
+        return Response.json({ results: [{ id: "older", received_at: 100 }], count: 1 });
+    }, async () => {
+        const input = { rest: {}, limit: 1, withCount: true };
+        const partial = await (await federation.federatedListEmails(c(), fleetMap, input)).json();
+        assert.equal(partial.incomplete, true);
+        assert.equal(partial.next_cursor, null);
+        assert.deepEqual(partial.results.map(row => row.id), ["older"]);
+        outage = false;
+        const recovered = await (await federation.federatedListEmails(c(), fleetMap, input)).json();
+        assert.equal(recovered.incomplete, false);
+        assert.deepEqual(recovered.results.map(row => row.id), ["newer"]);
+        assert.equal(typeof recovered.next_cursor, "string");
+        assert.equal(recovered.count, 2);
+    });
+});
+
+test("legacy deep offsets use bounded remote pages without skipping the dominant shard", async () => {
+    const rows = Array.from({ length: 700 }, (_, index) => ({ id: `id${String(index).padStart(4, "0")}`, received_at: 1000 - index }));
+    const requests = [];
+    await withFetch(async (_url, init) => {
+        const query = JSON.parse(init.body);
+        requests.push(query);
+        const cursor = query.cursor ? JSON.parse(Buffer.from(query.cursor, "base64url").toString()) : null;
+        const after = cursor ? rows.filter(row => row.received_at < cursor.sortKey) : rows;
+        const page = after.slice(0, query.limit);
+        const last = page.at(-1);
+        return Response.json({ results: page, count: query.with_count ? rows.length : 0, has_more: after.length > page.length,
+            next_cursor: after.length > page.length ? Buffer.from(JSON.stringify({ v: 1, sortKey: last.received_at, id: last.id })).toString("base64url") : null });
+    }, async () => {
+        const result = await (await federation.federatedListEmails(context(), map, { rest: {}, offset: 500, limit: 100, withCount: false })).json();
+        assert.deepEqual(result.results, rows.slice(500, 600));
+        assert.ok(requests.every(query => query.limit <= 100));
+        assert.equal(requests.length, 6);
+        assert.ok(requests.every(query => query.offset === undefined));
+    });
+});
+
+test("oversized list and malformed order cannot advance the pagination boundary", async () => {
+    const responses = [
+        { results: [{ id: "large", received_at: 1, subject: "x".repeat(512 * 1024) }], count: 1 },
+        { results: [{ id: "older", received_at: 1 }, { id: "newer", received_at: 2 }], count: 2 },
+        { results: [{ id: "same", received_at: 1 }, { id: "same", received_at: 1 }], count: 2 },
+    ];
+    for (const response of responses) await withFetch(async () => Response.json(response), async () => {
+        const body = await (await federation.federatedListEmails(context(), map, { rest: {}, limit: 10, withCount: true })).json();
+        assert.equal(body.incomplete, true);
+        assert.equal(body.count, null);
+        assert.equal(body.next_cursor, null);
+        assert.deepEqual(body.unavailable_mailbox_ids, ["mine"]);
+        assert.deepEqual(body.results, []);
+    });
+});
+
+test("all lookup and extra endpoint fanouts respect four active shards", async () => {
+    for (const endpoint of [
+        (c, registry) => federation.fanOutGet(c, registry, "/shard/emails/missing"),
+        federation.federatedStats, federation.federatedCount, federation.federatedMeta,
+    ]) {
+        const pending = [];
+        let active = 0, peak = 0;
+        await withFetch(async (url) => {
+            active++; peak = Math.max(peak, active);
+            await new Promise(resolve => pending.push(resolve)); active--;
+            return new URL(url).pathname.includes("emails")
+                ? Response.json({ error: "not found" }, { status: 404 })
+                : Response.json({ count: 1, unread: 0, sources: [], accounts: [], to_addrs: [] });
+        }, async () => {
+            const task = endpoint(context(null, { owned: Object.keys(fleetMap.accounts) }), fleetMap);
+            await nextTurn();
+            while (pending.length) { pending.splice(0).forEach(resolve => resolve()); await nextTurn(); }
+            await task;
+            assert.equal(peak, 4);
+        });
+    }
+});
+
+for (const [orphanAccount, expectedStatus] of [["mine", 202], ["spare", 409]]) test(
+    `duplicate id with account ${orphanAccount} returns ${expectedStatus} and never writes two owners`, async () => {
+    const t = await topology();
+    const orphan = sqliteD1();
+    try {
+        await initializeShardSchema(orphan.database);
+        orphan.sqlite.prepare(`INSERT INTO emails(id,source,account_id,from_addr,to_addr,received_at,provider,provider_message_id)
+            VALUES ('migrated','imap_gmail',?,'sender','mine@test',1,'graph','old-provider-copy')`).run(orphanAccount);
+        t.main.sqlite.exec("INSERT INTO user_mail_accounts VALUES ('spare',1)");
+        const registry = { ...map, shards: [...map.shards, { ...map.shards[0], id: "s2", base_url: "https://orphan.invalid" }],
+            accounts: { ...map.accounts, spare: "s2" } };
+        const { app, env } = gateway(t.main.database, registry);
+        const writes = [];
+        await withFetch((url, init) => {
+            if (init.method !== "GET") writes.push(new URL(url).host);
+            const DB = new URL(url).host === "orphan.invalid" ? orphan.database : t.remote.database;
+            return shardRoutes.fetch(new Request(url, init), { DB, SHARD_TOKEN: map.shards[0].token });
+        }, async () => {
+            const response = await app.request("https://gateway.invalid/api/unified/emails/migrated/read", { headers, method: "POST" }, env);
+            assert.equal(response.status, expectedStatus);
+            assert.deepEqual(writes, expectedStatus === 202 ? ["shard.invalid"] : []);
+            assert.equal(orphan.sqlite.prepare("SELECT count(*) n FROM mail_mutation_jobs").get().n, 0);
+            assert.equal(t.remote.sqlite.prepare("SELECT count(*) n FROM mail_mutation_jobs").get().n, expectedStatus === 202 ? 1 : 0);
+        });
+    } finally { orphan.sqlite.close(); t.close(); }
+});
+
+test("locator rejects a successful response for another email id before any mutation", async () => {
+    const { app, env } = gateway(db());
+    let writes = 0;
+    await withFetch(async (_url, init) => {
+        if (init.method === "GET") return Response.json({ id: "other-id", account_id: "mine", source: "imap_gmail" });
+        writes++;
+        return Response.json({ ok: true, status: "queued" }, { status: 202 });
+    }, async () => {
+        const response = await app.request("https://gateway.invalid/api/unified/emails/expected-id/read", { headers, method: "POST" }, env);
+        assert.equal(response.status, 503);
+        assert.equal(writes, 0);
+    });
+});
+
+test("locator and mutation share one deadline including time between both phases", async (t) => {
+    let now = 0;
+    t.mock.method(performance, "now", () => now);
+    const c = context();
+    c.req.param = () => "expected-id";
+    let writes = 0;
+    await withFetch(async (_url, init) => {
+        if (init.method === "GET") return Response.json({ id: "expected-id", account_id: "mine", source: "imap_gmail" });
+        writes++;
+        return Response.json({ ok: true }, { status: 202 });
+    }, async () => {
+        const owner = await federation.locateRemoteEmailOwner(c, map, "/shard/emails/expected-id");
+        assert.equal(owner.shard.id, "s1");
+        now = 3001;
+        const response = await federation.applyToShard(c, map, owner.shard, "/shard/emails/expected-id/read", { method: "POST" }, owner);
+        assert.equal(response.status, 503);
+        assert.equal(writes, 0);
+    });
+});
+
+test("locator and mutation share the retained response budget", async () => {
+    const c = context();
+    c.req.param = () => "expected-id";
+    await withFetch(async (_url, init) => init.method === "GET"
+        ? Response.json({ id: "expected-id", account_id: "mine", source: "imap_gmail", text_body: "x".repeat(4 * 1024 * 1024) })
+        : Response.json({ ok: true, provider_diagnostic: "x".repeat(5 * 1024 * 1024) }, { status: 202 }), async () => {
+        const owner = await federation.locateRemoteEmailOwner(c, map, "/shard/emails/expected-id");
+        const response = await federation.applyToShard(c, map, owner.shard, "/shard/emails/expected-id/read", { method: "POST" }, owner);
+        assert.equal(response.status, 503);
+    });
+});
+
+test("single owner mutation rechecks permissions and narrows its scope to the located mailbox", async () => {
+    const owned = ["mine", "other"];
+    const c = context(null, { owned });
+    c.req.param = () => "id";
+    const writeScopes = [];
+    await withFetch(async (_url, init) => {
+        if (init.method === "GET") return Response.json({ id: "id", account_id: "mine", source: "imap_gmail" });
+        writeScopes.push(JSON.parse(decodeURIComponent(init.headers["x-one-mail-shard-scope"])));
+        return Response.json({ ok: true }, { status: 202 });
+    }, async () => {
+        const owner = await federation.locateRemoteEmailOwner(c, map, "/shard/emails/id");
+        const result = await federation.applyToShard(c, map, owner.shard, "/shard/emails/id/read", { method: "POST" }, owner);
+        assert.equal(result.status, 202);
+        assert.deepEqual(writeScopes, [{ account_ids: ["mine"], sources: null }]);
+        owned.splice(0, 1);
+        const denied = await federation.applyToShard(c, map, owner.shard, "/shard/emails/id/read", { method: "POST" }, owner);
+        assert.equal(denied.status, 403);
+        assert.equal(writeScopes.length, 1);
+        const movedMap = { ...map, accounts: { ...map.accounts, mine: "s2" } };
+        assert.equal((await federation.applyToShard(c, movedMap, owner.shard, "/shard/emails/id/read", { method: "POST" }, owner)).status, 409);
+        assert.equal(writeScopes.length, 1);
     });
 });

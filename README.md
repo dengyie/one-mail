@@ -125,7 +125,8 @@ One-Mail 鉴于这些痛点从零开展自主设计与研发工作，并打磨�
 分片开发文档：
 
 - [当前静态分片与受控迁移](docs/unified-inbox-sharding.md)
-- [D1 动态分片与百人服务开发规范](docs/d1-dynamic-fleet.md)：设计草案，规划在现有2个账户基础上新增10个Cloudflare账户，包含动态分配、容量预算、迁移一致性与验收；不代表已上线。
+- [D1 动态分片与百人服务开发规范](docs/d1-dynamic-fleet.md)：分阶段实现中，规划在现有2个账户基础上新增10个Cloudflare账户，包含动态分配、容量预算、迁移一致性与验收；不代表已上线。
+- [Fleet 实现检查点与验证记录](docs/d1-fleet-implementation.md)：当前仅支持静态运行和独立观测，列明已交付接口、验证证据及 gate / provisioning / 迁移等后续工作。
 
 ### 1. 部署 Cloudflare Worker
 

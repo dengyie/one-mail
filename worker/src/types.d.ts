@@ -140,6 +140,11 @@ type Bindings = {
     PASSKEY_CHALLENGES: DurableObjectNamespace
     D1_QUOTA_COORDINATOR?: DurableObjectNamespace
     D1_QUOTA_KV?: KVNamespace
+    // Fleet control plane; data routing remains static until D2/D3 are enabled.
+    FLEET_MODE?: string
+    FLEET_REGISTRY?: DurableObjectNamespace
+    FLEET_READ_TOKEN?: string
+    FLEET_CONTROL_TOKEN?: string
 }
 
 type JwtPayload = {
