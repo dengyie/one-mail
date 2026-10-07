@@ -1,4 +1,5 @@
 <script setup>
+import MailIcon from '../components/ui/MailIcon.vue'
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
@@ -22,6 +23,7 @@ const {
 const router = useRouter()
 const message = useMessage()
 const { locale } = useScopedI18n('views.Header')
+const { t: w } = useScopedI18n('workspace')
 
 // 权限判定：仅限管理员使用（管理员账号/管理密码/纯 API-Key）
 const hasAccess = computed(() => Boolean(
@@ -454,7 +456,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="domain-mailbox max-w-4xl mx-auto px-4 py-6 text-left space-y-5">
+  <div class="domain-mailbox workspace-page space-y-5">
+    <div class="workspace-page-header"><div><div class="workspace-eyebrow">{{ w('workspace') }}</div><h1>{{ w('domainMailbox') }}</h1><p>{{ w('domainSubtitle') }}</p></div></div>
     <!-- 1. 凭据校验加载中状态 -->
     <div v-if="isCheckingAuth" class="p-12 text-center text-slate-500 dark:text-slate-400 space-y-3">
       <n-spin size="large" />
@@ -467,7 +470,7 @@ onBeforeUnmount(() => {
       class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12 shadow-sm space-y-4"
     >
       <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto text-2xl font-bold">
-        🚫
+        <MailIcon name="shield" :size="16" />
       </div>
       <h3 class="text-lg font-bold text-slate-900 dark:text-white">暂无管理员权限</h3>
       <p class="text-xs text-slate-500">
@@ -493,10 +496,10 @@ onBeforeUnmount(() => {
         </n-button>
         <div class="flex items-center justify-between pt-1">
           <n-button text size="small" @click="router.push(getRouterPathWithLang('/unified', locale))">
-            &larr; 返回收件箱
+            <MailIcon name="arrow-left" :size="14" /> 返回收件箱
           </n-button>
           <n-button text size="small" type="primary" @click="goToLogin">
-            切换账号登录 &rarr;
+            切换账号登录 <MailIcon name="arrow-right" :size="14" />
           </n-button>
         </div>
       </div>
@@ -508,7 +511,7 @@ onBeforeUnmount(() => {
       class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 text-center max-w-md mx-auto my-12 shadow-sm space-y-4"
     >
       <div class="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto text-2xl">
-        🔑
+        <MailIcon name="key" :size="16" />
       </div>
       <h3 class="text-lg font-bold text-slate-900 dark:text-white">系统管理员访问凭证</h3>
       <p class="text-xs text-slate-500">
@@ -534,7 +537,7 @@ onBeforeUnmount(() => {
         </n-button>
         <div class="text-center pt-2">
           <n-button text size="small" type="primary" @click="goToLogin">
-            使用管理员账号登录 &rarr;
+            使用管理员账号登录 <MailIcon name="arrow-right" :size="14" />
           </n-button>
         </div>
       </div>
@@ -548,8 +551,8 @@ onBeforeUnmount(() => {
       </n-alert>
 
       <!-- ① 地址工坊 -->
-      <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 shadow-xs p-5 space-y-4">
-        <div class="flex items-center justify-between">
+      <div class="settings-section space-y-4">
+        <div class="flex items-center justify-between gap-3 flex-wrap">
           <div class="flex items-center gap-2">
             <span class="text-base font-semibold text-zinc-900 dark:text-zinc-100">域名邮箱 · 全域接码</span>
             <span class="px-2 py-0.5 text-[10px] rounded-md font-mono bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50">
@@ -565,17 +568,17 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2.5">
+        <div class="domain-address-controls flex flex-wrap items-center gap-2.5">
           <n-input
             v-model:value="name"
             placeholder="邮箱名，如 shop001 / github"
             clearable
             class="w-56"
           >
-            <template #prefix><span class="text-zinc-400 text-xs">✉️</span></template>
+            <template #prefix><span class="text-zinc-400 text-xs"><MailIcon name="mail" :size="16" /></span></template>
           </n-input>
           <n-button size="small" quaternary title="随机生成一个易记好用的前缀" @click="generateRandomPrefix">
-            🎲 随机
+            <MailIcon name="refresh" :size="14" /> 随机
           </n-button>
           <span class="text-zinc-400 font-mono">@</span>
           <n-select
@@ -599,7 +602,7 @@ onBeforeUnmount(() => {
               title="复制完整地址"
               @click="copyAddress"
             >
-              📋
+              <MailIcon name="copy" :size="16" />
             </button>
           </div>
           <n-checkbox v-model:checked="addressOnly" size="small">
@@ -614,7 +617,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div v-else class="text-xs text-zinc-500 dark:text-zinc-400">
-          💡 输入前缀并选择域名后可复制地址对外使用；不输入前缀时直接查看所选域名的全域邮件。
+          输入前缀并选择域名后可复制地址对外使用；不输入前缀时直接查看所选域名的全域邮件。
         </div>
       </div>
 
@@ -683,7 +686,7 @@ onBeforeUnmount(() => {
               size="small"
               class="w-60"
             >
-              <template #prefix><span class="text-zinc-400 text-xs">🔍</span></template>
+              <template #prefix><span class="text-zinc-400 text-xs"><MailIcon name="search" :size="16" /></span></template>
             </n-input>
             <div class="flex items-center rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-0.5 text-xs">
               <button
@@ -708,7 +711,7 @@ onBeforeUnmount(() => {
                 :class="statusFilter === 'starred' ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium' : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'"
                 @click="statusFilter = 'starred'"
               >
-                ⭐ 星标
+                <MailIcon name="star" :size="13" /> 星标
               </button>
             </div>
           </div>
@@ -722,7 +725,7 @@ onBeforeUnmount(() => {
 
         <!-- 列表容器 -->
         <div v-if="loading" class="py-16 text-center text-zinc-400">
-          <span class="animate-spin text-xl">⏳</span>
+          <span class="animate-spin text-xl"><MailIcon name="loader" :size="16" /></span>
         </div>
         <div v-else-if="listError" class="py-12 text-center text-sm text-rose-500">
           <div>{{ listError }}</div>
@@ -735,7 +738,7 @@ onBeforeUnmount(() => {
         />
         <div
           v-else
-          class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white dark:bg-zinc-900/60 shadow-xs"
+          class="workspace-panel domain-message-list"
         >
           <div
             v-for="row in emails"
@@ -764,7 +767,7 @@ onBeforeUnmount(() => {
               :title="row.is_starred ? '已星标（永久保留正文）' : '点击加星标'"
               @click="toggleStar(row, $event)"
             >
-              {{ row.is_starred ? '⭐' : '☆' }}
+              <MailIcon name="star" :size="17" />
             </button>
 
             <!-- 邮件主题与地址信息 -->
@@ -773,7 +776,7 @@ onBeforeUnmount(() => {
                 <span class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                   {{ row.subject || '（无主题）' }}
                 </span>
-                <span v-if="hasAttachments(row)" class="text-xs text-zinc-400" title="包含附件">📎</span>
+                <span v-if="hasAttachments(row)" class="text-xs text-zinc-400" title="包含附件"><MailIcon name="paperclip" :size="16" /></span>
                 <n-tag size="tiny" :bordered="false" class="shrink-0 font-mono">{{ row.account_id }}</n-tag>
               </div>
 
@@ -801,14 +804,14 @@ onBeforeUnmount(() => {
                     title="复制此收件地址"
                     @click.stop="copyText(row.to_addr, '收件地址已复制')"
                   >
-                    📋
+                    <MailIcon name="copy" :size="16" />
                   </button>
                 </span>
               </div>
             </div>
 
             <!-- 时间戳 -->
-            <div class="text-xs text-zinc-400 shrink-0 font-mono">{{ fmtTime(row.received_at) }}</div>
+            <div class="domain-message-time text-xs text-zinc-400 shrink-0 font-mono">{{ fmtTime(row.received_at) }}</div>
           </div>
         </div>
 

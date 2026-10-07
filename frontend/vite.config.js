@@ -62,10 +62,11 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
       },
       manifest: {
-        name: 'Temp Email',
-        short_name: 'Temp Email',
-        description: 'Temp Email - Temporary Email',
-        theme_color: '#ffffff',
+        name: 'One Mail',
+        short_name: 'One Mail',
+        description: 'Every inbox. One calm space.',
+        theme_color: '#f7f8f5',
+        background_color: '#f7f8f5',
         icons: [
           {
             src: '/logo.png',

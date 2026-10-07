@@ -1,212 +1,103 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createUnifiedMutationApi, waitForMutationTerminal } from './unified-provider-mutations'
+const auth = { key: 'user-a', headers: { 'x-user-token': 'jwt-a' } }
+const getAuth = () => auth
+const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
+afterEach(() => vi.useRealTimers())
 
-import {
-  createMutationStatusFetcher,
-  createUnifiedMutationTransport,
-  installUnifiedProviderMutations,
-  waitForMutationTerminal,
-} from './unified-provider-mutations'
-
-
-describe('waitForMutationTerminal', () => {
-  it('waits through processing and returns only terminal success', async () => {
-    const statuses = [
-      { status: 'processing' },
-      { status: 'succeeded', desired_value: 1 },
-    ]
-    const fetchStatus = vi.fn(async () => statuses.shift())
-    const result = await waitForMutationTerminal('job-1', {
-      getAuth: () => ({ userJwt: 'jwt-a' }),
-      fetchStatus,
-      sleepImpl: async () => {},
-    })
-
-    expect(result.status).toBe('succeeded')
-    expect(fetchStatus).toHaveBeenCalledTimes(2)
+describe('provider terminal protocol', () => {
+  it('waits through pending and processing to authoritative success', async () => {
+    const fetchStatus = vi.fn().mockResolvedValueOnce({ status: 'pending' }).mockResolvedValueOnce({ status: 'processing' })
+      .mockResolvedValueOnce({ status: 'succeeded', desired_value: 0 })
+    const result = await waitForMutationTerminal('job', { getAuth, fetchStatus, sleepImpl: async () => {} })
+    expect(result).toEqual({ status: 'succeeded', desired_value: 0 })
+    expect(fetchStatus).toHaveBeenCalledTimes(3)
   })
-
-  it('surfaces provider terminal failure instead of pretending success', async () => {
-    await expect(waitForMutationTerminal('job-2', {
-      getAuth: () => ({ apiKey: 'key-a' }),
-      fetchStatus: async () => ({ status: 'failed', error: 'IMAP permission denied' }),
-      sleepImpl: async () => {},
-    })).rejects.toThrow('IMAP permission denied')
+  it.each(['failed', 'unsupported', 'superseded'])('surfaces terminal %s', async status => {
+    await expect(waitForMutationTerminal('job', { getAuth, fetchStatus: async () => ({ status, error: 'provider refused' }) }))
+      .rejects.toMatchObject({ code: `mutation_${status}`, message: 'provider refused' })
   })
-})
-
-
-describe('installUnifiedProviderMutations', () => {
-  it('keeps synchronous native mutation behavior unchanged', async () => {
-    const api = {
-      unified: {
-        markRead: vi.fn(async () => ({ status: 'succeeded', desired_value: 1, is_read: 1 })),
-        toggleStar: vi.fn(async () => ({ status: 'succeeded', desired_value: 1, is_starred: 1 })),
-      },
-    }
-    installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a' }), {
-      fetchStatus: vi.fn(),
-      transport: vi.fn(),
-    })
-
-    await expect(api.unified.markRead('m1')).resolves.toMatchObject({ status: 'succeeded', is_read: 1 })
-    await expect(api.unified.toggleStar('m1')).resolves.toMatchObject({ status: 'succeeded', is_starred: 1 })
+  it('rejects missing job IDs and malformed statuses', async () => {
+    await expect(waitForMutationTerminal('', { getAuth, fetchStatus: vi.fn() })).rejects.toThrow('no job id')
+    await expect(waitForMutationTerminal('job', { getAuth, fetchStatus: async () => ({}) })).rejects.toMatchObject({ code: 'mutation_invalid_status' })
   })
-
-  it('does not resolve a queued star until provider completion', async () => {
+  it('bounds an in-flight request, including a response body that never completes', async () => {
+    vi.useFakeTimers()
+    let activeSignal
+    const fetchStatus = vi.fn((_id, _auth, { signal }) => { activeSignal = signal; return new Promise(() => {}) })
+    const pending = waitForMutationTerminal('job', { getAuth, fetchStatus, timeoutMs: 50 })
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'mutation_pending' })
+    await vi.advanceTimersByTimeAsync(50); await rejected
+    expect(activeSignal.aborted).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it('stops during a polling delay and releases timers on cancellation', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const fetchStatus = vi.fn(async () => ({ status: 'pending' }))
+    const pending = waitForMutationTerminal('job', { getAuth, fetchStatus, signal: controller.signal })
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await flush(); controller.abort(); await rejected
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(fetchStatus).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it('checks cancellation before issuing a status request', async () => {
+    const controller = new AbortController(); controller.abort()
     const fetchStatus = vi.fn()
-      .mockResolvedValueOnce({ status: 'pending' })
-      .mockResolvedValueOnce({ status: 'succeeded', desired_value: 1 })
-    const api = {
-      unified: {
-        markRead: vi.fn(),
-        toggleStar: vi.fn(async () => ({ status: 'queued', job_id: 'j-star', desired_value: 1 })),
-      },
-    }
-    installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a' }), {
-      fetchStatus,
-      transport: vi.fn(),
-      sleepImpl: async () => {},
-    })
-
-    const result = await api.unified.toggleStar('m1')
-    expect(result.status).toBe('succeeded')
-    expect(result.is_starred).toBe(1)
-    expect(fetchStatus).toHaveBeenCalledTimes(2)
-  })
-
-  it('waits for move completion and maps the terminal target folder', async () => {
-    const transport = vi.fn(async (path, options) => {
-      expect(path).toBe('/api/unified/emails/m%2F1/move')
-      expect(options).toMatchObject({
-        method: 'POST',
-        body: { folder_id: 17 },
-        auth: { key: 'user:jwt-a', headers: { 'x-user-token': 'jwt-a' } },
-      })
-      return { status: 'queued', job_id: 'j-move', target_folder: 'Archive' }
-    })
-    const fetchStatus = vi.fn()
-      .mockResolvedValueOnce({ status: 'processing' })
-      .mockResolvedValueOnce({
-        status: 'succeeded',
-        operation: 'move',
-        target_folder: 'Archive',
-        target_folder_id: 'folder-17',
-      })
-    const api = { unified: { markRead: vi.fn(), toggleStar: vi.fn() } }
-    installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a', apiKey: 'must-not-leak' }), {
-      transport,
-      fetchStatus,
-      sleepImpl: async () => {},
-    })
-
-    await expect(api.unified.moveEmail('m/1', 17)).resolves.toMatchObject({
-      status: 'succeeded',
-      source_folder: 'Archive',
-      source_folder_id: 'folder-17',
-    })
-    expect(fetchStatus).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not report queued delete as complete before terminal provider success', async () => {
-    const transport = vi.fn(async () => ({ status: 'queued', job_id: 'j-delete' }))
-    const fetchStatus = vi.fn()
-      .mockResolvedValueOnce({ status: 'pending' })
-      .mockResolvedValueOnce({ status: 'succeeded', operation: 'delete' })
-    const api = { unified: { markRead: vi.fn(), toggleStar: vi.fn() } }
-    installUnifiedProviderMutations(api, () => ({ apiKey: 'key-a' }), {
-      transport,
-      fetchStatus,
-      sleepImpl: async () => {},
-    })
-
-    await expect(api.unified.deleteEmail('m1')).resolves.toMatchObject({
-      status: 'succeeded',
-      deleted: true,
-    })
-    expect(transport.mock.calls[0][0]).toBe('/api/unified/emails/m1')
-    expect(transport.mock.calls[0][1]).toMatchObject({
-      method: 'DELETE',
-      auth: { key: 'key:key-a', headers: { Authorization: 'Bearer key-a' } },
-    })
-  })
-
-  it('lists folders through the same single auth snapshot', async () => {
-    const transport = vi.fn(async () => ({ results: [{ id: 1, canonical_name: 'INBOX' }] }))
-    const api = { unified: { markRead: vi.fn(), toggleStar: vi.fn() } }
-    installUnifiedProviderMutations(api, () => ({ userJwt: 'jwt-a' }), { transport, fetchStatus: vi.fn() })
-
-    await expect(api.unified.listFolders({ account_id: 'a/1' })).resolves.toMatchObject({
-      results: [{ id: 1, canonical_name: 'INBOX' }],
-    })
-    expect(transport.mock.calls[0][0]).toBe('/api/unified/folders?account_id=a%2F1')
-    expect(transport.mock.calls[0][1].auth.headers).toEqual({ 'x-user-token': 'jwt-a' })
-  })
-
-  it('aborts UI completion when auth identity changes while a job is queued', async () => {
-    let jwt = 'jwt-a'
-    const api = {
-      unified: {
-        markRead: vi.fn(async () => {
-          jwt = 'jwt-b'
-          return { status: 'queued', job_id: 'j-read', desired_value: 1 }
-        }),
-        toggleStar: vi.fn(),
-      },
-    }
-    const fetchStatus = vi.fn()
-    installUnifiedProviderMutations(api, () => ({ userJwt: jwt }), { fetchStatus, transport: vi.fn() })
-
-    await expect(api.unified.markRead('m1')).rejects.toThrow('登录身份已变化')
+    await expect(waitForMutationTerminal('job', { getAuth, fetchStatus, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
     expect(fetchStatus).not.toHaveBeenCalled()
   })
+  it('rejects identity changes during a response and never polls the new scope', async () => {
+    let current = auth
+    await expect(waitForMutationTerminal('job', {
+      getAuth: () => current,
+      fetchStatus: async () => { current = { key: 'admin-b', headers: {} }; return { status: 'succeeded' } },
+    })).rejects.toMatchObject({ code: 'mutation_auth_changed' })
+  })
+  it('releases the deadline and parent listener after success', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const remove = vi.spyOn(controller.signal, 'removeEventListener')
+    await waitForMutationTerminal('job', { getAuth, signal: controller.signal, fetchStatus: async () => ({ status: 'succeeded' }) })
+    expect(vi.getTimerCount()).toBe(0)
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
 })
 
-
-describe('raw provider mutation transport', () => {
-  it('uses login JWT first for status polling and never sends the API key in parallel', async () => {
-    const fetchImpl = vi.fn(async (_url, options) => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ status: 'succeeded' }),
-      options,
-    }))
-    const fetchStatus = createMutationStatusFetcher({ apiBase: 'https://api.example/', fetchImpl })
-    const result = await fetchStatus('job/1', {
-      headers: { 'x-user-token': 'jwt-a' },
-    })
-
-    expect(result.status).toBe('succeeded')
-    expect(fetchImpl.mock.calls[0][0]).toBe('https://api.example/api/unified/mutations/job%2F1')
-    expect(fetchImpl.mock.calls[0][1].headers).toEqual({
-      Accept: 'application/json',
-      'x-user-token': 'jwt-a',
-    })
+describe('all writes share the terminal protocol', () => {
+  it.each([
+    ['markRead', ['m/1'], '/api/unified/emails/m%2F1/read', 'POST', undefined, { is_read: 1 }],
+    ['markUnread', ['m/1'], '/api/unified/emails/m%2F1/unread', 'POST', undefined, { is_read: 0 }],
+    ['toggleStar', ['m/1', 1], '/api/unified/emails/m%2F1/star', 'POST', { is_starred: 1 }, { is_starred: 1 }],
+    ['moveEmail', ['m/1', 17], '/api/unified/emails/m%2F1/move', 'POST', { folder_id: 17 }, { source_folder: 'Archive', source_folder_id: 'f-17' }],
+    ['deleteEmail', ['m/1'], '/api/unified/emails/m%2F1', 'DELETE', undefined, { deleted: true }],
+  ])('%s waits for queued completion', async (method, args, path, verb, body, expected) => {
+    const desired = method === 'markUnread' ? 0 : 1
+    const request = vi.fn().mockResolvedValueOnce({ status: 'queued', job_id: 'j/1' })
+      .mockResolvedValueOnce({ status: 'succeeded', desired_value: desired, target_folder: 'Archive', target_folder_id: 'f-17' })
+    const api = createUnifiedMutationApi({ request, getAuth })
+    await expect(api[method](...args)).resolves.toMatchObject(expected)
+    expect(request.mock.calls[0][0]).toBe(path)
+    expect(request.mock.calls[0][1].method).toBe(verb)
+    expect(request.mock.calls[0][1].body).toEqual(body)
+    expect(request.mock.calls[1][0]).toBe('/api/unified/mutations/j%2F1')
   })
-
-  it('serializes JSON only for mutating requests and surfaces response errors', async () => {
-    const fetchImpl = vi.fn()
-      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ status: 'queued' }) })
-      .mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: 'bad folder' }) })
-    const transport = createUnifiedMutationTransport({ apiBase: 'https://api.example', fetchImpl })
-
-    await expect(transport('/api/unified/emails/m1/move', {
-      method: 'POST',
-      body: { folder_id: 9 },
-      auth: { headers: { 'x-user-token': 'jwt-a' } },
-    })).resolves.toEqual({ status: 'queued' })
-    expect(fetchImpl.mock.calls[0][1]).toMatchObject({
-      method: 'POST',
-      body: JSON.stringify({ folder_id: 9 }),
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'x-user-token': 'jwt-a',
-      },
-    })
-
-    await expect(transport('/api/unified/folders', {
-      auth: { headers: { 'x-user-token': 'jwt-a' } },
-    })).rejects.toThrow('bad folder')
-    expect(fetchImpl.mock.calls[1][1].body).toBeUndefined()
+  it('preserves native immediate success without starting polling', async () => {
+    const request = vi.fn(async () => ({ status: 'succeeded', desired_value: 1 }))
+    const api = createUnifiedMutationApi({ request, getAuth })
+    await expect(api.toggleStar('m', 1)).resolves.toMatchObject({ is_starred: 1 })
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+  it('does not let the original queued desired value replace the terminal value', async () => {
+    const request = vi.fn().mockResolvedValueOnce({ status: 'queued', job_id: 'j', desired_value: 1 })
+      .mockResolvedValueOnce({ status: 'succeeded', desired_value: 0 })
+    await expect(createUnifiedMutationApi({ request, getAuth }).toggleStar('m', 1)).resolves.toMatchObject({ is_starred: 0 })
+  })
+  it('passes through the HTTP error with its original cause', async () => {
+    const cause = new Error('socket closed')
+    const error = new Error('request failed', { cause })
+    const request = vi.fn().mockRejectedValue(error)
+    await expect(createUnifiedMutationApi({ request, getAuth }).markRead('m')).rejects.toBe(error)
   })
 })

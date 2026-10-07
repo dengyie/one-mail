@@ -1,4 +1,5 @@
 <script setup>
+import MailIcon from '../../components/ui/MailIcon.vue'
 import { useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import '@wangeditor/editor/dist/css/style.css'
@@ -262,7 +263,7 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div class="w-full max-w-4xl mx-auto space-y-4">
+    <div class="mail-composer space-y-4">
         <!-- 骨架屏 -->
         <div v-if="initializing" class="p-8 bg-white/90 dark:bg-slate-900/90 rounded-3xl border border-slate-200/80 dark:border-slate-800/80">
             <n-skeleton height="300px" class="rounded-2xl" />
@@ -270,7 +271,7 @@ onMounted(async () => {
 
         <!-- 正常发信界面 -->
         <div v-else-if="settings.address" class="space-y-4">
-            <div class="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
+            <div class="composer-heading flex items-center justify-between gap-4 flex-wrap">
                 <div>
                     <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">编写并发送邮件</h2>
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">使用当前临时地址或专属绑定发件渠道外发邮件</p>
@@ -287,7 +288,7 @@ onMounted(async () => {
                 </div>
             </div>
 
-            <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm">
+            <div class="settings-section">
                 <div v-if="!hasSendPermission">
                     <n-alert type="warning" :show-icon="false" :bordered="false" class="rounded-2xl">
                         {{ t('requestAccessTip') }}
@@ -297,11 +298,11 @@ onMounted(async () => {
                     <AdminContact />
                 </div>
                 <div v-else class="space-y-4">
-                    <div class="flex items-center justify-between p-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    <div class="composer-actions">
                         <span v-if="isAdmin">{{ t('send_balance') }}: 管理员无限额度</span>
                         <span v-else>{{ t('send_balance') }}: {{ settings.send_balance }} 封可用额度</span>
                         <n-button type="primary" :loading="sending" :disabled="sending" @click="send" class="rounded-xl px-5">
-                            {{ t('send') }}
+                            <template #icon><MailIcon name="send" :size="16" /></template>{{ t('send') }}
                         </n-button>
                     </div>
                     
@@ -323,7 +324,7 @@ onMounted(async () => {
                                 <n-input v-model:value="sendMailModel.subject" placeholder="邮件主题..." class="rounded-xl" />
                             </n-form-item>
                             <n-form-item :label="t('options')" label-placement="top">
-                                <div class="flex items-center gap-3">
+                                <div class="flex items-center gap-3 flex-wrap">
                                     <n-radio-group v-model:value="sendMailModel.contentType">
                                         <n-radio-button v-for="option in contentTypes" :key="option.value" :value="option.value"
                                             :label="option.label" />

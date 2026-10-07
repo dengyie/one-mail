@@ -6,7 +6,8 @@ import { ref, computed, onMounted, watchEffect } from 'vue'
 import { useScript } from '@unhead/vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalState } from './store'
-import { useIsMobile } from './utils/composables'
+import { workspaceTheme } from './theme'
+import { useScopedI18n } from './i18n/app'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppNavbar from './components/layout/AppNavbar.vue'
 import Footer from './views/Footer.vue';
@@ -15,14 +16,15 @@ import { getNaiveLocaleConfig } from './i18n/naive-locale'
 import { DEFAULT_LOCALE, isSupportedLocale } from './i18n/utils'
 
 const {
-  isDark, loading, useSideMargin, telegramApp, isTelegram
+  isDark, loading, useSideMargin, telegramApp, isTelegram, openSettings
 } = useGlobalState()
 const adClient = import.meta.env.VITE_GOOGLE_AD_CLIENT;
 const adSlot = import.meta.env.VITE_GOOGLE_AD_SLOT;
 const { locale } = useI18n({ useScope: 'global' });
 const theme = computed(() => isDark.value ? darkTheme : null)
 const localeConfig = computed(() => getNaiveLocaleConfig(isSupportedLocale(locale.value) ? locale.value : DEFAULT_LOCALE))
-const isMobile = useIsMobile()
+const themeOverrides = computed(() => workspaceTheme(isDark.value))
+const { t: workspaceT } = useScopedI18n('workspace')
 
 const sidebarCollapsed = ref(false)
 const showMobileDrawer = ref(false)
@@ -48,6 +50,7 @@ if (adClient && adSlot) {
 onMounted(async () => {
   try {
     await api.getUserSettings();
+    if (!openSettings.value.fetched) await api.getOpenSettings();
   } catch (error) {
     console.error(error);
   }
@@ -90,42 +93,25 @@ onMounted(async () => {
 </script>
 
 <template>
-  <n-config-provider :locale="localeConfig.locale" :date-locale="localeConfig.dateLocale" :theme="theme">
+  <n-config-provider :locale="localeConfig.locale" :date-locale="localeConfig.dateLocale" :theme="theme" :theme-overrides="themeOverrides">
     <n-global-style />
     <n-dialog-provider>
       <n-notification-provider container-style="margin-top: 60px;">
         <n-message-provider container-style="margin-top: 20px;">
-          <!-- Modern Workspace Shell with Sleek Sidebar & Dynamic Navbar -->
-          <div class="flex h-screen w-screen overflow-hidden bg-slate-100/70 dark:bg-slate-950 text-slate-800 dark:text-slate-100 antialiased font-sans transition-colors">
-            
-            <!-- Desktop Collapsible Sidebar -->
-            <div class="hidden md:block shrink-0 h-full">
-              <AppSidebar
-                :collapsed="sidebarCollapsed"
-                @update:collapsed="sidebarCollapsed = $event"
-              />
+          <a class="skip-link" href="#workspace-main">{{ workspaceT('skipToContent') }}</a>
+          <div class="app-shell">
+            <div class="app-sidebar-container">
+              <AppSidebar :collapsed="sidebarCollapsed" @update:collapsed="sidebarCollapsed = $event" />
             </div>
-
-            <!-- Mobile Drawer Sidebar -->
             <n-drawer v-model:show="showMobileDrawer" placement="left" :width="280">
-              <AppSidebar
-                :collapsed="false"
-                @navigate="showMobileDrawer = false"
-              />
+              <AppSidebar :collapsed="false" mobile @navigate="showMobileDrawer = false" @close="showMobileDrawer = false" />
             </n-drawer>
-
-            <!-- Main Content Viewport -->
-            <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-              <AppNavbar
-                :sidebar-collapsed="sidebarCollapsed"
-                @toggle-sidebar="toggleSidebar"
-                @open-mobile-menu="showMobileDrawer = true"
-              />
-
-              <main class="flex-1 overflow-y-auto px-3 sm:px-8 py-6">
-                <div class="max-w-6xl mx-auto w-full space-y-6">
-                  <n-spin description="loading..." :show="loading">
-                    <router-view></router-view>
+            <div class="app-main">
+              <AppNavbar :sidebar-collapsed="sidebarCollapsed" @toggle-sidebar="toggleSidebar" @open-mobile-menu="showMobileDrawer = true" />
+              <main id="workspace-main" class="workspace-main" tabindex="-1">
+                <div class="workspace-content" :class="{ 'workspace-content--bounded': useSideMargin }">
+                  <n-spin :show="loading">
+                    <router-view />
                   </n-spin>
                   <Footer />
                 </div>
@@ -141,8 +127,7 @@ onMounted(async () => {
 
 <style>
 .n-switch {
-  margin-left: 10px;
-  margin-right: 10px;
+  margin: 0;
 }
 
 @media (hover: none) and (pointer: coarse) and (max-width: 1024px) {

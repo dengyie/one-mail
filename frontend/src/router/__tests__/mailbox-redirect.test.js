@@ -33,10 +33,10 @@ describe('mailbox to unified redirect contracts', () => {
     expect(sendMail).not.toContain("getRouterPathWithLang('/mailbox'")
     expect(addressManagement).toContain('getRouterPathWithLang("/temp-mail", locale.value)')
     expect(addressManagement).not.toContain('getRouterPathWithLang("/mailbox"')
-    expect(sidebar).toContain("handleNavigate('/temp-mail')")
-    expect(sidebar).toContain('即时收件箱')
-    expect(sidebar).toContain('v-if="!hasUserSession"')
-    expect(sidebar).toContain("handleNavigate('/unified')")
+    // Sidebar visibility and localized links are exercised through mounted
+    // components in AppSidebar.test.js; router contracts remain here.
+    expect(sidebar).toContain("path: '/temp-mail'")
+    expect(sidebar).toContain("path: '/unified'")
   })
 
   it('sends inbox back-links to /unified and leaves /domain-mailbox unredirected', () => {

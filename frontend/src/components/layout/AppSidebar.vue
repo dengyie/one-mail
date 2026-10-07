@@ -1,69 +1,29 @@
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useScopedI18n } from '@/i18n/app'
-import {
-  InboxFilled, PersonFilled, AdminPanelSettingsFilled,
-  HomeFilled, SettingsFilled, MarkEmailReadFilled,
-  SendFilled, AddCircleOutlineFilled, ShieldFilled,
-  VpnKeyFilled, PowerSettingsNewFilled, DynamicFeedFilled,
-  AlternateEmailFilled, AutoAwesomeFilled,
-  GroupFilled, ManageAccountsFilled, DnsFilled,
-  BarChartFilled, HubFilled, SecurityFilled, PsychologyFilled,
-  CleaningServicesFilled, StorageFilled, PaletteFilled,
-  SendAndArchiveFilled
-} from '@vicons/material'
-import { GithubAlt } from '@vicons/fa'
 import { useGlobalState } from '../../store'
-import { api } from '../../api'
 import { getRouterPathWithLang } from '../../utils'
 import { clearLocalAddressCache } from '../../utils/address-cache'
-import StatusIndicator from '../ai/StatusIndicator.vue'
+import MailIcon from '../ui/MailIcon.vue'
 
-const props = defineProps({
-  collapsed: {
-    type: Boolean,
-    default: false
-  }
-})
-
-const emit = defineEmits(['update:collapsed', 'navigate'])
-
+const props = defineProps({ collapsed: Boolean, mobile: Boolean })
+const emit = defineEmits(['update:collapsed', 'navigate', 'close'])
 const route = useRoute()
 const router = useRouter()
-const { t, locale } = useScopedI18n('views.Header')
-
+const { t, locale } = useScopedI18n('workspace')
+const { t: headerT } = useScopedI18n('views.Header')
 const {
-  settings, userSettings, openSettings, showAdminPage,
-  userJwt, jwt, auth, adminAuth, addressPassword,
+  settings, userSettings, openSettings, showAdminPage, userJwt, jwt, auth, adminAuth, addressPassword,
   userOauth2SessionState, userOauth2SessionClientID, unifiedApiKey,
-  preferredLocale, userTab, adminTab
 } = useGlobalState()
-
 const hasUserSession = computed(() => Boolean(userJwt.value))
 const hasAddressSession = computed(() => Boolean(jwt.value))
-const isAdmin = computed(() => Boolean(userSettings.value.is_admin || adminAuth.value))
-const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value)
-// 域名邮箱工作台仅供管理员使用：需具备管理员身份（管理员账号/管理密码/管理员 API Key）
-const canUseDomainMailbox = computed(() =>
-  Boolean(
-    userSettings.value.is_admin ||
-    adminAuth.value ||
-    (unifiedApiKey.value && !hasUserSession.value)
-  )
-)
-
-const handleNavigate = (path) => {
-  router.push(getRouterPathWithLang(path, locale.value))
-  emit('navigate')
-}
-
+const isLoggedIn = computed(() => hasUserSession.value || hasAddressSession.value || showAdminPage.value || Boolean(unifiedApiKey.value))
+const canUseDomainMailbox = computed(() => Boolean(userSettings.value.is_admin || adminAuth.value || (unifiedApiKey.value && !hasUserSession.value)))
+const canCompose = computed(() => openSettings.value.enableSendMail && (hasAddressSession.value || hasUserSession.value || Boolean(userSettings.value.is_admin || adminAuth.value)))
 const showLogout = ref(false)
-
-const requestLogout = () => {
-  showLogout.value = true
-}
-
+const requestLogout = () => { showLogout.value = true }
 const handleLogout = async () => {
   // Clear every credential channel, including cached address JWTs, before
   // navigating so a shared browser cannot keep using the previous session.
@@ -94,324 +54,85 @@ const handleLogout = async () => {
   emit('navigate')
 }
 
-// 侧边栏高亮定位（严格匹配 URL 路由路径）
-const activeRoute = computed(() => {
-  const p = route.path
-  if (p.includes('/admin/users')) return 'admin_users'
-  if (p.includes('/admin/statistics')) return 'admin_statistics'
-  if (p.includes('/admin/ai-extract')) return 'admin_ai_extract'
-  if (p.includes('/admin/webhook')) return 'admin_webhook'
-  if (p.includes('/admin/database')) return 'admin_database'
-  if (p.includes('/admin/settings')) return 'admin_settings'
-  if (p.includes('/admin/sender-access')) return 'admin_sender_access'
-  if (p.includes('/admin/sendmail')) return 'admin_send_mail'
-  if (p.includes('/admin/sendbox')) return 'admin_send_box'
-  if (p.includes('/admin/send-unknown')) return 'admin_send_unknown'
-  if (p.includes('/admin/accounts') || p.endsWith('/admin')) return 'admin_accounts'
-  
-  if (p.includes('/domain-mailbox')) return 'domain_mailbox'
-  if (p.includes('/unified')) return 'unified'
-  if (p.includes('/temp-mail') || route.query?.tab === 'temp' || Boolean(route.query?.mail_id)) return 'mailbox'
-  if (p.includes('/sendmail') || p.includes('/sendbox')) return 'sendmail'
-  if (p.includes('/webhook')) return 'webhook'
-  
-  if (p.includes('/user/addresses')) return 'user_addresses'
-  if (p.includes('/user/external-accounts')) return 'user_external'
-  if (p.includes('/user/settings')) return 'user_settings'
-  if (p.includes('/user/appearance')) return 'user_appearance'
-  if (p.includes('/user')) return 'user_addresses'
-  return 'unified'
+
+const navGroups = computed(() => {
+  const mail = [
+    { label: 'inbox', icon: 'inbox', path: '/unified', key: 'inbox' },
+    { label: 'starred', icon: 'star', path: '/unified?view=starred', key: 'starred' },
+    { label: 'unread', icon: 'mail', path: '/unified?view=unread', key: 'unread' },
+    { label: 'codes', icon: 'key', path: '/unified?tab=codes', key: 'codes' },
+  ]
+  if (!hasUserSession.value) mail.push({ label: 'tempMail', icon: 'clock', path: '/temp-mail', key: 'tempMail' })
+  if (canUseDomainMailbox.value) mail.push({ label: 'domainMailbox', icon: 'domain', path: '/domain-mailbox', key: 'domainMailbox' })
+  const groups = [{ label: 'mail', items: mail }]
+  const manage = []
+  if (hasUserSession.value) {
+    manage.push(
+      { label: 'accounts', icon: 'accounts', path: '/user/external-accounts', key: 'accounts' },
+      { label: 'addresses', icon: 'address', path: '/user/addresses', key: 'addresses' },
+      { label: 'security', icon: 'shield', path: '/user/settings', key: 'security' },
+    )
+  }
+  if (hasAddressSession.value && openSettings.value.enableWebhook) manage.push({ label: 'webhook', icon: 'git-branch', path: '/webhook', key: 'webhook' })
+  manage.push({ label: 'appearance', icon: 'palette', path: '/user/appearance', key: 'appearance' })
+  groups.push({ label: 'manage', items: manage })
+  if (showAdminPage.value) groups.push({ label: 'admin', items: [
+    ['adminAccounts', 'accounts', 'accounts'], ['adminUsers', 'users', 'users'], ['adminStats', 'chart', 'statistics'],
+    ['adminAi', 'sparkles', 'ai-extract'], ['webhook', 'git-branch', 'webhook'], ['adminDatabase', 'database', 'database'],
+    ['adminSettings', 'settings', 'settings'], ['adminSendAccess', 'key', 'sender-access'], ['adminSend', 'send', 'sendmail'],
+    ['adminHistory', 'archive', 'sendbox'], ['adminUnknown', 'clock', 'send-unknown'],
+  ].map(([label, icon, path]) => ({ label, icon, path: '/admin/' + path, key: 'admin-' + path })) })
+  return groups
 })
+const isActive = (item) => {
+  const path = route.path.replace(/^\/(en|zh|es|pt-BR|ja|de)(?=\/|$)/, '') || '/'
+  if (path === '/unified' || path === '/' || path.startsWith('/unified/')) {
+    if (route.query.tab === 'codes') return item.key === 'codes'
+    if (route.query.view === 'starred') return item.key === 'starred'
+    if (route.query.view === 'unread') return item.key === 'unread'
+    return item.key === 'inbox'
+  }
+  return path === item.path.split('?')[0] || (path === '/user' && item.key === 'addresses') || (path === '/admin' && item.key === 'admin-accounts')
+}
+const profileLabel = computed(() => userSettings.value.user_email || settings.value.address || t('administrator'))
 </script>
 
 <template>
-  <aside
-    class="flex flex-col h-full bg-slate-900/95 dark:bg-slate-950/95 border-r border-slate-800/80 backdrop-blur-xl text-slate-200 transition-all duration-300 select-none"
-    :class="collapsed ? 'w-[72px]' : 'w-64'"
-  >
-    <!-- Brand / Logo Area -->
-    <div class="h-16 flex items-center px-4 gap-3 border-b border-slate-800/80 cursor-pointer shrink-0" @click="handleNavigate('/unified')">
-      <img src="/logo.png" alt="MangoHub Logo" class="w-10 h-10 rounded-2xl object-cover shadow-lg shadow-blue-500/20 shrink-0" />
-      <div v-if="!collapsed" class="flex flex-col min-w-0">
-        <span class="font-bold text-base tracking-tight text-white truncate flex items-center gap-1.5">
-          MangoHub Mail
-          <span class="px-1.5 py-0.5 text-[10px] uppercase font-mono font-semibold bg-blue-500/20 text-blue-400 rounded-md border border-blue-500/30">AI</span>
-        </span>
-        <span class="text-xs text-slate-400 truncate">智能隐私收件工作台</span>
-      </div>
+  <aside class="mail-sidebar" :class="{ 'is-collapsed': collapsed }">
+    <div class="flex items-center justify-between">
+      <RouterLink class="mail-brand" :to="getRouterPathWithLang('/unified', locale)" @click="emit('navigate')" aria-label="One Mail">
+        <img src="/logo.png" alt="" width="32" height="32" />
+        <span v-if="!collapsed" class="mail-brand__name">one<span>mail</span></span>
+      </RouterLink>
+      <button v-if="mobile" type="button" class="mail-icon-button mr-3" :aria-label="t('closeMenu')" @click="emit('close')"><MailIcon name="x" :size="18" /></button>
     </div>
-
-    <!-- Navigation Section -->
-    <div class="flex-1 px-3 py-4 space-y-5 overflow-y-auto overflow-x-hidden">
-      
-      <!-- 1. 未登录模式 -->
-      <div v-if="!isLoggedIn" class="space-y-1.5">
-        <button
-          @click="handleNavigate('/unified')"
-          class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
-          :class="route.path === '/' || route.path.endsWith('/') || route.path.includes('/unified') ? 'bg-blue-600/15 text-blue-400 font-semibold border border-blue-500/30' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-        >
-          <n-icon size="20" :component="HomeFilled" class="text-blue-400 shrink-0" />
-          <span v-if="!collapsed">首页 · 统一收件箱</span>
-        </button>
+    <RouterLink v-if="canCompose" class="mail-compose" :to="getRouterPathWithLang('/sendmail', locale)" :title="t('compose')" @click="emit('navigate')">
+      <MailIcon name="compose" :size="18" /><span v-if="!collapsed">{{ t('compose') }}</span>
+    </RouterLink>
+    <RouterLink v-else class="mail-compose" :to="getRouterPathWithLang(isLoggedIn ? '/unified' : '/user', locale)" @click="emit('navigate')" :title="t(isLoggedIn ? 'inbox' : 'login')">
+      <MailIcon :name="isLoggedIn ? 'inbox' : 'arrow-right'" :size="18" /><span v-if="!collapsed">{{ t(isLoggedIn ? 'inbox' : 'login') }}</span>
+    </RouterLink>
+    <nav class="mail-navigation" :aria-label="t('workspace')">
+      <div v-for="group in navGroups" :key="group.label" class="mail-nav-group">
+        <div v-if="!collapsed" class="mail-nav-heading">{{ t(group.label) }}</div>
+        <RouterLink v-for="item in group.items" :key="item.key" :to="getRouterPathWithLang(item.path, locale)" class="mail-nav-link" :class="{ 'is-active': isActive(item) }" :aria-current="isActive(item) ? 'page' : undefined" :title="collapsed ? t(item.label) : undefined" @click="emit('navigate')">
+          <MailIcon :name="item.icon" :size="18" />
+          <span v-if="!collapsed" class="mail-nav-link__label">{{ t(item.label) }}</span>
+          <span v-if="!collapsed && isActive(item)" class="mail-nav-link__hint" aria-hidden="true"></span>
+        </RouterLink>
       </div>
-
-      <!-- 2. 登录后的专属功能侧边栏 -->
-      <div v-else class="space-y-5">
-        
-        <!-- 模块一：邮箱工作台 -->
-        <div v-if="hasAddressSession || hasUserSession || canUseDomainMailbox" class="space-y-1">
-          <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-            邮箱工作台
-          </div>
-          
-          <button
-            v-if="!hasUserSession"
-            @click="handleNavigate('/temp-mail')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="InboxFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">即时收件箱</span>
-          </button>
-
-          <button
-            v-if="(hasAddressSession || isAdmin) && openSettings.enableSendMail"
-            @click="handleNavigate('/sendmail')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'sendmail' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="SendFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">{{ t('sendmail') }}</span>
-          </button>
-
-          <button
-            v-if="hasAddressSession && openSettings.enableWebhook"
-            @click="handleNavigate('/webhook')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'webhook' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="HubFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">{{ t('webhookSettings') || 'Webhook Settings' }}</span>
-          </button>
-
-          <button
-            v-if="hasUserSession"
-            @click="handleNavigate('/unified')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'unified' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="DynamicFeedFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate flex items-center justify-between flex-1">
-              <span>统一归集箱</span>
-              <span class="px-1.5 py-0.2 text-[10px] bg-cyan-500/20 text-cyan-400 rounded-md font-mono">Pro</span>
-            </span>
-          </button>
-
-          <button
-            v-if="canUseDomainMailbox"
-            @click="handleNavigate('/domain-mailbox')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'domain_mailbox' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-            :title="collapsed ? '域名邮箱 · 全域' : ''"
-          >
-            <n-icon size="18" :component="DnsFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate flex items-center justify-between flex-1">
-              <span>域名邮箱 · 全域</span>
-              <span class="px-1.5 py-0.2 text-[10px] bg-emerald-500/20 text-emerald-400 rounded-md font-mono">Catch-All</span>
-            </span>
-          </button>
-        </div>
-
-        <!-- 模块二：私人邮箱与安全 -->
-        <div v-if="hasUserSession" class="space-y-1">
-          <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-            私人邮箱管理
-          </div>
-
-          <button
-            @click="handleNavigate('/user/addresses')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'user_addresses' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="AlternateEmailFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">专属地址列表</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/user/external-accounts')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'user_external' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="AutoAwesomeFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">外部邮箱归集 (IMAP)</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/user/settings')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'user_settings' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="SettingsFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">{{ t('user_settings') || 'User Settings' }}</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/user/appearance')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'user_appearance' ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="PaletteFilled" class="shrink-0" />
-            <span v-if="!collapsed" class="truncate">外观与布局个性化</span>
-          </button>
-        </div>
-
-        <!-- 模块三：管理员运维后台 (严格按独立子 URL 路由跳转) -->
-        <div v-if="showAdminPage" class="space-y-1">
-          <div v-if="!collapsed" class="px-3 pb-1 text-[11px] font-semibold text-amber-400/80 uppercase tracking-wider">
-            系统管理中心
-          </div>
-
-          <button
-            @click="handleNavigate('/admin/accounts')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_accounts' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="ManageAccountsFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">邮箱账户管理</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/users')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_users' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="GroupFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">注册用户列表</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/statistics')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_statistics' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="BarChartFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">业务统计看板</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/ai-extract')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_ai_extract' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="PsychologyFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">AI 提取策略配置</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/webhook')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_webhook' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="HubFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">Webhook 推送配置</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/database')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_database' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="StorageFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">数据库结构与维护</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/settings')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_settings' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="DnsFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">域名与全局策略</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/sender-access')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_sender_access' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="VpnKeyFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">发信权限管理</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/sendmail')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_send_mail' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="SendFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">管理员专属发信</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/sendbox')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_send_box' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="SendAndArchiveFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">{{ t('sendboxAdmin') }}</span>
-          </button>
-
-          <button
-            @click="handleNavigate('/admin/send-unknown')"
-            class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all"
-            :class="activeRoute === 'admin_send_unknown' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold' : 'text-slate-300 hover:text-white hover:bg-slate-800/60'"
-          >
-            <n-icon size="18" :component="SendAndArchiveFilled" class="text-amber-400 shrink-0" />
-            <span v-if="!collapsed" class="truncate">{{ t('sendUnknown') }}</span>
-          </button>
-        </div>
-
+    </nav>
+    <div class="mail-sidebar__bottom">
+      <div v-if="isLoggedIn" class="mail-profile">
+        <RouterLink :to="getRouterPathWithLang('/user', locale)" class="mail-avatar" :aria-label="t('account')" @click="emit('navigate')">{{ profileLabel[0]?.toUpperCase() }}</RouterLink>
+        <div v-if="!collapsed" class="mail-profile__info"><span class="mail-profile__name">{{ profileLabel }}</span><span class="mail-profile__role">{{ t(showAdminPage ? 'administrator' : 'member') }}</span></div>
+        <button type="button" class="mail-icon-button" @click="requestLogout" :aria-label="t('logout')" :title="t('logout')"><MailIcon name="logout" :size="17" /></button>
       </div>
+      <div v-else-if="!collapsed" class="mail-sidebar__guest"><p>{{ t('guestHint') }}</p><RouterLink :to="getRouterPathWithLang('/user', locale)" @click="emit('navigate')">{{ t('login') }}<MailIcon name="arrow-right" :size="14" /></RouterLink></div>
     </div>
-
-    <!-- User Profile & Logout Bottom Card -->
-    <div class="p-3 border-t border-slate-800/80 bg-slate-950/40 shrink-0">
-      <div v-if="isLoggedIn" class="flex items-center justify-between p-2 rounded-2xl bg-slate-800/50 border border-slate-700/50">
-        <div class="flex items-center gap-2.5 min-w-0">
-          <div class="w-8 h-8 rounded-xl bg-blue-600/30 border border-blue-500/40 text-blue-400 flex items-center justify-center font-bold text-xs shrink-0">
-            {{ userSettings.user_email?.[0]?.toUpperCase() || 'U' }}
-          </div>
-          <div v-if="!collapsed" class="flex flex-col min-w-0">
-            <span class="text-xs font-semibold text-white truncate max-w-[110px]">
-              {{ userSettings.user_email }}
-            </span>
-            <span class="text-[10px] text-slate-400 truncate">{{ userSettings.is_admin ? '系统管理员' : '已认证用户' }}</span>
-          </div>
-        </div>
-
-        <button
-          @click="requestLogout"
-          class="p-1.5 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-          :aria-label="t('logout') || 'Logout'"
-          :title="t('logout') || 'Logout'"
-        >
-          <n-icon size="18" :component="PowerSettingsNewFilled" />
-        </button>
-      </div>
-
-      <div v-else class="text-center py-1">
-        <span v-if="!collapsed" class="text-[11px] text-slate-400">请登录使用全功能收件箱</span>
-      </div>
-    </div>
-
-    <n-modal v-model:show="showLogout" preset="dialog" :title="t('logout') || 'Logout'">
-      <p>{{ t('logoutConfirm') || 'Are you sure you want to logout?' }}</p>
-      <template #action>
-        <n-button @click="handleLogout" size="small" tertiary type="warning">
-          {{ t('logout') || 'Logout' }}
-        </n-button>
-      </template>
+    <n-modal v-model:show="showLogout" preset="dialog" :title="t('logout')">
+      <p>{{ headerT('logoutConfirm') }}</p>
+      <template #action><n-button @click="handleLogout" type="primary">{{ t('logout') }}</n-button></template>
     </n-modal>
   </aside>
 </template>

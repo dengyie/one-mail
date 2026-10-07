@@ -19,22 +19,14 @@ test.describe('Webhook Presets', () => {
       // Login via JWT
       await page.goto(`${FRONTEND_URL}/en/?jwt=${jwt}`);
 
-      // Click "Webhook Settings" in the sidebar menu
-      const webhookMenu = page.getByText('Webhook Settings');
+      // Select the address-level Webhooks link, distinct from admin Webhooks.
+      const webhookMenu = page.locator('nav a[href="/en/webhook"]');
       await expect(webhookMenu).toBeVisible({ timeout: 10_000 });
       await webhookMenu.click();
 
       // Verify presets button is visible
       const presetsBtn = page.getByRole('button', { name: 'Presets' });
       await expect(presetsBtn).toBeVisible({ timeout: 5000 });
-
-      // Helper to get form field value by label text
-      const getFieldValue = async (label: string): Promise<string> => {
-        // Find the label, then get the sibling textbox in the same form row
-        const row = page.locator('div', { hasText: new RegExp(`^${label}$`) }).locator('..');
-        const textbox = row.getByRole('textbox');
-        return textbox.inputValue();
-      };
 
       // Define expected presets and their key fields
       const expectedPresets = [

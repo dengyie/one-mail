@@ -1,261 +1,51 @@
 <template>
-  <div class="unified-inbox max-w-6xl mx-auto px-4 py-6 text-left space-y-4">
-    <!-- 页头 -->
-    <div class="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-zinc-200/80 dark:border-zinc-800/80">
-      <div>
-        <h1 class="text-xl font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-          <span>📥</span>
-          <span>{{ t('title') }}</span>
-        </h1>
-        <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">{{ t('subtitle') }}</p>
-      </div>
-      <div class="flex items-center gap-3">
-        <div class="flex flex-col items-end gap-0.5">
-          <StatusIndicator :status="connStatus" :label="connLabel" />
-          <span v-if="lastLoaded" class="text-[10px] text-zinc-400">{{ t('status.lastLoaded', { time: fmtTime(lastLoaded.getTime()) }) }}</span>
-        </div>
-        <n-switch v-model:value="autoRefresh" size="small" :round="false">
-          <template #checked>
-            {{ t('autoRefreshInterval') }}
-          </template>
-          <template #unchecked>
-            {{ t('autoRefresh') }}
-          </template>
-        </n-switch>
-        <n-button size="small" :loading="loading" @click="refreshList" quaternary circle>
-          <template #icon><n-icon><RefreshRound /></n-icon></template>
-        </n-button>
+  <div class="unified-inbox workspace-page">
+    <div class="workspace-page-header">
+      <div><div class="workspace-eyebrow">{{ w('workspace') }}</div><h1>{{ w('inbox') }}</h1><p>{{ w('inboxSubtitle') }}</p></div>
+      <div class="workspace-page-header__actions">
+        <StatusIndicator v-if="hasAccess" :status="connStatus" :label="connLabel" class="inbox-status" />
+        <label v-if="hasAccess" class="inbox-sync"><n-switch v-model:value="autoRefresh" size="small" :aria-label="w('autoRefresh')" /><span>{{ w('autoRefresh') }}</span></label>
+        <n-button :loading="loading" :disabled="!hasAccess" @click="refreshList" :aria-label="w('refresh')"><template #icon><MailIcon name="refresh" :size="16" /></template>{{ w('refresh') }}</n-button>
       </div>
     </div>
-
-    <!-- 登录用户走用户 JWT；游客可使用兼容的 API-key 通道 -->
-    <div
-      v-if="!hasAccess"
-      class="relative overflow-hidden rounded-3xl border border-blue-500/30 bg-gradient-to-br from-blue-50/90 via-indigo-50/50 to-cyan-50/60 dark:from-blue-950/50 dark:via-slate-900/90 dark:to-slate-950 p-6 sm:p-8 shadow-lg shadow-blue-500/5 backdrop-blur-2xl transition-all duration-300 hover:shadow-xl hover:shadow-blue-500/10 space-y-6"
-    >
-      <div class="absolute -right-16 -top-16 w-64 h-64 bg-gradient-to-br from-blue-500/10 via-indigo-500/10 to-transparent rounded-full blur-3xl pointer-events-none"></div>
-      <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div class="space-y-2.5 max-w-2xl">
-          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 text-xs font-semibold tracking-wide border border-blue-500/20 shadow-xs">
-            <span class="animate-pulse">✨</span>
-            <span>{{ t('landing.badge') }}</span>
-          </div>
-          <h2 class="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            {{ t('landing.heading') }}
-          </h2>
-          <p class="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-            {{ t('auth.loginRequired') }}
-          </p>
-        </div>
-        <div class="flex flex-wrap items-center gap-3 shrink-0">
-          <n-button size="medium" type="primary" class="rounded-xl px-5 font-semibold shadow-md shadow-blue-500/25 transition-transform active:scale-95" @click="router.push(getRouterPathWithLang('/user', locale))">
-            {{ t('auth.login') }}
-          </n-button>
-          <n-button size="medium" secondary class="rounded-xl px-4 font-medium transition-transform active:scale-95" @click="router.push(getRouterPathWithLang('/temp-mail', locale))">
-            {{ t('landing.tempMail') }}
-          </n-button>
-          <n-button size="medium" ghost class="rounded-xl px-4 font-medium" @click="activeTab = 'settings'">
-            {{ t('tabs.settings') }}
-          </n-button>
-        </div>
-      </div>
+    <div v-if="!hasAccess" class="inbox-guest">
+      <div><div class="workspace-eyebrow">ONE MAIL</div><h2>{{ w('brandTagline') }}</h2><p>{{ t('auth.loginRequired') }}</p></div>
+      <div class="inbox-guest__actions"><n-button type="primary" @click="router.push(getRouterPathWithLang('/user', locale))">{{ w('login') }}</n-button><n-button @click="router.push(getRouterPathWithLang('/temp-mail', locale))">{{ w('tempMail') }}</n-button><n-button quaternary @click="activeTab = 'settings'">{{ w('apiSettings') }}</n-button></div>
     </div>
-    <div
-      v-else-if="!isLoggedIn && hasKey"
-      class="rounded-2xl border border-sky-200 dark:border-sky-800/60 bg-sky-50/80 dark:bg-sky-950/30 text-sky-800 dark:text-sky-300 px-5 py-2.5 text-xs flex items-center justify-between gap-3 shadow-xs"
-    >
-      <div class="flex items-center gap-2">
-        <span>🔑</span>
-        <span>{{ t('auth.apiKeyMode') }}</span>
-      </div>
-      <n-button size="tiny" ghost @click="activeTab = 'settings'">管理 Key</n-button>
-    </div>
-
-    <n-tabs v-model:value="activeTab" type="segment" class="unified-tabs">
-      <!-- ① 邮件列表 -->
-      <n-tab-pane name="list" :tab="t('tabs.list')">
-        <div class="space-y-4 pt-2">
-          <!-- 快捷筛选 PromptChips -->
-          <PromptChips :suggestions="quickFilterChips" @select="handleSelectChip" />
-
-          <!-- 过滤 / 搜索 / 分页控制 -->
-          <div class="flex flex-wrap items-center gap-2 bg-zinc-50/60 dark:bg-zinc-900/40 p-3 rounded-2xl border border-zinc-200/60 dark:border-zinc-800/60">
-            <n-input
-              v-model:value="q"
-              :placeholder="t('list.searchPlaceholder')"
-              clearable
-              size="small"
-              style="max-width: 260px"
-              @keyup.enter="applySearch"
-            />
-            <n-button size="small" type="primary" ghost @click="applySearch">
-              <template #icon><n-icon><SearchRound /></n-icon></template>
-              {{ t('list.search') }}
-            </n-button>
-            <n-select
-              v-model:value="sourceFilter"
-              :options="sourceOptions"
-              clearable
-              size="small"
-              :placeholder="t('list.allSources')"
-              style="width: 140px"
-              @update:value="applyFilter"
-            />
-            <n-select
-              v-model:value="accountFilter"
-              :options="accountOptions"
-              clearable
-              size="small"
-              :placeholder="t('list.allAccounts')"
-              style="min-width: 180px; max-width: 260px"
-              @update:value="applyFilter"
-            />
-            <n-checkbox v-model:checked="unreadOnly" @update:checked="applyFilter">
-              {{ t('list.unread') }}
-            </n-checkbox>
-            <n-checkbox v-model:checked="starOnly" @update:checked="applyFilter">
-              ⭐ 仅星标
-            </n-checkbox>
-            <div class="flex-1"></div>
-            <span class="text-xs text-zinc-400 font-mono">{{ t('list.total', { count }) }}</span>
-          </div>
-          <div v-if="degradedShards.length" class="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 px-4 py-3 text-sm flex items-center justify-between gap-3">
-            <span>{{ t('list.incompleteResults') }} ({{ degradedShards.join(', ') }})</span>
-            <n-button text size="tiny" :loading="loading" @click="refreshList">{{ t('list.retryDegraded') }}</n-button>
-          </div>
-          <div v-if="optionsError" class="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
-            <span>{{ optionsError }}</span>
-            <n-button text size="tiny" @click="retryOptions">重试</n-button>
-          </div>
-
-          <!-- 骨架屏：首屏与加载中时保持卡片高度与结构，避免视差抖动 -->
-          <div
-            v-if="loading && !emails.length"
-            class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl shadow-xs p-2 space-y-3"
-          >
-            <div v-for="i in 5" :key="i" class="px-4 py-3 flex items-center gap-3 animate-pulse">
-              <div class="w-2.5 h-2.5 rounded-full bg-zinc-200 dark:bg-zinc-700 shrink-0"></div>
-              <div class="w-8 h-8 rounded-xl bg-zinc-200 dark:bg-zinc-700 shrink-0"></div>
-              <div class="flex-1 space-y-2">
-                <div class="h-4 bg-zinc-200 dark:bg-zinc-700 rounded-md w-3/4"></div>
-                <div class="h-3 bg-zinc-100 dark:bg-zinc-800 rounded-md w-1/3"></div>
-              </div>
-              <div class="w-16 h-3 bg-zinc-100 dark:bg-zinc-800 rounded-md shrink-0"></div>
+    <n-alert v-else-if="!isLoggedIn && hasKey" type="info" :show-icon="false" class="mb-5">{{ t('auth.apiKeyMode') }} <n-button text @click="activeTab = 'settings'">{{ w('apiSettings') }}</n-button></n-alert>
+    <div class="inbox-layout">
+      <section class="workspace-panel inbox-main-panel" :aria-label="w('inbox')">
+        <n-tabs v-model:value="activeTab" type="line" class="inbox-tabs" animated>
+          <n-tab-pane name="list" :tab="w('allMail')">
+            <form class="inbox-toolbar" @submit.prevent="applySearch">
+              <n-input v-model:value="q" class="inbox-search" :placeholder="w('searchHint')" :input-props="{ 'aria-label': w('searchHint') }" clearable @clear="clearSearch">
+                <template #prefix><MailIcon name="search" :size="16" /></template>
+              </n-input>
+              <n-button attr-type="submit" :disabled="!hasAccess">{{ t('list.search') }}</n-button>
+              <n-button :secondary="showFilters" :type="showFilters ? 'primary' : 'default'" :aria-expanded="showFilters" @click="showFilters = !showFilters"><template #icon><MailIcon name="sliders" :size="16" /></template>{{ w('filters') }}</n-button>
+            </form>
+            <div v-if="showFilters" class="inbox-filters">
+              <n-select v-model:value="sourceFilter" :options="sourceOptions" clearable size="small" :placeholder="t('list.allSources')" :aria-label="t('list.allSources')" style="width: 155px" @update:value="applyFilter" />
+              <n-select v-model:value="accountFilter" :options="accountOptions" clearable size="small" :placeholder="t('list.allAccounts')" :aria-label="t('list.allAccounts')" style="width: 210px" @update:value="applyFilter" />
+              <n-checkbox v-model:checked="unreadOnly" @update:checked="applyFilter">{{ w('unread') }}</n-checkbox>
+              <n-checkbox v-model:checked="starOnly" @update:checked="applyFilter">{{ w('starred') }}</n-checkbox>
+              <button v-if="filterActive" type="button" class="workspace-link" @click="clearFilters">{{ w('clearFilters') }}</button>
             </div>
-          </div>
-          <div v-else-if="loading" class="py-20 text-center text-zinc-400 flex flex-col items-center gap-2">
-            <span class="animate-spin text-xl">⏳</span>
-            <span>{{ t('list.loading') }}</span>
-          </div>
-          <div v-else-if="listError" class="py-16 text-center text-sm text-rose-500">
-            <div>{{ listError }}</div>
-            <n-button size="small" class="mt-3" @click="loadList">重试</n-button>
-          </div>
-          <n-empty
-            v-else-if="!emails.length"
-            :description="filterActive ? t('list.emptyFiltered') : t('list.empty')"
-            class="py-20"
-          />
-          <div
-            v-else
-            class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 divide-y divide-zinc-100 dark:divide-zinc-800/70 overflow-hidden bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl shadow-xs"
-          >
-            <div
-              v-for="row in emails"
-              :key="row.id"
-              role="button"
-              tabindex="0"
-              class="group relative w-full text-left px-4 sm:px-5 py-3.5 flex items-center gap-3 sm:gap-4 hover:bg-blue-50/40 dark:hover:bg-slate-800/50 transition-all duration-150 cursor-pointer"
-              @click="openDetail(row.id)"
-              @keydown.enter.self="openDetail(row.id)"
-            >
-              <!-- 状态圆点 & 头像标识 -->
-              <div class="flex items-center gap-2.5 shrink-0">
-                <span
-                  class="w-2.5 h-2.5 rounded-full shrink-0 transition-all"
-                  :class="row.is_read ? 'bg-transparent border border-zinc-300 dark:border-zinc-700' : 'bg-emerald-500 shadow-xs shadow-emerald-500/60 ring-2 ring-emerald-500/20'"
-                ></span>
-                <div
-                  class="w-8 h-8 rounded-xl bg-gradient-to-br flex items-center justify-center text-xs font-bold border shadow-2xs shrink-0 select-none"
-                  :class="getSenderColorClass(row.from_addr)"
-                >
-                  {{ getSenderInitial(row.from_addr) }}
-                </div>
-              </div>
-
-              <!-- 主题与元信息 -->
-              <div class="min-w-0 flex-1 space-y-1">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span
-                    v-if="row.is_starred"
-                    class="text-amber-400 text-xs shrink-0 select-none"
-                    title="已星标（受保护，不会被自动清理正文）"
-                  >⭐</span>
-                  <span
-                    class="text-sm truncate transition-colors"
-                    :class="row.is_read ? 'text-zinc-700 dark:text-zinc-300 font-normal' : 'text-zinc-950 dark:text-zinc-50 font-semibold'"
-                  >
-                    {{ row.subject || t('list.noSubject') }}
-                  </span>
-                  <!-- 就地提取高亮验证码胶囊 -->
-                  <span
-                    v-if="extractCardCode(row.subject)"
-                    @click.stop="copyQuickCode(extractCardCode(row.subject))"
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-mono text-[11px] font-bold border border-emerald-500/30 transition-all cursor-pointer shadow-2xs"
-                    title="点击快捷复制验证码"
-                  >
-                    <span>⚡</span>
-                    <span>{{ extractCardCode(row.subject) }}</span>
-                    <span class="text-[9px] opacity-75">复制</span>
-                  </span>
-                  <n-tag size="tiny" :bordered="false" type="info" class="shrink-0 font-mono text-[11px] rounded-md">{{ row.source }}</n-tag>
-                  <n-tag v-if="row.account_id" size="tiny" :bordered="false" class="shrink-0 font-mono text-[11px] rounded-md bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">{{ row.account_id }}</n-tag>
-                </div>
-                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-2">
-                  <span class="font-medium text-zinc-600 dark:text-zinc-300">{{ row.from_addr }}</span>
-                  <span v-if="row.account_id" class="text-zinc-400">→ {{ row.account_id }}</span>
-                </div>
-              </div>
-
-              <!-- 右侧快捷操作与时间 -->
-              <div class="flex items-center gap-2 shrink-0">
-                <div class="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                  <button
-                    type="button"
-                    class="p-1.5 rounded-lg text-xs text-zinc-400 hover:text-amber-500 hover:bg-zinc-100 dark:hover:bg-zinc-700/60 transition-colors"
-                    :title="row.is_starred ? '取消星标' : '设为星标'"
-                    @click.stop="toggleRowStar(row)"
-                  >
-                    {{ row.is_starred ? '★' : '☆' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="p-1.5 rounded-lg text-xs text-zinc-400 hover:text-blue-500 hover:bg-zinc-100 dark:hover:bg-zinc-700/60 transition-colors"
-                    :title="row.is_read ? '标为未读' : '标为已读'"
-                    @click.stop="toggleRowRead(row)"
-                  >
-                    {{ row.is_read ? '✉️' : '✓' }}
-                  </button>
-                </div>
-                <div class="text-xs text-zinc-400 shrink-0 font-mono">{{ fmtTime(row.received_at) }}</div>
-              </div>
+            <div class="inbox-column-labels"><span>{{ w(route.query.view === 'starred' ? 'starred' : route.query.view === 'unread' ? 'unread' : 'messages') }}<span v-if="hasAccess && count !== null"> · {{ count }}</span></span><span>{{ w('received') }}</span></div>
+            <n-alert v-if="degradedShards.length" type="warning" class="inbox-alert"><span>{{ t('list.incompleteResults') }} ({{ degradedShards.join(', ') }})</span><n-button text size="tiny" :loading="loading" @click="refreshList">{{ t('list.retryDegraded') }}</n-button></n-alert>
+            <div v-if="optionsError" class="inbox-alert workspace-caption">{{ optionsError }} <n-button text size="tiny" @click="retryOptions">{{ w('retry') }}</n-button></div>
+            <div v-if="loading && !emails.length" class="p-5 space-y-6" :aria-label="t('list.loading')" aria-busy="true"><div v-for="i in 5" :key="i" class="flex gap-4"><n-skeleton circle size="medium" /><div class="flex-1 space-y-3"><n-skeleton text :width="'35%'" /><n-skeleton text :width="'75%'" /><n-skeleton text :width="'50%'" /></div></div></div>
+            <WorkspaceEmpty v-else-if="listError && !emails.length" icon="circle-x" :title="w('retry')" :description="listError"><n-button @click="loadList">{{ w('retry') }}</n-button></WorkspaceEmpty>
+            <WorkspaceEmpty v-else-if="!hasAccess" icon="lock" :title="w('privateSpace')" :description="w('guestHint')"><n-button type="primary" @click="router.push(getRouterPathWithLang('/user', locale))">{{ w('login') }}</n-button></WorkspaceEmpty>
+            <WorkspaceEmpty v-else-if="!emails.length" :icon="filterActive ? 'search' : 'inbox'" :title="w(filterActive ? 'noResults' : 'noMail')" :description="w(filterActive ? 'noResultsDescription' : 'noMailDescription')"><n-button v-if="filterActive" @click="clearFilters">{{ w('clearFilters') }}</n-button><n-button v-else-if="isLoggedIn" @click="router.push(getRouterPathWithLang('/user/external-accounts', locale))">{{ w('manageAccounts') }}</n-button></WorkspaceEmpty>
+            <div v-else class="inbox-rows" :aria-busy="loading">
+              <InboxMessageRow v-for="row in emails" :key="row.id" :email="row" :code="extractCardCode(row.subject)" :time-label="fmtRowTime(row.received_at)" :full-time="fmtTime(row.received_at)" :busy="pendingRows.has(row.id)" @open="openDetail" @star="toggleRowStar" @read="toggleRowRead" @copy-code="copyQuickCode" />
             </div>
-          </div>
-
-          <n-pagination
-            v-if="count > PAGE_SIZE"
-            :page="page"
-            :page-count="Math.ceil(count / PAGE_SIZE)"
-            :page-size="PAGE_SIZE"
-            @update:page="setPage"
-            class="justify-center pt-2"
-          />
-        </div>
-      </n-tab-pane>
-
+            <div class="inbox-pagination"><span class="workspace-caption">{{ count === null ? t('list.countUnknown') : t('list.total', { count }) }}</span><div v-if="page > 1 || hasMore" class="flex items-center gap-2"><n-button size="small" :aria-label="w('previousPage')" :disabled="loading || page === 1" @click="setPage(page - 1)"><MailIcon name="arrow-left" :size="15" /></n-button><span class="workspace-caption" aria-live="polite">{{ w('pageNumber', { page }) }}</span><n-button size="small" :aria-label="w('nextPage')" :disabled="loading || degradedShards.length > 0 || !hasMore || !nextCursor" @click="setPage(page + 1)"><MailIcon name="arrow-right" :size="15" /></n-button></div><span v-else class="workspace-caption">{{ lastLoaded ? t('status.lastLoaded', { time: fmtRowTime(lastLoaded.getTime()) }) : '' }}</span></div>
+          </n-tab-pane>
       <!-- ② 验证码聚合视图 -->
       <n-tab-pane name="codes" :tab="t('tabs.codes')">
-        <div class="space-y-4 pt-2">
+        <div class="inbox-tab-content space-y-4">
           <div class="flex flex-wrap items-end gap-3 bg-zinc-50/60 dark:bg-zinc-900/40 p-4 rounded-2xl border border-zinc-200/60 dark:border-zinc-800/60">
             <div class="flex flex-col gap-1">
               <span class="text-xs text-zinc-500">{{ t('codes.addrLabel') }}</span>
@@ -264,13 +54,13 @@
                 size="small"
                 :placeholder="t('codes.addrPlaceholder')"
                 clearable
-                style="width: 260px"
+                style="width: min(260px, 100%)"
                 @keyup.enter="loadCodes"
                 @clear="loadCodes"
               />
             </div>
             <div class="flex flex-col gap-1">
-              <span class="text-xs text-zinc-500">{{ t('list.fresh') }}</span>
+              <span class="text-xs text-zinc-500">{{ w('timeRange') }}</span>
               <n-select v-model:value="codesFresh" size="small" :options="freshOptions" style="width: 120px" />
             </div>
             <n-button type="primary" size="small" ghost :loading="codesLoading" @click="loadCodes">
@@ -278,6 +68,7 @@
             </n-button>
           </div>
 
+          <n-alert v-if="codesDegraded.length" type="warning">{{ t('list.incompleteResults') }} ({{ codesDegraded.join(', ') }})</n-alert>
           <div v-if="codesError && !codes.length" class="text-sm text-rose-500 py-12 text-center">
             {{ codesError }}
           </div>
@@ -317,7 +108,7 @@
                   ? 'bg-emerald-500 text-white border-emerald-600 shadow-emerald-500/30'
                   : 'bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/30'"
               >
-                <span>{{ copiedIndex === i ? '✓' : '📋' }}</span>
+                <MailIcon :name="copiedIndex === i ? 'check' : 'copy'" :size="15" />
                 <span>{{ copiedIndex === i ? t('codes.copied') : t('codes.copy') }}</span>
               </button>
             </div>
@@ -326,8 +117,8 @@
       </n-tab-pane>
 
       <!-- ③ 聚合器运行状态 -->
-      <n-tab-pane name="status" :tab="t('tabs.status')">
-        <div class="space-y-4 pt-2">
+      <n-tab-pane name="status" :tab="w('sync')">
+        <div class="inbox-tab-content space-y-4">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <p class="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl">{{ t('status.mode') }}</p>
             <n-button size="small" :loading="statusLoading" @click="loadStatus">
@@ -339,28 +130,28 @@
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
             <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-blue-500/30 transition-all">
               <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
-                <span class="p-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">✉️</span>
+                <span class="p-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400"><MailIcon name="mail" :size="16" /></span>
                 <span>{{ t('status.emails') }}</span>
               </div>
               <div class="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono tracking-tight">{{ status.emails }}</div>
             </div>
             <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-emerald-500/30 transition-all">
               <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
-                <span class="p-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">📬</span>
+                <span class="p-1 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"><MailIcon name="inbox" :size="16" /></span>
                 <span>{{ t('status.unread') }}</span>
               </div>
               <div class="text-2xl sm:text-3xl font-bold text-emerald-600 dark:text-emerald-400 mt-2 font-mono tracking-tight">{{ status.unread }}</div>
             </div>
             <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-purple-500/30 transition-all">
               <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
-                <span class="p-1 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">🌐</span>
+                <span class="p-1 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400"><MailIcon name="globe" :size="16" /></span>
                 <span>{{ t('status.sources') }}</span>
               </div>
               <div class="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono tracking-tight">{{ status.sources.length }}</div>
             </div>
             <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 shadow-xs hover:border-amber-500/30 transition-all">
               <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
-                <span class="p-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">👥</span>
+                <span class="p-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400"><MailIcon name="users" :size="16" /></span>
                 <span>{{ t('status.accounts') }}</span>
               </div>
               <div class="text-2xl sm:text-3xl font-bold text-zinc-900 dark:text-zinc-100 mt-2 font-mono tracking-tight">{{ status.accounts.length }}</div>
@@ -387,11 +178,11 @@
       </n-tab-pane>
 
       <!-- ④ API-key 设置 -->
-      <n-tab-pane name="settings" :tab="t('tabs.settings')">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 pt-2">
+      <n-tab-pane name="settings" :tab="w('apiSettings')">
+        <div class="inbox-tab-content grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-5 space-y-3 shadow-xs">
             <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
-              <span>🔑</span>
+              <span><MailIcon name="key" :size="16" /></span>
               <span>{{ t('settings.title') }}</span>
             </h3>
             <p class="text-xs text-zinc-500">{{ t('settings.keyTip') }}</p>
@@ -409,7 +200,7 @@
 
           <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-5 space-y-3 shadow-xs">
             <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
-              <span>✨</span>
+              <MailIcon name="key" :size="16" />
               <span>{{ t('settings.createKey') }}</span>
             </h3>
             <p class="text-xs text-zinc-500">{{ t('settings.createKeyTip') }}</p>
@@ -440,23 +231,49 @@
           </div>
         </div>
       </n-tab-pane>
-    </n-tabs>
+        </n-tabs>
+      </section>
+      <aside class="inbox-context">
+        <section v-if="hasAccess" class="inbox-context-card">
+          <h3><MailIcon name="layers" :size="16" />{{ w('connectedAccounts') }}</h3>
+          <div v-for="account in contextAccounts.slice(0, 4)" :key="account.value" class="inbox-account"><span class="inbox-account__icon"><MailIcon name="mail" :size="15" /></span><span class="inbox-account__label" :title="account.label">{{ account.label }}</span></div>
+          <p v-if="!contextAccounts.length">{{ w('noAccounts') }}</p>
+          <button v-if="isLoggedIn" type="button" class="workspace-link mt-4" @click="router.push(getRouterPathWithLang('/user/external-accounts', locale))">{{ w('manageAccounts') }}<MailIcon name="arrow-right" :size="13" /></button>
+        </section>
+        <section class="inbox-context-card inbox-context-note">
+          <h3><MailIcon name="star" :size="18" />{{ w('calmTitle') }}</h3>
+          <p>{{ w('calmDescription') }}</p>
+          <button type="button" class="workspace-link" @click="router.push({ path: getRouterPathWithLang('/unified', locale), query: { view: 'starred' } })">{{ w('viewStarred') }}<MailIcon name="arrow-right" :size="13" /></button>
+        </section>
+        <section class="inbox-context-card">
+          <h3>{{ w('keyboardShortcuts') }}</h3>
+          <div class="inbox-shortcut"><span>{{ w('shortcutSearch') }}</span><kbd>/</kbd></div>
+          <div class="inbox-shortcut"><span>{{ w('shortcutOpen') }}</span><kbd>Enter</kbd></div>
+        </section>
+      </aside>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { SearchRound, RefreshRound } from '@vicons/material'
+import { RefreshRound } from '@vicons/material'
+import MailIcon from '../components/ui/MailIcon.vue'
+import WorkspaceEmpty from '../components/ui/WorkspaceEmpty.vue'
+import InboxMessageRow from '../components/inbox/InboxMessageRow.vue'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
+import { extractSubjectCode as extractCardCode } from '../utils/subject-code'
 import { useGlobalState, MIN_AUTO_REFRESH_INTERVAL } from '../store'
 import StatusIndicator from '../components/ai/StatusIndicator.vue'
-import PromptChips from '../components/ai/PromptChips.vue'
 import { useMessage } from 'naive-ui'
 import { getRouterPathWithLang } from '../utils'
 
 const { locale, t } = useScopedI18n('unified')
+const { t: w } = useScopedI18n('workspace')
+const showFilters = ref(false)
+const pendingRows = ref(new Set())
 const { unifiedApiKey, adminAuth, userJwt, userSettings, configAutoRefreshInterval } = useGlobalState()
 const router = useRouter()
 const route = useRoute()
@@ -467,44 +284,23 @@ const hasKey = computed(() => !!unifiedApiKey.value?.trim())
 const hasAdmin = computed(() => !!adminAuth.value?.trim())
 const hasAccess = computed(() => isLoggedIn.value || hasKey.value || hasAdmin.value)
 
-// Quick filter chips
-const quickFilterChips = ['📬 全部邮件', '⭐ 星标邮件', '🟢 仅未读', '🔑 提取验证码', '🔄 刷新列表']
-
-const handleSelectChip = (chip) => {
-  if (chip.includes('全部邮件')) {
-    unreadOnly.value = false
-    starOnly.value = false
-    sourceFilter.value = null
-    accountFilter.value = null
-    q.value = ''
-    applyFilter()
-  } else if (chip.includes('星标邮件')) {
-    starOnly.value = true
-    applyFilter()
-  } else if (chip.includes('仅未读')) {
-    unreadOnly.value = true
-    applyFilter()
-  } else if (chip.includes('提取验证码')) {
-    activeTab.value = 'codes'
-  } else if (chip.includes('刷新列表')) {
-    refreshList()
-  }
-}
-
 // ---- 顶部连接状态徽标 ----
 const connected = ref(false)
 const connStatus = computed(() => {
   if (!hasAccess.value) return 'offline'
   if (connected.value) return 'online'
+  if (listError.value || codesError.value || statusError.value || degradedShards.value.length || codesDegraded.value.length) return 'error'
   return 'connecting'
 })
 const connLabel = computed(() => {
   if (!hasAccess.value) return t('status.offline')
   if (connected.value) return t('status.online')
+  if (listError.value || codesError.value || statusError.value || degradedShards.value.length || codesDegraded.value.length) return t('settings.testFail')
   return t('status.connecting')
 })
 
-const activeTab = ref('list')
+const validTabs = ['list', 'codes', 'status', 'settings']
+const activeTab = ref(validTabs.includes(route.query.tab) ? route.query.tab : 'list')
 
 // ---- 邮件列表 ----
 const PAGE_SIZE = 20
@@ -513,38 +309,49 @@ const PAGE_SIZE = 20
 const refreshIntervalMs = computed(() => (
   Math.max(MIN_AUTO_REFRESH_INTERVAL, Number(configAutoRefreshInterval.value) || MIN_AUTO_REFRESH_INTERVAL) * 1000
 ))
+/** @type {import('vue').Ref<import('../api/contracts').UnifiedEmailSummary[]>} */
 const emails = ref([])
+/** @type {import('vue').Ref<number | null>} */
 const count = ref(0)
 const loading = ref(false)
 const listError = ref('')
 const degradedShards = ref([])
 const page = ref(1)
-const q = ref('')
-const sourceFilter = ref(null)
-const accountFilter = ref(null)
-const unreadOnly = ref(false)
-const starOnly = ref(false)
+const hasMore = ref(false)
+const nextCursor = ref(null)
+/** Only visited boundaries are retained; lookup is O(1), storage O(pages visited). */
+const pageCursors = new Map([[1, undefined]])
+const resetPagination = () => {
+  page.value = 1
+  pageCursors.clear()
+  pageCursors.set(1, undefined)
+  nextCursor.value = null
+  hasMore.value = false
+}
+const q = ref(typeof route.query.q === 'string' ? route.query.q : '')
+const sourceFilter = ref(typeof route.query.source === 'string' ? route.query.source : null)
+const accountFilter = ref(typeof route.query.account === 'string' ? route.query.account : null)
+const unreadOnly = ref(route.query.view === 'unread' || route.query.unread === '1')
+const starOnly = ref(route.query.view === 'starred' || route.query.starred === '1')
 
+// Only committed route state can drive network reads; input fields are drafts.
 const filterParams = computed(() => {
-  const p = {
-    source: sourceFilter.value || undefined,
-    unread: unreadOnly.value ? 1 : undefined,
-    starred: starOnly.value ? 1 : undefined,
-    q: q.value.trim() || undefined,
+  const query = route.query
+  const account = typeof query.account === 'string' ? query.account : ''
+  return {
+    source: typeof query.source === 'string' ? query.source : undefined,
+    unread: query.view === 'unread' || query.unread === '1' ? 1 : undefined,
+    starred: query.view === 'starred' || query.starred === '1' ? 1 : undefined,
+    q: typeof query.q === 'string' ? query.q.trim() || undefined : undefined,
+    to_addr: account.includes('@') ? account : undefined,
+    account_id: account && !account.includes('@') ? account : undefined,
   }
-  if (accountFilter.value) {
-    if (accountFilter.value.includes('@')) {
-      p.to_addr = accountFilter.value
-    } else {
-      p.account_id = accountFilter.value
-    }
-  }
-  return p
 })
 const listParams = computed(() => ({
   ...filterParams.value,
   limit: PAGE_SIZE,
-  offset: (page.value - 1) * PAGE_SIZE,
+  cursor: pageCursors.get(page.value),
+  with_count: page.value === 1 ? 1 : 0,
 }))
 const filterActive = computed(() => !!(
   filterParams.value.source ||
@@ -555,9 +362,36 @@ const filterActive = computed(() => !!(
   filterParams.value.q
 ))
 
-let listRequestSeq = 0
-let codesRequestSeq = 0
-let statusRequestSeq = 0
+/** @type {Partial<Record<'list' | 'probe' | 'codes' | 'status' | 'options' | 'key' | 'test', AbortController>>} */
+const requests = {}
+/** @param {keyof typeof requests} kind */
+const cancelRequest = (kind) => {
+  requests[kind]?.abort()
+  delete requests[kind]
+}
+/** @param {keyof typeof requests} kind */
+const beginRequest = (kind) => {
+  cancelRequest(kind)
+  const controller = new AbortController()
+  requests[kind] = controller
+  return controller
+}
+/** @param {keyof typeof requests} kind @param {AbortController} controller */
+const currentRequest = (kind, controller) => !componentDisposed && componentActive && requests[kind] === controller && !controller.signal.aborted
+const rowRequests = new Map()
+const cancelRequests = () => {
+  for (const controller of rowRequests.values()) controller.abort()
+  rowRequests.clear()
+  pendingRows.value.clear()
+  loading.value = false
+  codesLoading.value = false
+  statusLoading.value = false
+  creating.value = false
+  testing.value = false
+  Object.keys(requests).forEach(cancelRequest)
+  backgroundListPending = false
+  backgroundCodesPending = false
+}
 let backgroundListPending = false
 let backgroundCodesPending = false
 
@@ -570,107 +404,98 @@ let componentDisposed = false
 const autoRefresh = ref(true)
 
 const loadList = async ({ background = false } = {}) => {
-  if (!hasAccess.value) return
-  if (background && backgroundListPending) return
-  const requestId = ++listRequestSeq
+  if (componentDisposed || !componentActive || !hasAccess.value) return false
+  if (background && backgroundListPending) return false
+  const controller = beginRequest('list')
   const requestedPage = page.value
   const requestedParams = listParams.value
 
-  if (background) {
-    backgroundListPending = true
-  } else {
-    loading.value = true
-    listError.value = ''
-  }
+  backgroundListPending = background
+  loading.value = !background
+  if (!background) listError.value = ''
 
   try {
-    const listRes = await api.unified.listEmails(requestedParams)
-    if (requestId !== listRequestSeq) return
+    const listRes = await api.unified.listEmails(requestedParams, { signal: controller.signal })
+    if (!currentRequest('list', controller)) return false
     emails.value = listRes.results || []
+    // Refreshing a boundary invalidates every later cursor derived from it.
+    for (const boundary of pageCursors.keys()) {
+      if (boundary > requestedPage) pageCursors.delete(boundary)
+    }
+    hasMore.value = Boolean(listRes.has_more)
+    nextCursor.value = listRes.degraded?.length ? null : listRes.next_cursor || null
+    if (nextCursor.value) pageCursors.set(requestedPage + 1, nextCursor.value)
     // The first page already includes the scoped count; avoid a second full-table scan.
     if (requestedPage === 1 && typeof listRes.count === 'number') {
       count.value = listRes.count
     }
     // 刷新探测基线（仅第一页代表全域最新一封）
-    if (requestedPage === 1 && emails.value.length > 0) {
-      newestSeenKey = emailSortKey(emails.value[0])
+    if (requestedPage === 1 && !listRes.degraded?.length) {
+      newestSeenKey = emails.value.length ? emailSortKey(emails.value[0]) : ''
     }
     degradedShards.value = Array.isArray(listRes.degraded) ? listRes.degraded : []
-    listError.value = degradedShards.value.length
-      ? '部分分片暂不可用，当前结果不完整'
-      : ''
+    listError.value = ''
+    if (degradedShards.value.length) count.value = null
     connected.value = degradedShards.value.length === 0
     lastLoaded.value = new Date()
+    return degradedShards.value.length === 0
   } catch (e) {
-    if (requestId !== listRequestSeq) return
+    if (!currentRequest('list', controller)) return false
     connected.value = false
+    listError.value = e.message || 'error'
     if (!background) {
-      listError.value = e.message || 'error'
       degradedShards.value = []
       emails.value = []
-      count.value = 0
+      nextCursor.value = null
+      count.value = null
     }
+    return false
   } finally {
-    if (background) {
+    if (currentRequest('list', controller)) {
       backgroundListPending = false
-    } else if (requestId === listRequestSeq) {
       loading.value = false
+      delete requests.list
     }
   }
 }
 
 const refreshList = () => loadList()
-const applySearch = () => { page.value = 1; loadList() }
-const applyFilter = () => { page.value = 1; loadList() }
-const setPage = (p) => { page.value = p; loadList() }
+const applySearch = () => {
+  const both = unreadOnly.value && starOnly.value
+  const query = {
+    ...route.query,
+    q: q.value.trim() || undefined,
+    source: sourceFilter.value || undefined,
+    account: accountFilter.value || undefined,
+    view: both ? undefined : starOnly.value ? 'starred' : unreadOnly.value ? 'unread' : undefined,
+    unread: both ? '1' : undefined,
+    starred: both ? '1' : undefined,
+  }
+  const unchanged = ['q', 'source', 'account', 'view', 'unread', 'starred'].every(key => (query[key] || '') === (route.query[key] || ''))
+  if (unchanged) { resetPagination(); loadList(); return }
+  router.replace({ query })
+}
+const applyFilter = applySearch
+const clearSearch = () => { q.value = ''; applySearch() }
+const clearFilters = () => {
+  q.value = ''
+  sourceFilter.value = null
+  accountFilter.value = null
+  unreadOnly.value = false
+  starOnly.value = false
+  applySearch()
+}
+const setPage = (target) => {
+  if (loading.value || !pageCursors.has(target)) return
+  if (target > page.value && (degradedShards.value.length || !hasMore.value)) return
+  cancelRequest('probe')
+  page.value = target
+  loadList()
+}
 const openDetail = (id) => router.push({
   path: getRouterPathWithLang(`/unified/${encodeURIComponent(id)}`, locale.value || locale),
   query: { from: route.fullPath },
 })
-
-// 辅助方法：发件人头像取字与渐变配色
-const getSenderInitial = (addr) => {
-  if (!addr) return '?'
-  const clean = addr.replace(/<.*>/, '').replace(/[@._-]/g, ' ').trim()
-  return (clean[0] || '?').toUpperCase()
-}
-
-const getSenderColorClass = (addr) => {
-  const palettes = [
-    'from-blue-500/20 to-indigo-500/30 text-blue-600 dark:text-blue-400 border-blue-500/30',
-    'from-emerald-500/20 to-teal-500/30 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-    'from-purple-500/20 to-pink-500/30 text-purple-600 dark:text-purple-400 border-purple-500/30',
-    'from-amber-500/20 to-orange-500/30 text-amber-600 dark:text-amber-400 border-amber-500/30',
-    'from-sky-500/20 to-cyan-500/30 text-sky-600 dark:text-sky-400 border-sky-500/30',
-  ]
-  if (!addr) return palettes[0]
-  let hash = 0
-  for (let i = 0; i < addr.length; i++) hash = (hash << 5) - hash + addr.charCodeAt(i)
-  return palettes[(hash >>> 0) % palettes.length]
-}
-
-// 提取邮件主题中 4-8 位验证码（对齐后端 worker/src/unified/verifcode.ts 规则）
-const extractCardCode = (subject) => {
-  if (!subject) return ''
-  // 1. 优先匹配 3+3 分隔格式（如 123-456 或 G-123456），排除电话号码
-  const splitMatch = subject.match(/(?:code|验证码|verification|otp|pin|安全码|动态码|校验码|授权码|口令|passcode)[^\d]{0,24}(\b\d{3})[\s-](\d{3}\b)(?![\s-]?\d)/i)
-  if (splitMatch) return splitMatch[1] + splitMatch[2]
-
-  // 2. 匹配常见验证码前缀型（如 G-123456）
-  const prefixMatch = subject.match(/\b([A-Z]-\d{4,8})\b/i)
-  if (prefixMatch) return prefixMatch[1]
-
-  // 3. 关键字邻近的 4-8 位验证码
-  const kwMatch = subject.match(/(?:code|验证码|verification\s*code|otp|pin|安全码|动态码|校验码|授权码|口令|passcode|is|为)[:：\s]*([0-9]{4,8}|[A-Z0-9]{5,8})(?!\d|[-/.]\d{1,2}|年)/i)
-  if (kwMatch && kwMatch[1]) return kwMatch[1]
-
-  // 4. 独立 6 位纯数字退化匹配（严谨排除年份 19xx/20xx 与订单序号/金额前缀）
-  const pureNum = subject.match(/(?<![#$¥€\d])\b(\d{6})\b(?!\d)/)
-  if (pureNum && !/^(19|20)\d\d$/.test(pureNum[1]) && !/(?:order|订单|no|item|ref|ticket)/i.test(subject)) {
-    return pureNum[1]
-  }
-  return ''
-}
 
 const copyQuickCode = async (code) => {
   try {
@@ -681,45 +506,61 @@ const copyQuickCode = async (code) => {
   }
 }
 
-// 乐观更新：即时修改列表视图状态，后台异步同步，失败时平滑回滚
-const toggleRowStar = async (row) => {
-  const previousStar = row.is_starred
-  const targetStar = previousStar ? 0 : 1
-  row.is_starred = targetStar
+// Mutations share the view lifetime; an old response must never update a new scope.
+/** @param {import('../api/contracts').UnifiedEmailSummary} row @param {'is_read' | 'is_starred'} field */
+const updateRow = async (row, field) => {
+  if (componentDisposed || pendingRows.value.has(row.id)) return
+  const controller = new AbortController()
+  rowRequests.set(row.id, controller)
+  pendingRows.value.add(row.id)
+  const rows = emails.value
+  const identity = authIdentity.value
+  const filters = filterParams.value
+  const ownsScope = () => !componentDisposed && !controller.signal.aborted && identity === authIdentity.value && filters === filterParams.value
+  const current = () => ownsScope() && rows === emails.value
+  const previous = row[field]
+  const target = previous ? 0 : 1
+  row[field] = target
   try {
-    await api.unified.toggleStar(row.id, targetStar)
-    message.success(targetStar ? '已星标保护' : '已取消星标')
-  } catch (e) {
-    row.is_starred = previousStar
-    message.error(e.message || '操作失败')
-  }
-}
-
-const toggleRowRead = async (row) => {
-  const previousRead = row.is_read
-  const targetRead = !previousRead
-  row.is_read = targetRead
-  try {
-    if (targetRead) {
-      await api.unified.markRead(row.id)
-    } else {
-      await api.unified.markUnread(row.id)
+    const options = { signal: controller.signal }
+    let result
+    if (field === 'is_starred') result = await api.unified.toggleStar(row.id, target, options)
+    else if (target) result = await api.unified.markRead(row.id, options)
+    else result = await api.unified.markUnread(row.id, options)
+    if (!ownsScope()) return
+    if (current()) row[field] = result[field] ?? target
+    if (field === 'is_starred') message.success(w(row[field] ? 'protected' : 'removeStar'))
+    const affectsFilter = field === 'is_starred' ? filters.starred : filters.unread
+    if (affectsFilter || rows !== emails.value) {
+      cancelRequest('probe')
+      resetPagination()
+      count.value = null
+      await loadList()
     }
-  } catch (e) {
-    row.is_read = previousRead
-    message.error(e.message || '操作失败')
+  } catch (error) {
+    if (!current()) return
+    row[field] = previous
+    message.error(error.message || t('settings.testFail'))
+  } finally {
+    if (rowRequests.get(row.id) === controller) {
+      rowRequests.delete(row.id)
+      pendingRows.value.delete(row.id)
+    }
   }
 }
+const toggleRowStar = row => updateRow(row, 'is_starred')
+const toggleRowRead = row => updateRow(row, 'is_read')
 
-const probeNewestKey = async () => {
-  // 探测请求只取 1 行，且 with_count=0 让 worker 跳过 COUNT(*) 全表扫描
-  const probeRes = await api.unified.listEmails({ ...filterParams.value, limit: 1, offset: 0, with_count: 0 })
+const probeNewestKey = async (signal) => {
+  // One row, no COUNT(*); the request shares the view's cancellation scope.
+  const probeRes = await api.unified.listEmails({ ...filterParams.value, limit: 1, with_count: 0 }, { signal })
+  if (probeRes.degraded?.length) throw new Error(t('list.incompleteResults'))
   const top = (probeRes.results || [])[0]
   return top ? emailSortKey(top) : ''
 }
 
 const autoRefreshList = () => {
-  if (!autoRefresh.value || !hasAccess.value) return
+  if (componentDisposed || !componentActive || !autoRefresh.value || !hasAccess.value) return
   if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
   if (activeTab.value !== 'list') {
     if (activeTab.value === 'codes' && !codesLoading.value && !backgroundCodesPending) {
@@ -727,24 +568,31 @@ const autoRefreshList = () => {
     }
     return
   }
-  if (loading.value || backgroundListPending) return
+  if (loading.value || backgroundListPending || requests.probe) return
+  const controller = beginRequest('probe')
   void (async () => {
-    let newestKey = ''
     try {
-      newestKey = await probeNewestKey()
-    } catch (e) {
-      if (!backgroundListPending) connected.value = false
-      return
-    }
-    const hasNew = newestKey !== newestSeenKey
-    newestSeenKey = newestKey
-    if (hasNew && !backgroundListPending) {
-      await loadList({ background: true })
+      const newestKey = await probeNewestKey(controller.signal)
+      if (!currentRequest('probe', controller)) return
+      const hasNew = newestKey !== newestSeenKey || degradedShards.value.length > 0 || Boolean(listError.value)
+      if (hasNew && !backgroundListPending) {
+        const loaded = await loadList({ background: true })
+        if (loaded && currentRequest('probe', controller)) newestSeenKey = newestKey
+      }
+    } catch (error) {
+      if (currentRequest('probe', controller)) {
+        connected.value = false
+        // A visible status carries quiet failures without repeated toast messages.
+        listError.value = error.message || t('settings.testFail')
+      }
+    } finally {
+      if (requests.probe === controller) delete requests.probe
     }
   })()
 }
 
 const startAutoRefresh = () => {
+  if (componentDisposed || !componentActive) return
   if (autoRefreshTimer != null || typeof window === 'undefined') return
   autoRefreshTimer = window.setInterval(autoRefreshList, refreshIntervalMs.value)
 }
@@ -791,7 +639,7 @@ const accountOptions = computed(() => {
 
   // 1. 用户配置的外部邮箱（最优先，显示 label + username）
   userAccounts.value.forEach(a => {
-    const val = a.username || a.id
+    const val = a.id
     if (val && !seenValues.has(val)) {
       seenValues.add(val)
       const label = a.label ? `${a.label} (${a.username})` : a.username
@@ -820,6 +668,16 @@ const accountOptions = computed(() => {
   return list
 })
 
+const contextAccounts = computed(() => {
+  const accounts = new Map()
+  userAccounts.value.forEach(account => accounts.set(account.username || account.id, { value: account.username || account.id, label: account.label || account.username || account.id }))
+  boundAddresses.value.forEach(address => {
+    const value = typeof address === 'string' ? address : address.name
+    if (value && !accounts.has(value)) accounts.set(value, { value, label: value })
+  })
+  return accounts.size ? [...accounts.values()] : accountOptions.value
+})
+
 const optionsError = ref('')
 let optionsScope = ''
 let optionsPromise = null
@@ -828,8 +686,8 @@ let optionsGeneration = 0
 
 const authIdentity = computed(() => {
   const jwt = userJwt.value?.trim()
-  if (jwt) return `user:${jwt}`
   const admin = adminAuth.value?.trim()
+  if (jwt) return `user:${jwt}|admin:${admin || ''}`
   if (admin) return `admin:${admin}`
   const key = unifiedApiKey.value?.trim()
   return key ? `key:${key}` : ''
@@ -846,6 +704,7 @@ const resetOptions = () => {
 
 const loadOptions = async () => {
   const identity = authIdentity.value
+  if (componentDisposed || !componentActive) return
   if (!identity) {
     resetOptions()
     return
@@ -853,35 +712,38 @@ const loadOptions = async () => {
   if (optionsScope === identity && !optionsError.value) return
   if (optionsPromise && optionsPromiseIdentity === identity) return optionsPromise
   const generation = ++optionsGeneration
+  const controller = beginRequest('options')
+  const requestOptions = { signal: controller.signal }
   optionsError.value = ''
   const promise = (async () => {
-    const current = () => generation === optionsGeneration && identity === authIdentity.value
+    const current = () => currentRequest('options', controller) && generation === optionsGeneration && identity === authIdentity.value
     const tasks = []
     if (isLoggedIn.value) {
-      tasks.push(api.userMailAccounts.list().then(res => {
+      tasks.push(api.userMailAccounts.list(requestOptions).then(res => {
         if (current()) userAccounts.value = res.results || []
       }))
-      tasks.push(api.fetch('/user_api/bind_address').then(res => {
+      tasks.push(api.fetch('/user_api/bind_address', requestOptions).then(res => {
         if (current()) boundAddresses.value = res.results || []
       }))
     }
-    tasks.push(api.unified.meta().then(res => {
+    tasks.push(api.unified.meta(requestOptions).then(res => {
       if (!current()) return
       const rows = []
       ;(res.sources || []).forEach(source => rows.push({ source }))
       ;(res.accounts || []).forEach(account_id => rows.push({ account_id }))
       ;(res.to_addrs || []).forEach(to_addr => rows.push({ to_addr }))
       optionRows.value = rows
+      if (res.degraded?.length) throw new Error(`${t('list.incompleteResults')} (${res.degraded.join(', ')})`)
     }))
     const results = await Promise.allSettled(tasks)
     if (!current()) return
     if (results.some(result => result.status === 'rejected')) {
-      throw new Error('筛选项加载失败，请重试')
+      throw new AggregateError(results.filter(result => result.status === 'rejected').map(result => result.reason), '筛选项加载失败，请重试')
     }
     optionsScope = identity
   })()
   const handledPromise = promise.catch(error => {
-    if (generation === optionsGeneration && identity === authIdentity.value) {
+    if (currentRequest('options', controller) && generation === optionsGeneration && identity === authIdentity.value) {
       optionsScope = ''
       optionsError.value = error.message || '筛选项加载失败，请重试'
     }
@@ -890,6 +752,7 @@ const loadOptions = async () => {
   optionsPromise = handledPromise
   optionsPromiseIdentity = identity
   handledPromise.finally(() => {
+    if (requests.options === controller) delete requests.options
     if (optionsPromise === handledPromise) {
       optionsPromise = null
       optionsPromiseIdentity = ''
@@ -910,6 +773,7 @@ const codesFresh = ref(10)
 const codes = ref([])
 const codesLoading = ref(false)
 const codesError = ref('')
+const codesDegraded = ref([])
 const copiedIndex = ref(-1)
 const freshOptions = [
   { label: '10 min', value: 10 },
@@ -919,10 +783,11 @@ const freshOptions = [
 
 const loadCodes = async ({ background = false } = {}) => {
   if (background && backgroundCodesPending) return
-  const requestId = ++codesRequestSeq
+  if (componentDisposed || !componentActive || !hasAccess.value) return
+  const controller = beginRequest('codes')
   const identity = authIdentity.value
   const isCurrent = () =>
-    !componentDisposed && requestId === codesRequestSeq && identity === authIdentity.value && hasAccess.value
+    currentRequest('codes', controller) && identity === authIdentity.value && hasAccess.value
   if (!identity) {
     if (!background) codesLoading.value = false
     return
@@ -934,10 +799,11 @@ const loadCodes = async ({ background = false } = {}) => {
     codesError.value = ''
   }
   try {
-    const res = await api.unified.verifcodes(codesAddr.value.trim(), codesFresh.value * 60 * 1000)
+    const res = await api.unified.verifcodes(codesAddr.value.trim(), codesFresh.value * 60 * 1000, undefined, { signal: controller.signal })
     if (!isCurrent()) return
     codes.value = res.results || []
-    connected.value = true
+    codesDegraded.value = res.degraded || []
+    connected.value = codesDegraded.value.length === 0
     codesError.value = ''
     lastLoaded.value = new Date()
   } catch (e) {
@@ -948,18 +814,22 @@ const loadCodes = async ({ background = false } = {}) => {
       codes.value = []
     }
   } finally {
-    if (background) {
+    if (isCurrent()) {
       backgroundCodesPending = false
+      codesLoading.value = false
+      delete requests.codes
     }
-    if (isCurrent() && !background) codesLoading.value = false
   }
 }
 
+let codeCopyTimer
 const copyCode = async (index, code) => {
   try {
     await navigator.clipboard.writeText(code)
+    if (componentDisposed) return
     copiedIndex.value = index
-    setTimeout(() => { copiedIndex.value = -1 }, 1500)
+    clearTimeout(codeCopyTimer)
+    codeCopyTimer = setTimeout(() => { copiedIndex.value = -1 }, 1500)
   } catch (e) {
     message.error(t('codes.copyFailed'))
   }
@@ -974,10 +844,11 @@ const lastRefresh = ref(null)
 const lastLoaded = ref(null)
 
 const loadStatus = async () => {
-  const requestId = ++statusRequestSeq
+  if (componentDisposed || !componentActive || !hasAccess.value) return
+  const controller = beginRequest('status')
   const identity = authIdentity.value
   const isCurrent = () =>
-    !componentDisposed && requestId === statusRequestSeq && identity === authIdentity.value && hasAccess.value
+    currentRequest('status', controller) && identity === authIdentity.value && hasAccess.value
   if (!identity) {
     statusLoading.value = false
     return
@@ -985,7 +856,7 @@ const loadStatus = async () => {
   statusLoading.value = true
   statusError.value = ''
   try {
-    const stats = await api.unified.stats({})
+    const stats = await api.unified.stats({}, { signal: controller.signal })
     if (!isCurrent()) return
     if (!accountOptions.value.length && !sourceOptions.value.length) {
       await loadOptions()
@@ -999,13 +870,14 @@ const loadStatus = async () => {
     }
     lastRefresh.value = new Date()
     lastLoaded.value = lastRefresh.value
-    connected.value = true
+    statusError.value = stats.degraded?.length ? `${t('list.incompleteResults')} (${stats.degraded.join(', ')})` : ''
+    connected.value = !stats.degraded?.length
   } catch (e) {
     if (!isCurrent()) return
     statusError.value = e.message || 'error'
     connected.value = false
   } finally {
-    if (isCurrent()) statusLoading.value = false
+    if (isCurrent()) { statusLoading.value = false; delete requests.status }
   }
 }
 
@@ -1030,42 +902,47 @@ const saveKey = () => {
 }
 
 const testKey = async () => {
+  if (testing.value) return
   if (!unifiedApiKey.value.trim()) {
     message.error(t('settings.required'))
     return
   }
+  const controller = beginRequest('test')
   testing.value = true
   try {
-    await api.unified.count({})
+    await api.unified.count({}, { signal: controller.signal })
+    if (!currentRequest('test', controller)) return
     connected.value = true
     message.success(t('settings.testOk'))
   } catch (e) {
+    if (!currentRequest('test', controller)) return
     connected.value = false
     message.error(`${t('settings.testFail')}: ${e.message}`)
   } finally {
-    testing.value = false
+    if (requests.test === controller) { testing.value = false; delete requests.test }
   }
 }
 
 const createKey = async () => {
+  if (creating.value || !newKeyName.value.trim() || !newKeyAdminPassword.value) return
+  const controller = beginRequest('key')
   creating.value = true
-  const prevAdmin = adminAuth.value
   try {
-    if (newKeyAdminPassword.value) adminAuth.value = newKeyAdminPassword.value
     const res = await api.admin.createUnifiedKey({
       name: newKeyName.value.trim(),
       role: newKeyRole.value,
-    })
+    }, newKeyAdminPassword.value, { signal: controller.signal })
+    if (!currentRequest('key', controller)) return
     newKeyPlain.value = res.key
     unifiedApiKey.value = res.key
     keyInput.value = res.key
     connected.value = true
     message.success(t('settings.created'))
   } catch (e) {
+    if (!currentRequest('key', controller)) return
     message.error(e.message || 'error')
   } finally {
-    adminAuth.value = prevAdmin
-    creating.value = false
+    if (requests.key === controller) { creating.value = false; delete requests.key }
   }
 }
 
@@ -1084,9 +961,7 @@ const refreshCurrent = () => {
 
 watch(authIdentity, (identity, previousIdentity) => {
   if (identity === previousIdentity) return
-  listRequestSeq += 1
-  codesRequestSeq += 1
-  statusRequestSeq += 1
+  cancelRequests()
   newestSeenKey = ''
   resetOptions()
   connected.value = false
@@ -1095,15 +970,19 @@ watch(authIdentity, (identity, previousIdentity) => {
   codesAddr.value = ''
   codes.value = []
   codesError.value = ''
+  codesDegraded.value = []
   codesLoading.value = false
   status.value = { emails: 0, unread: 0, sources: [], accounts: [] }
   statusError.value = ''
   statusLoading.value = false
-  if (!identity) {
-    emails.value = []
-    count.value = 0
-    return
-  }
+  emails.value = []
+  count.value = 0
+  resetPagination()
+  degradedShards.value = []
+  lastLoaded.value = null
+  lastRefresh.value = null
+  pendingRows.value.clear()
+  if (!identity) return
   void loadOptions()
   refreshCurrent()
 })
@@ -1131,6 +1010,7 @@ watch(codesFresh, () => {
 })
 
 watch(activeTab, (tab) => {
+  if ((route.query.tab || 'list') !== tab) router.replace({ query: { ...route.query, tab: tab === 'list' ? undefined : tab } })
   if (tab === 'codes') {
     loadCodes()
   } else if (tab === 'status') {
@@ -1138,7 +1018,30 @@ watch(activeTab, (tab) => {
   }
 })
 
-let isFirstMount = true
+// Sidebar and global search share the same bookmarkable inbox state.
+watch(() => [route.query.q, route.query.view, route.query.source, route.query.account, route.query.unread, route.query.starred, route.query.tab], (current, previous) => {
+  const [search, view, source, account, unread, starred, tab] = current
+  activeTab.value = validTabs.includes(tab) ? tab : 'list'
+  if (current.slice(0, 6).some((value, index) => value !== previous[index])) {
+    cancelRequest('probe')
+    newestSeenKey = ''
+    q.value = typeof search === 'string' ? search : ''
+    sourceFilter.value = typeof source === 'string' ? source : null
+    accountFilter.value = typeof account === 'string' ? account : null
+    unreadOnly.value = view === 'unread' || unread === '1'
+    starOnly.value = view === 'starred' || starred === '1'
+    resetPagination()
+    loadList()
+  }
+})
+const fmtRowTime = (ms) => {
+  const date = new Date(Number(ms))
+  if (!ms || Number.isNaN(date.getTime())) return ''
+  const today = date.toDateString() === new Date().toDateString()
+  return new Intl.DateTimeFormat(locale.value, today ? { hour: '2-digit', minute: '2-digit', hour12: false } : { month: 'short', day: 'numeric' }).format(date)
+}
+
+let componentActive = true
 
 onMounted(async () => {
   componentDisposed = false
@@ -1147,50 +1050,44 @@ onMounted(async () => {
   }
   if (hasAccess.value) {
     await loadOptions()
+    if (componentDisposed || !componentActive) return
     await loadList()
+    if (activeTab.value === 'codes') await loadCodes()
+    else if (activeTab.value === 'status') await loadStatus()
   }
-  if (componentDisposed) return
+  if (componentDisposed || !componentActive) return
   if (autoRefresh.value) {
     startAutoRefresh()
   }
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', handleVisibilityChange)
   }
-  isFirstMount = false
 })
 
 onActivated(() => {
-  if (componentDisposed) return
-  if (isFirstMount) return
-  if (autoRefresh.value) {
-    startAutoRefresh()
-    autoRefreshList()
-  }
+  const wasInactive = !componentActive
+  componentActive = true
+  if (componentDisposed || !wasInactive) return
+  void loadOptions()
+  refreshCurrent()
+  if (autoRefresh.value) startAutoRefresh()
 })
 
 onDeactivated(() => {
+  componentActive = false
+  cancelRequests()
   stopAutoRefresh()
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(codeCopyTimer)
   componentDisposed = true
   backgroundListPending = false
   backgroundCodesPending = false
-  listRequestSeq += 1
-  codesRequestSeq += 1
-  statusRequestSeq += 1
+  cancelRequests()
   stopAutoRefresh()
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 })
 </script>
-
-<style scoped>
-.unified-tabs {
-  --n-bar-color: #18181b;
-}
-.dark .unified-tabs {
-  --n-bar-color: #f4f4f5;
-}
-</style>

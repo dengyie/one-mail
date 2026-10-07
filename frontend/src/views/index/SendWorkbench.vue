@@ -219,8 +219,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="w-full max-w-5xl mx-auto space-y-4">
-    <div class="flex items-center justify-between flex-wrap gap-3 pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
+  <div class="workspace-page send-workspace space-y-5">
+    <div class="workspace-page-header">
       <div>
         <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('title') }}</h2>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('subtitle') }}</p>
@@ -228,12 +228,12 @@ onBeforeUnmount(() => {
       <div class="flex items-center gap-2 flex-wrap justify-end">
         <div
           v-if="settings.address"
-          class="px-3 py-1.5 rounded-xl bg-slate-200/60 dark:bg-slate-800/60 border border-slate-300/60 dark:border-slate-700/60 text-xs font-mono text-slate-700 dark:text-slate-300"
+          class="workspace-badge"
         >
           {{ t('addressLabel') }}:
-          <span class="font-bold text-blue-600 dark:text-blue-400">{{ settings.address }}</span>
+          <span>{{ settings.address }}</span>
         </div>
-        <div class="px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs font-semibold text-blue-600 dark:text-blue-400">
+        <div class="workspace-badge workspace-badge--accent">
           <span v-if="isAdmin">{{ t('adminUnlimited') }}</span>
           <span v-else>{{ t('balance', { n: settings.send_balance || 0 }) }}</span>
         </div>
@@ -245,8 +245,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <n-tabs :value="activeTab" type="segment" @update:value="onTabUpdate">
-      <n-tab-pane name="compose" :tab="t('tabCompose')"></n-tab-pane>
+    <n-tabs :value="activeTab" type="line" @update:value="onTabUpdate">
+      <n-tab-pane name="compose"><template #tab>{{ t('tabCompose') }}</template></n-tab-pane>
       <n-tab-pane name="self">
         <template #tab>
           <n-badge :value="selfCount" :max="99" :show="selfCount > 0" :offset="[8, -2]">
@@ -274,7 +274,7 @@ onBeforeUnmount(() => {
 
     <div
       v-if="showHistory"
-      class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-4 sm:p-6 shadow-sm"
+      class="settings-section"
     >
       <SendHistoryPane
         endpoint="/api/sendbox"

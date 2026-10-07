@@ -67,7 +67,7 @@ describe('DomainMailbox view contract and performance optimizations', () => {
 
   it('supports random prefix generation for instant disposable address creation', () => {
     expect(view).toContain('const generateRandomPrefix = () => {')
-    expect(view).toContain('🎲 随机')
+    expect(view).toContain('@click="generateRandomPrefix"')
   })
 
   it('displays to_addr and provides one-click recipient address filtering with domain validation', () => {

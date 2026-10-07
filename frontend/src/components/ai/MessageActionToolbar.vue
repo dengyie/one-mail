@@ -12,7 +12,7 @@
         class="hover:text-zinc-900 dark:hover:text-zinc-100 disabled:opacity-30 disabled:pointer-events-none p-0.5"
         title="Previous version"
       >
-        ‹
+        <UiIcon name="chevron-left" :size="14" />
       </button>
       <span>{{ branchIndex + 1 }}/{{ totalBranches }}</span>
       <button
@@ -22,7 +22,7 @@
         class="hover:text-zinc-900 dark:hover:text-zinc-100 disabled:opacity-30 disabled:pointer-events-none p-0.5"
         title="Next version"
       >
-        ›
+        <UiIcon name="chevron-right" :size="14" />
       </button>
     </div>
 
@@ -31,10 +31,10 @@
       type="button"
       @click="handleCopy"
       class="p-1 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 rounded-md transition-colors"
-      title="Copy response"
+      :title="copyFailed ? labels.copyFailed : (copied ? labels.copied : labels.copy)"
+      :aria-label="copyFailed ? labels.copyFailed : (copied ? labels.copied : labels.copy)"
     >
-      <span v-if="copied" class="text-emerald-500 font-bold">✓</span>
-      <span v-else>📋</span>
+      <UiIcon :name="copyFailed ? 'circle-x' : (copied ? 'check' : 'copy')" :size="16" />
     </button>
 
     <!-- Retry / Regenerate -->
@@ -43,13 +43,14 @@
       type="button"
       @click="$emit('retry')"
       class="p-1 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 rounded-md transition-colors"
-      title="Regenerate response"
+      :title="labels.retry"
+      :aria-label="labels.retry"
     >
-      🔄
+      <UiIcon name="refresh" :size="16" />
     </button>
 
     <!-- Thumbs Up / Down -->
-    <template v-if="role === 'assistant'">
+    <template v-if="role === 'assistant' && showFeedback">
       <button
         type="button"
         @click="handleThumb('up')"
@@ -59,7 +60,7 @@
         ]"
         title="Good response"
       >
-        👍
+        <UiIcon name="thumbs-up" :size="16" />
       </button>
       <button
         type="button"
@@ -70,20 +71,23 @@
         ]"
         title="Bad response"
       >
-        👎
+        <UiIcon name="thumbs-down" :size="16" />
       </button>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
+import UiIcon from './UiIcon.vue';
 
 const props = withDefaults(
   defineProps<{
     content: string;
     role?: 'assistant' | 'user' | string;
     showRetry?: boolean;
+    showFeedback?: boolean;
+    actionLabels?: Partial<Record<'copy' | 'copied' | 'copyFailed' | 'retry', string>>;
     branchIndex?: number;
     totalBranches?: number;
     className?: string;
@@ -91,6 +95,7 @@ const props = withDefaults(
   {
     role: 'assistant',
     showRetry: true,
+    showFeedback: true,
     className: ''
   }
 );
@@ -102,12 +107,26 @@ const emit = defineEmits<{
 }>();
 
 const copied = ref(false);
+const copyFailed = ref(false);
+const labels = computed(() => ({ copy: 'Copy', copied: 'Copied', copyFailed: 'Copy failed', retry: 'Regenerate', ...props.actionLabels }));
 const feedback = ref<'up' | 'down' | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
+let disposed = false;
+onBeforeUnmount(() => { disposed = true; clearTimeout(copyTimer); });
 
 const handleCopy = async () => {
-  await navigator.clipboard.writeText(props.content);
-  copied.value = true;
-  setTimeout(() => (copied.value = false), 2000);
+  clearTimeout(copyTimer);
+  copyFailed.value = false;
+  try {
+    await navigator.clipboard.writeText(props.content);
+    if (disposed) return;
+    copied.value = true;
+  } catch {
+    if (disposed) return;
+    copied.value = false;
+    copyFailed.value = true;
+  }
+  copyTimer = setTimeout(() => { copied.value = false; copyFailed.value = false; }, 2000);
 };
 
 const handleThumb = (type: 'up' | 'down') => {

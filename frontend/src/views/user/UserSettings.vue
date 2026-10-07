@@ -1,5 +1,6 @@
 <script setup>
-import { ref, h } from 'vue'
+import MailIcon from '../../components/ui/MailIcon.vue'
+import { ref, computed, h } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
 import { startRegistration } from '@simplewebauthn/browser'
@@ -7,13 +8,8 @@ import { NButton, NPopconfirm } from 'naive-ui'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
-import { clearLocalAddressCache } from '../../utils/address-cache'
 
-const {
-    userJwt, userSettings, auth, jwt,
-    addressPassword, userOauth2SessionState, userOauth2SessionClientID,
-    unifiedApiKey,
-} = useGlobalState()
+const { userSettings } = useGlobalState()
 const message = useMessage()
 
 const creatingPasskey = ref(false)
@@ -38,11 +34,11 @@ const { t } = useScopedI18n('views.user.UserSettings')
 
 const handleChangePassword = async () => {
     if (!newPassword.value) {
-        message.error('新密码不能为空')
+        message.error(t('passwordRequired'))
         return
     }
     if (newPassword.value !== confirmPassword.value) {
-        message.error('两次输入的新密码不一致')
+        message.error(t('passwordMismatch'))
         return
     }
     changingPassword.value = true
@@ -51,12 +47,12 @@ const handleChangePassword = async () => {
             oldPassword: oldPassword.value,
             newPassword: newPassword.value
         })
-        message.success('密码修改成功')
+        message.success(t('passwordChanged'))
         oldPassword.value = ''
         newPassword.value = ''
         confirmPassword.value = ''
     } catch (e) {
-        message.error(e.message || '修改密码失败')
+        message.error(e.message || t('passwordFailed'))
     } finally {
         changingPassword.value = false
     }
@@ -107,10 +103,10 @@ const fetchPasskeyList = async () => {
     }
 }
 
-const passkeyColumns = [
+const passkeyColumns = computed(() => [
     { title: t('passkey_name') || '名称', key: 'name' },
     {
-        title: t('passkeyCreated') || '创建时间',
+        title: t('created_at'),
         key: 'created_at',
         render(row) {
             return new Date(row.created_at).toLocaleString()
@@ -152,7 +148,7 @@ const passkeyColumns = [
             ])
         }
     }
-]
+])
 
 const renamePasskey = async () => {
     try {
@@ -184,10 +180,12 @@ const deletePasskey = async (id) => {
         message.error(error.message || "error")
     }
 }
+const { t: w } = useScopedI18n('workspace')
 </script>
 
 <template>
-    <div class="space-y-6">
+    <div class="workspace-page settings-page">
+        <div class="workspace-page-header"><div><div class="workspace-eyebrow">{{ w('account') }}</div><h1>{{ w('security') }}</h1><p>{{ w('securityDescription') }}</p></div></div>
         <!-- 弹窗：重命名 Passkey -->
         <n-modal v-model:show="showRenamePasskey" preset="dialog" :title="t('renamePasskey')" class="rounded-3xl">
             <div class="py-2">
@@ -209,27 +207,27 @@ const deletePasskey = async (id) => {
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
             <!-- 卡片 1：账号信息与通行密钥 (Passkey) -->
-            <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-5">
+            <div class="settings-section space-y-5">
                 <div class="pb-3 border-b border-slate-100 dark:border-slate-800/80">
                     <h3 class="text-base font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                        <span>🔐</span>
-                        <span>账户身份与通行密钥 (Passkey)</span>
+                        <MailIcon name="key" :size="19" />
+                        <span>{{ t('passkeyTitle') }}</span>
                     </h3>
-                    <p class="text-xs text-slate-500 mt-1">使用指纹、FaceID 或安全密钥实现现代免密极速登录</p>
+                    <p class="text-xs text-slate-500 mt-1">{{ t('passkeyDescription') }}</p>
                 </div>
 
                 <div class="space-y-3">
-                    <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between">
+                    <div class="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between gap-3 flex-wrap">
                         <div>
-                            <span class="text-xs text-slate-500 block">注册邮箱账号</span>
+                            <span class="text-xs text-slate-500 block">{{ w('emailLabel') }}</span>
                             <span class="text-sm font-bold text-slate-900 dark:text-white font-mono">{{ userSettings.user_email }}</span>
                         </div>
                         <span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            {{ userSettings.is_admin ? '系统管理员' : '标准用户' }}
+                            {{ userSettings.is_admin ? w('administrator') : w('member') }}
                         </span>
                     </div>
 
-                    <div class="flex items-center gap-3 pt-2">
+                    <div class="flex items-center gap-3 pt-2 flex-wrap">
                         <n-button @click="createPasskey" :loading="creatingPasskey" type="primary" secondary class="rounded-xl flex-1 font-medium">
                             {{ t('createPasskey') || '+ 绑定新 Passkey' }}
                         </n-button>
@@ -241,21 +239,21 @@ const deletePasskey = async (id) => {
             </div>
 
             <!-- 卡片 2：修改登录密码 -->
-            <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-5">
+            <div class="settings-section space-y-5">
                 <div class="pb-3 border-b border-slate-100 dark:border-slate-800/80">
                     <h3 class="text-base font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                        <span>🛡️</span>
-                        <span>修改密码</span>
+                        <MailIcon name="shield" :size="19" />
+                        <span>{{ t('changePassword') }}</span>
                     </h3>
-                    <p class="text-xs text-slate-500 mt-1">更新当前账号的登录密码，保障隐私与通信安全</p>
+                    <p class="text-xs text-slate-500 mt-1">{{ t('passwordDescription') }}</p>
                 </div>
 
                 <div class="space-y-3">
-                    <n-input v-model:value="oldPassword" type="password" show-password-on="click" placeholder="当前原密码" class="rounded-xl" />
-                    <n-input v-model:value="newPassword" type="password" show-password-on="click" placeholder="新密码" class="rounded-xl" />
-                    <n-input v-model:value="confirmPassword" type="password" show-password-on="click" placeholder="确认新密码" class="rounded-xl" />
+                    <n-input v-model:value="oldPassword" type="password" show-password-on="click" :placeholder="t('oldPassword')" :input-props="{ 'aria-label': t('oldPassword'), autocomplete: 'current-password' }" class="rounded-xl" />
+                    <n-input v-model:value="newPassword" type="password" show-password-on="click" :placeholder="t('newPassword')" :input-props="{ 'aria-label': t('newPassword'), autocomplete: 'new-password' }" class="rounded-xl" />
+                    <n-input v-model:value="confirmPassword" type="password" show-password-on="click" :placeholder="t('confirmPassword')" :input-props="{ 'aria-label': t('confirmPassword'), autocomplete: 'new-password' }" class="rounded-xl" />
                     <n-button @click="handleChangePassword" type="primary" block :loading="changingPassword" class="rounded-xl font-medium mt-2">
-                        确认修改密码
+                        {{ t('changePassword') }}
                     </n-button>
                 </div>
             </div>
