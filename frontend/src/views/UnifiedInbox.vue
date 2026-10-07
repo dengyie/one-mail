@@ -422,7 +422,8 @@ const loadList = async ({ background = false } = {}) => {
     const incomplete = Boolean(listRes.incomplete || listRes.degraded?.length)
     const received = listRes.results || []
     if (incomplete && displayedListKey === requestedKey) {
-      const byId = new Map(emails.value.map(row => [row.id, row]))
+      const unavailable = new Set(listRes.unavailable_mailbox_ids || [])
+      const byId = new Map(emails.value.filter(row => unavailable.has(row.account_id)).map(row => [row.id, row]))
       for (const row of received) byId.set(row.id, row)
       emails.value = Array.from(byId.values()).sort((a, b) => {
         const timeOrder = Number(b.received_at) - Number(a.received_at)
@@ -530,7 +531,9 @@ const updateRow = async (row, field) => {
   const identity = authIdentity.value
   const filters = filterParams.value
   const ownsScope = () => !componentDisposed && !controller.signal.aborted && identity === authIdentity.value && filters === filterParams.value
-  const current = () => ownsScope() && rows === emails.value
+  // Partial refresh can retain this exact row in a new array. Its optimistic
+  // state still belongs to this request and must roll back on provider failure.
+  const current = () => ownsScope() && emails.value.includes(row)
   const previous = row[field]
   const target = previous ? 0 : 1
   row[field] = target
@@ -545,6 +548,10 @@ const updateRow = async (row, field) => {
     if (field === 'is_starred') message.success(w(row[field] ? 'protected' : 'removeStar'))
     const affectsFilter = field === 'is_starred' ? filters.starred : filters.unread
     if (affectsFilter || rows !== emails.value) {
+      const finalValue = result[field] ?? target
+      if (affectsFilter && (field === 'is_starred' ? !finalValue : finalValue)) {
+        emails.value = emails.value.filter(candidate => candidate.id !== row.id)
+      }
       cancelRequest('probe')
       resetPagination()
       count.value = null

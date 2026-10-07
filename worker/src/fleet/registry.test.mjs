@@ -19,7 +19,9 @@ class Storage {
         const work = this.tail.then(async () => {
             const values = clone(this.values);
             const txn = {
-                get: async key => clone(values.get(key)),
+                get: async key => Array.isArray(key)
+                    ? new Map(key.filter(item => values.has(item)).map(item => [item, clone(values.get(item))]))
+                    : clone(values.get(key)),
                 put: async (key, value) => {
                     if (key === this.failOnKey) { this.failOnKey = null; throw new Error("simulated durable write failure"); }
                     values.set(key, clone(value));
@@ -352,6 +354,97 @@ test("changing a referenced physical owner is rejected, even while provisioning 
     changed.shards[1].database_id = "different-database";
     const result = await invoke(registry, "/configure", { expected_revision: allocated.body.revision, idempotency_key: "configure-2", config: changed });
     assert.equal(result.body.error_code, "CONFIG_CONFLICT");
+});
+
+for (const changedIdentity of ["provider", "database", "added-shard"]) {
+    test(`configuration change requalifies metrics for ${changedIdentity}`, async t => {
+        const { registry, storage, revision } = await fixture(t, { mode: "observe" });
+        const changed = clone(storage.values.get("registry:meta").config);
+        if (changedIdentity === "provider") changed.accounts[1].provider_account_id = "new-provider";
+        if (changedIdentity === "database") changed.shards[1].database_id = "new-database";
+        if (changedIdentity === "added-shard") changed.shards.push(shard("shard-c", "remote"));
+        const configured = await invoke(registry, "/configure", { expected_revision: revision, idempotency_key: "replace-identity", config: changed });
+        assert.equal(configured.status, 200);
+        let nextRevision = configured.body.revision;
+        const plan = () => invoke(registry, "/plan", { expected_revision: nextRevision });
+        assert.deepEqual((await plan()).body.decision, { ok: false, error_code: "STALE_METRICS" });
+        assert.equal(storage.values.get("registry:meta").config.accounts[1].metrics_observed_at, null);
+        for (let index = 0; index < 3; index++) {
+            const sample = report("remote", NOW - (2 - index) * 300_000);
+            sample.snapshot.rows_read = 1;
+            sample.snapshot.rows_written = 1;
+            sample.snapshot.worker_requests = 1;
+            if (changedIdentity === "added-shard") sample.snapshot.shard_sizes["shard-c"] = 0;
+            const accepted = await invoke(registry, "/metrics", { expected_revision: nextRevision, idempotency_key: `replacement-sample-${index}`, report: sample });
+            assert.equal(accepted.status, 200);
+            assert.equal(accepted.body.consecutive_valid_samples, index + 1);
+            nextRevision = accepted.body.revision;
+            assert.equal((await plan()).body.decision.ok, index === 2);
+        }
+    });
+}
+
+test("credential rotation and reordered configuration retain unchanged resource metrics", async t => {
+    const { registry, storage, revision } = await fixture(t, { mode: "observe" });
+    const changed = config();
+    changed.accounts[1].credential_ref = "rotated-metrics";
+    changed.shards[1].credential_ref = "rotated-data";
+    changed.accounts.reverse();
+    changed.shards.reverse();
+    const before = clone(storage.values.get("registry:metrics:remote"));
+    const configured = await invoke(registry, "/configure", { expected_revision: revision, idempotency_key: "rotate-credentials", config: changed });
+    assert.equal(configured.status, 200);
+    assert.deepEqual(storage.values.get("registry:metrics:remote"), before);
+    assert.equal((await invoke(registry, "/plan", { expected_revision: configured.body.revision })).body.decision.ok, true);
+});
+
+test("full fleet replacement retires old metrics and reads current accounts regardless of historical key order", async t => {
+    const { registry, storage, revision } = await fixture(t, { mode: "observe" });
+    const many = config();
+    many.accounts = [account("main"), ...Array.from({ length: 11 }, (_, i) => account(`a${String(i).padStart(2, "0")}`))];
+    many.shards = [shard("primary", "main"), ...Array.from({ length: 11 }, (_, i) => shard(`s${i}`, many.accounts[i + 1].account_key))];
+    let current = await invoke(registry, "/configure", { expected_revision: revision, idempotency_key: "full-fleet", config: many });
+    assert.equal(current.status, 200);
+    assert.equal(storage.values.has("registry:metrics:remote"), false);
+    for (const entry of many.accounts) {
+        const sample = report(entry.account_key);
+        sample.snapshot.shard_sizes = Object.fromEntries(many.shards.filter(item => item.account_key === entry.account_key).map(item => [item.shard_id, 0]));
+        current = await invoke(registry, "/metrics", { expected_revision: current.body.revision, idempotency_key: `sample-${entry.account_key}`, report: sample });
+        assert.equal(current.status, 200);
+    }
+    for (const replacement of ["z-new", "b-next"]) {
+        const retired = many.accounts[11].account_key;
+        many.accounts[11] = account(replacement);
+        many.shards[11] = shard("replacement", replacement);
+        for (let index = 1; index < 11; index++) many.shards[index].state = "disabled";
+        current = await invoke(registry, "/configure", { expected_revision: current.body.revision, idempotency_key: `configure-${replacement}`, config: many });
+        assert.equal(current.status, 200);
+        assert.equal(storage.values.has(`registry:metrics:${retired}`), false);
+        for (let index = 0; index < 3; index++) {
+            const sample = report(replacement, NOW - (2 - index) * 300_000);
+            sample.snapshot.shard_sizes = { replacement: 0 };
+            current = await invoke(registry, "/metrics", { expected_revision: current.body.revision, idempotency_key: `${replacement}-${index}`, report: sample });
+            assert.equal(current.status, 200);
+        }
+        // Simulate stale records left by an older release. They must never
+        // occupy slots in the current configuration's bounded metrics read.
+        for (let index = 0; index < 12; index++) storage.values.set(`registry:metrics:0-retired-${index}`, { report: report(`retired-${index}`), consecutive_valid_samples: 3 });
+        const planned = await invoke(registry, "/plan", { expected_revision: current.body.revision });
+        assert.equal(planned.body.decision.account_key, replacement);
+    }
+});
+
+test("failed configuration commit restores both physical identity and metric eligibility", async t => {
+    const { registry, storage, revision } = await fixture(t, { mode: "observe" });
+    t.mock.method(console, "error", () => undefined);
+    const changed = config();
+    changed.shards[1].database_id = "new-database";
+    const before = clone(storage.values);
+    storage.failOnKey = "registry:meta";
+    const result = await invoke(registry, "/configure", { expected_revision: revision, idempotency_key: "failed-replacement", config: changed });
+    assert.equal(result.status, 503);
+    assert.deepEqual(storage.values, before);
+    assert.equal((await invoke(registry, "/plan", { expected_revision: revision })).body.decision.ok, true);
 });
 
 test("revision exhaustion cannot partially reserve capacity", async t => {

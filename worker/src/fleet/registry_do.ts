@@ -104,15 +104,31 @@ async function configure(txn: Txn, meta: RegistryMeta, request: ConfigureRequest
     if (meta.config && meta.config.primary_shard_id !== config.primary_shard_id) throw new FleetError("CONFIG_CONFLICT", 409);
     const nextShards = new Map(config.shards.map(shard => [shard.shard_id, shard]));
     const nextAccounts = new Map(config.accounts.map(account => [account.account_key, account]));
+    const previousAccounts = new Map(meta.config?.accounts.map(account => [account.account_key, account]) ?? []);
+    const previousShards = new Map(meta.config?.shards.map(shard => [shard.shard_id, shard]) ?? []);
     for (const previous of meta.config?.shards ?? []) {
         const usage = await txn.get<number>(`registry:shard-usage:${previous.shard_id}`) ?? 0;
         if (!usage) continue;
         const replacement = nextShards.get(previous.shard_id);
-        const oldAccount = meta.config!.accounts.find(account => account.account_key === previous.account_key)!;
+        const oldAccount = previousAccounts.get(previous.account_key)!;
         if (!replacement || replacement.account_key !== previous.account_key || replacement.database_id !== previous.database_id
             || replacement.base_url !== previous.base_url || nextAccounts.get(previous.account_key)?.provider_account_id !== oldAccount.provider_account_id) throw new FleetError("CONFIG_CONFLICT", 409);
     }
-    meta.config = config;
+    // Qualification belongs to the physical account and its measured databases,
+    // not to reusable logical names. Credentials and array order are irrelevant.
+    const invalidated = new Set<string>();
+    for (const account of [...previousAccounts.values(), ...nextAccounts.values()]) {
+        if (previousAccounts.get(account.account_key)?.provider_account_id !== nextAccounts.get(account.account_key)?.provider_account_id) invalidated.add(account.account_key);
+    }
+    for (const shard of [...previousShards.values(), ...nextShards.values()]) {
+        const previous = previousShards.get(shard.shard_id);
+        const next = nextShards.get(shard.shard_id);
+        if (previous?.account_key === next?.account_key && previous?.database_id === next?.database_id) continue;
+        if (previous) invalidated.add(previous.account_key);
+        if (next) invalidated.add(next.account_key);
+    }
+    for (const accountKey of invalidated) await txn.delete(`${METRICS}${accountKey}`);
+    meta.config = { ...config, accounts: config.accounts.map(account => invalidated.has(account.account_key) ? { ...account, metrics_observed_at: null } : account) };
     return { ok: true };
 }
 
@@ -178,7 +194,7 @@ async function metrics(txn: Txn, meta: RegistryMeta, request: MetricsRequest, no
 async function placementFor(txn: Txn, config: FleetConfig, affinity: ReadonlySet<string>, now: number): Promise<{ decision: PlacementDecision; budgets: Record<string, ResourceBudget>; bytes: Record<string, number> }> {
     const budgets = await txn.get<Record<string, ResourceBudget>>("registry:allocation-budgets") ?? {};
     const bytes = await txn.get<Record<string, number>>("registry:reserved-bytes") ?? {};
-    const series = await txn.list<MetricSeries>({ prefix: METRICS, limit: 12 });
+    const series = await txn.get<MetricSeries>(config.accounts.map(account => `${METRICS}${account.account_key}`));
     const decision = choosePlacement({ config, metrics: Object.fromEntries([...series.values()].map(value => [value.report.snapshot.account_key, value])), account_reservations: budgets, shard_reserved_bytes: bytes, affinity_shards: affinity, now });
     return { decision, budgets, bytes };
 }

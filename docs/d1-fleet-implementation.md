@@ -20,13 +20,13 @@ observe 的 plan 只是“当前预算能否容纳一个配置需求”的只读
 | `aggregator/src/one_mail_agg/fleet_metric_report.py` | 将完整样本和显式剩余日需求映射到严格TS合同；拒绝null、partial、stale、账户/分片不符和溢出；不隐式外推日用量、不发网络请求 |
 | `worker/src/core/d1_quota.ts`、`d1_quota_coordinator_do.ts` | 五分钟KV发布；去重保留当日加前两日；分批alarm清理；单调删除边界拒绝过期重放；未知/丢失计量标partial；过期队首不再永久阻塞新日flush |
 | `worker/src/fleet/contracts.ts`、`validation.ts`、`placement.ts` | 严格DTO；uint64代次字符串；真实UTC日期；安全整数；同账户共享预算；O(S)最大资源占用评分、70%门槛和5个百分点亲和性 |
-| `worker/src/fleet/registry_do.ts` | 单一持久化控制对象；CAS、请求指纹、重启重放、导入事务、pending/confirm分配、删除优先、预算保守预订和只读plan；相邻五分钟桶才累计有效样本 |
+| `worker/src/fleet/registry_do.ts` | 单一持久化控制对象；CAS、请求指纹、重启重放、导入事务、pending/confirm分配、删除优先、预算保守预订和只读plan；相邻五分钟桶才累计有效样本；实际账户/数据库集合变化事务作废旧指标，退休账户清理，规划按当前账户键批量读取 |
 | `worker/src/fleet/registry_client.ts`、`http_io.ts` | 固定DO绑定地址；整次请求5秒截止；流式body限额；取消与上游契约校验；公共快照排除数据库ID及凭据引用 |
 | `worker/src/fleet/routes.ts`、`mode.ts` | 独立读/控制身份；有条件快照读取、configure、metrics、plan；未知/未完成API不透传；未完成动态模式拒绝启动 |
 | `worker/src/worker.ts`、`types.d.ts`、`worker/wrangler.toml.template` | DO导出、类型/迁移绑定；主站服务入口在ASSETS和浏览器密码之前处理；分片不提供fleet入口 |
 | `worker/src/unified/shard_client.ts`、`shard_merge.ts` | 并发≤4；共享3秒截止与8MiB解码body预算；列表512KiB；详情8MiB；堆归并O(K+LlogK)；取消保留原因 |
 | `worker/src/unified/federation.ts`、`index.ts` | 一次作用域分组；每页≤100行且最多24次远程续页；不完整页不生成下一游标；只读定位后单owner写入，重新校验ID/权限/归属，共享定位及写入预算 |
-| `frontend/src/api/contracts.ts`、`views/UnifiedInbox.vue` | 接收完整性字段；同分页边界失败时保留已经展示的数据，恢复后替换；不跨缺失数据推进游标 |
+| `frontend/src/api/contracts.ts`、`views/UnifiedInbox.vue` | 接收完整性字段；同分页边界失败时仅保留不可用邮箱的数据，恢复后替换；成功操作移除不再符合筛选的行，保留行的失败操作仍可回滚；不跨缺失数据推进游标 |
 | `worker/package.json` | 测试自动递归发现，避免shell glob漏掉根目录和新增子目录测试 |
 
 各模块关联测试已同步落盘。`frontend/src/router/__tests__/session_guard.test.ts` 补充联合类型收窄，只修改测试的类型表达。
@@ -69,11 +69,11 @@ configure/metrics的期望revision为规范十进制字符串。成功回执丢�
 | --- | --- |
 | Shared build | 通过 |
 | Worker typecheck / 全量lint | 通过 |
-| Worker完整测试 | 506通过，0失败 |
+| Worker完整测试 | 512通过，0失败 |
 | Worker Wrangler bundle | dry-run通过，已识别FleetRegistry绑定 |
 | 数据库工具测试 | 29通过，0失败 |
 | 前端typecheck / build | 通过 |
-| 前端完整测试 | 38文件、296通过，0失败 |
+| 前端完整测试 | 38文件、300通过，0失败 |
 | 聚合器完整测试 | 602通过，0失败，包含97项collector/adapter测试 |
 | UTF-8 / diff空白检查 | 通过，无BOM |
 
@@ -121,4 +121,10 @@ Worker build使用从模板生成的本地 `wrangler.toml`，是`--dry-run`。�
 
 确认删除的重复内容仅为无生产调用的 `fanOutApply` 函数及其导入，测试改走生产使用的“只读定位→单owner操作”。没有删除文件或生产数据。
 
-当前没有发现阻塞这批静态/observe基础代码的未修复确定性缺陷。整体动态功能仍不建议作为完成版本合并或上线：先完成第6节安全依赖，再通过目标运行时CI和灰度验收。本检查点以草稿PR保存，未执行生产发布。
+独立复审又复现了三项P2，现已完成根因修复并用先失败后通过的回归验证：
+
+1. 同逻辑键更换实际账户/数据库后沿用旧三样本资格：配置事务按账户ID与分片数据库集合比较并作废旧指标；新增分片也重新取得完整样本。凭据轮换和数组重排保留有效资格，失败提交原子回滚。
+2. 退休指标挤掉第13条当前账户指标：配置移除账户时清理其指标；plan按当前最多12个账户键批量get，不再截取历史前缀前12项。覆盖满额账户多次替换与历史脏记录。
+3. 部分刷新保留已不匹配筛选的行：只保留`unavailable_mailbox_ids`对应旧行；成功操作先移除失效筛选成员，再刷新。保留行沿用对象身份判断，所以刷新期间provider拒绝仍能回滚乐观状态。覆盖星标/未读/组合筛选及失败回滚。
+
+本地完整门禁合计1443项通过。发布范围是静态/observe基础能力，生产数据面继续使用静态路由；隔离Cloudflare验证实例用于配置替换故障场景，不向生产registry写入合成配置。完整动态分配与迁移仍须先完成第6节安全依赖及D7验收。实际部署版本与线上测试结果以发布记录为准。
