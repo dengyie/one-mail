@@ -1,4 +1,534 @@
 export const MESSAGE_REGISTRY = {
+  "workspace": {
+    "previousPage": { "en": "Previous page", "zh": "上一页" },
+    "nextPage": { "en": "Next page", "zh": "下一页" },
+    "pageNumber": { "en": "Page {page}", "zh": "第 {page} 页" },
+  "copyFailed": { "zh": "复制失败，请手动选择文本", "en": "Copy failed. Select the text manually." },
+  "brandTagline": {
+    "zh": "每个邮箱，都在这里。",
+    "en": "Every inbox. One calm space."
+  },
+  "workspace": {
+    "zh": "邮件工作台",
+    "en": "Workspace"
+  },
+  "mail": {
+    "zh": "邮件",
+    "en": "MAIL"
+  },
+  "manage": {
+    "zh": "管理",
+    "en": "MANAGE"
+  },
+  "admin": {
+    "zh": "系统管理",
+    "en": "ADMINISTRATION"
+  },
+  "inbox": {
+    "zh": "收件箱",
+    "en": "Inbox"
+  },
+  "inboxSubtitle": {
+    "zh": "汇集所有邮箱，专注每一封重要邮件。",
+    "en": "All your mail, thoughtfully brought together."
+  },
+  "compose": {
+    "zh": "写邮件",
+    "en": "Compose"
+  },
+  "starred": {
+    "zh": "星标邮件",
+    "en": "Starred"
+  },
+  "unread": {
+    "zh": "未读邮件",
+    "en": "Unread"
+  },
+  "allMail": {
+    "zh": "全部邮件",
+    "en": "All mail"
+  },
+  "codes": {
+    "zh": "验证码",
+    "en": "Verification codes"
+  },
+  "sent": {
+    "zh": "已发送",
+    "en": "Sent mail"
+  },
+  "tempMail": {
+    "zh": "即时邮箱",
+    "en": "Temporary inbox"
+  },
+  "domainMailbox": {
+    "zh": "域名邮箱",
+    "en": "Domain mail"
+  },
+  "accounts": {
+    "zh": "邮箱账户",
+    "en": "Mail accounts"
+  },
+  "addresses": {
+    "zh": "我的地址",
+    "en": "My addresses"
+  },
+  "security": {
+    "zh": "账户与安全",
+    "en": "Account & security"
+  },
+  "appearance": {
+    "zh": "外观设置",
+    "en": "Appearance"
+  },
+  "webhook": {
+    "zh": "自动化推送",
+    "en": "Webhooks"
+  },
+  "sync": {
+    "zh": "同步状态",
+    "en": "Sync status"
+  },
+  "apiSettings": {
+    "zh": "API 连接",
+    "en": "API connection"
+  },
+  "adminAccounts": {
+    "zh": "邮箱管理",
+    "en": "Mailboxes"
+  },
+  "adminUsers": {
+    "zh": "用户管理",
+    "en": "Users"
+  },
+  "adminStats": {
+    "zh": "统计概览",
+    "en": "Statistics"
+  },
+  "adminAi": {
+    "zh": "提取规则",
+    "en": "Extraction rules"
+  },
+  "adminDatabase": {
+    "zh": "数据库",
+    "en": "Database"
+  },
+  "adminSettings": {
+    "zh": "域名与策略",
+    "en": "Domains & policies"
+  },
+  "adminSendAccess": {
+    "zh": "发信权限",
+    "en": "Sending access"
+  },
+  "adminSend": {
+    "zh": "管理员发信",
+    "en": "Admin compose"
+  },
+  "adminHistory": {
+    "zh": "发信记录",
+    "en": "Delivery history"
+  },
+  "adminUnknown": {
+    "zh": "待确认投递",
+    "en": "Unconfirmed delivery"
+  },
+  "expandSidebar": {
+    "zh": "展开导航",
+    "en": "Expand navigation"
+  },
+  "collapseSidebar": {
+    "zh": "收起导航",
+    "en": "Collapse navigation"
+  },
+  "openMenu": {
+    "zh": "打开导航菜单",
+    "en": "Open navigation menu"
+  },
+  "closeMenu": {
+    "zh": "关闭导航菜单",
+    "en": "Close navigation menu"
+  },
+  "search": {
+    "zh": "搜索邮件",
+    "en": "Search mail"
+  },
+  "searchPlaceholder": {
+    "zh": "搜索你的邮件…",
+    "en": "Search your mail…"
+  },
+  "searchHint": {
+    "zh": "按主题、发件人或内容搜索",
+    "en": "Search by subject, sender, or content"
+  },
+  "changeLanguage": {
+    "zh": "切换语言",
+    "en": "Change language"
+  },
+  "account": {
+    "zh": "我的账户",
+    "en": "My account"
+  },
+  "login": {
+    "zh": "登录账户",
+    "en": "Sign in"
+  },
+  "logout": {
+    "zh": "退出登录",
+    "en": "Sign out"
+  },
+  "guest": {
+    "zh": "访客空间",
+    "en": "Guest workspace"
+  },
+  "member": {
+    "zh": "个人工作区",
+    "en": "Personal workspace"
+  },
+  "administrator": {
+    "zh": "管理员",
+    "en": "Administrator"
+  },
+  "guestHint": {
+    "zh": "登录后，将所有邮箱收拢一处。",
+    "en": "Sign in to bring your mail together."
+  },
+  "skipToContent": {
+    "zh": "跳转到主要内容",
+    "en": "Skip to content"
+  },
+  "filters": {
+    "zh": "筛选",
+    "en": "Filters"
+  },
+  "clearFilters": {
+    "zh": "清除筛选",
+    "en": "Clear filters"
+  },
+  "refresh": {
+    "zh": "刷新邮件",
+    "en": "Refresh mail"
+  },
+  "autoRefresh": {
+    "zh": "自动同步",
+    "en": "Auto refresh"
+  },
+  "messages": {
+    "zh": "邮件",
+    "en": "Messages"
+  },
+  "received": {
+    "zh": "接收时间",
+    "en": "Received"
+  },
+  "timeRange": {
+    "zh": "时间范围",
+    "en": "Time range"
+  },
+  "connectedAccounts": {
+    "zh": "关联的邮箱",
+    "en": "Connected accounts"
+  },
+  "manageAccounts": {
+    "zh": "管理邮箱",
+    "en": "Manage accounts"
+  },
+  "noAccounts": {
+    "zh": "接入常用邮箱，在这里统一收取邮件。",
+    "en": "Connect your mail accounts to read them together."
+  },
+  "calmTitle": {
+    "zh": "让重要邮件，留在身边。",
+    "en": "Keep what matters."
+  },
+  "calmDescription": {
+    "zh": "为需要保留的邮件加星标，日后更容易找到，也能避免正文被自动清理。",
+    "en": "Star mail to find it again and protect its content from automatic cleanup."
+  },
+  "viewStarred": {
+    "zh": "查看星标邮件",
+    "en": "View starred mail"
+  },
+  "keyboardShortcuts": {
+    "zh": "快捷操作",
+    "en": "Quick actions"
+  },
+  "shortcutSearch": {
+    "zh": "聚焦搜索",
+    "en": "Focus search"
+  },
+  "shortcutOpen": {
+    "zh": "打开选中邮件",
+    "en": "Open focused mail"
+  },
+  "noMail": {
+    "zh": "收件箱已清空",
+    "en": "A little breathing room."
+  },
+  "noMailDescription": {
+    "zh": "新邮件会自动出现在这里。你也可以关联其他邮箱，开始统一收取。",
+    "en": "New mail will appear here. Connect another account to bring more of your inbox together."
+  },
+  "noResults": {
+    "zh": "没有找到匹配邮件",
+    "en": "No matching mail"
+  },
+  "noResultsDescription": {
+    "zh": "试试其他关键词，或清除筛选重新查看。",
+    "en": "Try a different search or clear the filters."
+  },
+  "retry": {
+    "zh": "重新加载",
+    "en": "Try again"
+  },
+  "addStar": {
+    "zh": "添加星标",
+    "en": "Add star"
+  },
+  "removeStar": {
+    "zh": "取消星标",
+    "en": "Remove star"
+  },
+  "markRead": {
+    "zh": "标为已读",
+    "en": "Mark as read"
+  },
+  "markUnread": {
+    "zh": "标为未读",
+    "en": "Mark as unread"
+  },
+  "copyCode": {
+    "zh": "复制验证码",
+    "en": "Copy verification code"
+  },
+  "copy": {
+    "zh": "复制",
+    "en": "Copy"
+  },
+  "copied": {
+    "zh": "已复制",
+    "en": "Copied"
+  },
+  "overview": {
+    "zh": "邮件速览",
+    "en": "Mail overview"
+  },
+  "overviewHint": {
+    "zh": "在本地提取邮件信息与可能的验证码",
+    "en": "Locally extracted details and possible verification codes"
+  },
+  "hideOverview": {
+    "zh": "收起速览",
+    "en": "Hide overview"
+  },
+  "regenerate": {
+    "zh": "重新提取",
+    "en": "Extract again"
+  },
+  "overviewHeading": {
+    "zh": "邮件信息",
+    "en": "Mail details"
+  },
+  "bodyExcerpt": {
+    "zh": "正文摘要",
+    "en": "Body excerpt"
+  },
+  "sender": {
+    "zh": "发件人",
+    "en": "From"
+  },
+  "recipient": {
+    "zh": "收件人",
+    "en": "To"
+  },
+  "subject": {
+    "zh": "主题",
+    "en": "Subject"
+  },
+  "possibleCodes": {
+    "zh": "可能的验证码",
+    "en": "Possible codes"
+  },
+  "noCodes": {
+    "zh": "未检测到明显验证码",
+    "en": "No obvious verification code found"
+  },
+  "noSubject": {
+    "zh": "无主题",
+    "en": "No subject"
+  },
+  "protected": {
+    "zh": "星标保留",
+    "en": "Starred & protected"
+  },
+  "read": {
+    "zh": "已读",
+    "en": "Read"
+  },
+  "reading": {
+    "zh": "邮件阅读",
+    "en": "Reading"
+  },
+  "backInbox": {
+    "zh": "返回收件箱",
+    "en": "Back to inbox"
+  },
+  "appearanceSubtitle": {
+    "zh": "让工作台适合你的阅读习惯。",
+    "en": "Make the workspace feel like yours."
+  },
+  "layout": {
+    "zh": "布局与密度",
+    "en": "Layout & density"
+  },
+  "readingSecurity": {
+    "zh": "阅读与隐私",
+    "en": "Reading & privacy"
+  },
+  "synchronization": {
+    "zh": "刷新与同步",
+    "en": "Refresh & sync"
+  },
+  "theme": {
+    "zh": "主题",
+    "en": "Theme"
+  },
+  "themeAuto": {
+    "zh": "跟随系统",
+    "en": "System theme"
+  },
+  "themeLight": {
+    "zh": "浅色主题",
+    "en": "Light theme"
+  },
+  "themeDark": {
+    "zh": "深色主题",
+    "en": "Dark theme"
+  },
+  "welcome": {
+    "zh": "欢迎回来",
+    "en": "Welcome back"
+  },
+  "welcomeSubtitle": {
+    "zh": "登录，继续你的邮件工作。",
+    "en": "Sign in and pick up where you left off."
+  },
+  "loginHero": {
+    "zh": "所有来信，\n井然有序。",
+    "en": "All your mail.\nA clearer mind."
+  },
+  "loginDescription": {
+    "zh": "一个轻盈、专注的空间，收取邮件、提取验证码，连接你常用的每个邮箱。",
+    "en": "A quiet place to read, find verification codes, and connect the mail accounts you use every day."
+  },
+  "privateSpace": {
+    "zh": "你的私人邮件空间",
+    "en": "Your personal mail space"
+  },
+  "privacyHint": {
+    "zh": "邮件内容仅在经过授权后访问。",
+    "en": "Mail is available only to authorized users."
+  },
+  "accountOverview": {
+    "zh": "账户概览",
+    "en": "Account overview"
+  },
+  "sendWorkspace": {
+    "zh": "发信工作台",
+    "en": "Sending workspace"
+  },
+  "domainSubtitle": {
+    "zh": "在一个空间查看域名下的所有来信。",
+    "en": "All incoming mail across your domain, in one place."
+  },
+  "emailLabel": {
+    "zh": "电子邮箱",
+    "en": "Email address"
+  },
+  "passwordLabel": {
+    "zh": "密码",
+    "en": "Password"
+  },
+  "showPassword": {
+    "zh": "显示密码",
+    "en": "Show password"
+  },
+  "hidePassword": {
+    "zh": "隐藏密码",
+    "en": "Hide password"
+  },
+  "register": {
+    "zh": "创建账户",
+    "en": "Create account"
+  },
+  "registerTitle": {
+    "zh": "从这里开始",
+    "en": "Make yourself at home."
+  },
+  "registerSubtitle": {
+    "zh": "创建一个账户，连接你的每个邮箱。",
+    "en": "Create an account and bring your inboxes together."
+  },
+  "loginTab": {
+    "zh": "登录",
+    "en": "Sign in"
+  },
+  "registerTab": {
+    "zh": "注册",
+    "en": "Register"
+  },
+  "sendCode": {
+    "zh": "获取验证码",
+    "en": "Send code"
+  },
+  "codeLabel": {
+    "zh": "邮箱验证码",
+    "en": "Email verification code"
+  },
+  "alternativeLogin": {
+    "zh": "或使用其他方式",
+    "en": "Or continue with"
+  },
+  "loginProvider": {
+    "zh": "使用 {name} 登录",
+    "en": "Continue with {name}"
+  },
+  "featureUnified": {
+    "zh": "所有来信，一处收取",
+    "en": "All inboxes, together"
+  },
+  "featureUnifiedText": {
+    "zh": "连接常用邮箱，不再来回切换。",
+    "en": "Connect your accounts. Leave the tab switching behind."
+  },
+  "featureCodes": {
+    "zh": "验证码，一眼找到",
+    "en": "Your codes, at a glance"
+  },
+  "featureCodesText": {
+    "zh": "集中查看近期验证码，轻松复制。",
+    "en": "Find and copy recent verification codes."
+  },
+  "featurePrivate": {
+    "zh": "属于你的地址",
+    "en": "An address of your own"
+  },
+  "featurePrivateText": {
+    "zh": "管理专属地址，随时切换收信身份。",
+    "en": "Manage your addresses and choose where mail arrives."
+  },
+  "allAccountsDescription": {
+    "zh": "连接你的常用邮箱，统一管理收信与同步。",
+    "en": "Connect the mail accounts you use, and manage them together."
+  },
+  "addressesDescription": {
+    "zh": "创建、绑定并管理属于你的邮箱地址。",
+    "en": "Create, connect, and manage your own email addresses."
+  },
+  "securityDescription": {
+    "zh": "管理登录方式，让你的邮件空间更安心。",
+    "en": "Manage how you sign in to your personal mail space."
+  }
+},
   "components.WebhookComponent": {
     "enable": {
       "en": "Enable",
@@ -552,6 +1082,17 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "views.user.UserSettings": {
+    "passkeyTitle": {"zh": "账户与通行密钥", "en": "Account & Passkeys"},
+    "passkeyDescription": {"zh": "使用指纹、Face ID 或安全密钥，无需输入密码。", "en": "Sign in with your fingerprint, Face ID, or a security key."},
+    "changePassword": {"zh": "修改密码", "en": "Change password"},
+    "passwordDescription": {"zh": "更新当前账户的登录密码。", "en": "Update the password for your account."},
+    "oldPassword": {"zh": "当前密码", "en": "Current password"},
+    "newPassword": {"zh": "新密码", "en": "New password"},
+    "confirmPassword": {"zh": "确认新密码", "en": "Confirm new password"},
+    "passwordRequired": {"zh": "请输入新密码", "en": "Enter a new password"},
+    "passwordMismatch": {"zh": "两次输入的新密码不一致", "en": "The new passwords do not match"},
+    "passwordChanged": {"zh": "密码修改成功", "en": "Password changed"},
+    "passwordFailed": {"zh": "修改密码失败", "en": "Could not change the password"},
     "actions": {
       "en": "Actions",
       "zh": "操作"
@@ -667,6 +1208,9 @@ export const MESSAGE_REGISTRY = {
       "zh": "Cloudflare 临时邮件"
     },
     "unified": {
+    "list.countUnknown": { "en": "Total unavailable", "zh": "总数暂不可用" },
+    "list.incompleteResults": { "en": "Some mail sources are unavailable. Results may be incomplete.", "zh": "部分邮件来源暂时不可用，结果可能不完整。" },
+    "list.retryDegraded": { "en": "Retry this page", "zh": "重试当前页" },
       "en": "Unified",
       "zh": "统一收件箱"
     },
@@ -702,6 +1246,12 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "views.user.UserMailAccounts": {
+    "modalTitle": { "zh": "接入外部邮箱", "en": "Connect a mailbox" },
+    "status": { "zh": "自动同步", "en": "Auto sync" },
+    "actions": { "zh": "操作", "en": "Actions" },
+    "canSend": { "zh": "允许发送", "en": "Sending access" },
+    "canSendOn": { "zh": "已开通", "en": "Enabled" },
+    "canSendOff": { "zh": "未开通", "en": "Disabled" },
     "title": {
       "en": "Aggregate your own external mailboxes (Gmail / QQ / 163 / Outlook) into this unified inbox. Each synced message is visible only to you.",
       "zh": "把您自己的外部邮箱（Gmail / QQ / 163 / Outlook）归集到统一收件箱。同步的邮件仅您自己可见。"
@@ -1072,6 +1622,7 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "views.user.UserLogin": {
+    "turnstileCheckFailed": { "zh": "请先完成人机验证", "en": "Complete the verification first" },
     "cannotForgotPassword": {
       "en": "Mail verification is disabled or register is disabled, cannot reset password, please contact administrator",
       "zh": "未开启邮箱验证或未开启注册功能，无法重置密码，请联系管理员"
@@ -1350,6 +1901,7 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "views.index.SendMail": {
+    "success": { "zh": "邮件已发送", "en": "Message sent" },
     "content": {
       "en": "Content",
       "zh": "内容"
@@ -3100,6 +3652,9 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "unified": {
+    "list.countUnknown": { "en": "Total unavailable", "zh": "总数暂不可用" },
+    "list.incompleteResults": { "en": "Some mail sources are unavailable. Results may be incomplete.", "zh": "部分邮件来源暂时不可用，结果可能不完整。" },
+    "list.retryDegraded": { "en": "Retry this page", "zh": "重试当前页" },
     "autoRefresh": {
       "en": "Auto refresh",
       "zh": "自动刷新"
@@ -3438,12 +3993,13 @@ export const MESSAGE_REGISTRY = {
 type MessageRegistry = typeof MESSAGE_REGISTRY
 
 export type MessageNamespace = keyof MessageRegistry
-export type MessageKey<N extends MessageNamespace> = keyof MessageRegistry[N]
+export type MessageKey<N extends MessageNamespace> = N extends MessageNamespace ? keyof MessageRegistry[N] : never
 
 export const getMessageSource = <N extends MessageNamespace>(
   namespace: N,
   key: MessageKey<N>,
   locale: 'en' | 'zh',
 ) => {
-  return MESSAGE_REGISTRY[namespace]?.[key]?.[locale]
+  const entries: Readonly<Record<string, { readonly en: string; readonly zh: string }>> = MESSAGE_REGISTRY[namespace]
+  return entries[String(key)]?.[locale]
 }

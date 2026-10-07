@@ -1,53 +1,33 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-
-const view = readFileSync(fileURLToPath(new URL('../UnifiedInbox.vue', import.meta.url)), 'utf8')
+import { ctx, flush, mount, button } from './unified-workspace-harness'
+import UnifiedInbox from '../UnifiedInbox.vue'
 
 describe('UnifiedInbox verification codes aggregation contract', () => {
-  it('allows loading verification codes without requiring codesAddr (unified aggregation)', () => {
-    // There must be no early-return guard checking !codesAddr.value.trim() in loadCodes
-    const loadCodesStart = view.indexOf('const loadCodes = async')
-    const loadCodesEnd = view.indexOf('const copyCode = async', loadCodesStart)
-    const loadCodesBody = view.slice(loadCodesStart, loadCodesEnd)
-
-    expect(loadCodesBody).not.toContain('if (!codesAddr.value.trim())')
-    expect(loadCodesBody).toContain('api.unified.verifcodes(codesAddr.value.trim(), codesFresh.value * 60 * 1000)')
+  it('loads all-account codes immediately when the tab opens and displays their recipient', async () => {
+    ctx.api.unified.verifcodes.mockResolvedValue({ results: [{ code: '123456', from_addr: 'sender@example.com', to_addr: 'alias@example.com', received_at: 1791334800000 }] })
+    const { host } = await mount(UnifiedInbox)
+    ctx.route.query = { tab: 'codes' }; await flush()
+    expect(ctx.api.unified.verifcodes).toHaveBeenCalledWith('', 600000, undefined, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(host.textContent).toContain('alias@example.com')
   })
-
-  it('triggers immediate loadCodes on activeTab switch to codes', () => {
-    const watchTabStart = view.indexOf('watch(activeTab, (tab) => {')
-    const watchTabEnd = view.indexOf('onMounted', watchTabStart)
-    const watchTabBody = view.slice(watchTabStart, watchTabEnd)
-
-    expect(watchTabBody).toContain("if (tab === 'codes')")
-    expect(watchTabBody).toContain('loadCodes()')
-    // Must not gate calling loadCodes on codesAddr.value.trim()
-    expect(watchTabBody).not.toContain('if (codesAddr.value.trim())')
+  it('allows manual and visibility refresh without an address filter', async () => {
+    ctx.route.query = { tab: 'codes' }
+    const { host } = await mount(UnifiedInbox)
+    ctx.api.unified.verifcodes.mockClear()
+    const refresh = [...host.querySelectorAll('button')].find(node => node.textContent.trim() === 'Refresh')
+    expect(refresh).toBeDefined(); refresh.click(); await flush()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange')); await flush()
+    expect(ctx.api.unified.verifcodes).toHaveBeenCalledTimes(2)
+    expect(ctx.api.unified.verifcodes.mock.calls[1][0]).toBe('')
   })
+})
 
-  it('watches codesFresh and reloads codes when time window changes', () => {
-    expect(view).toContain('watch(codesFresh, () => {')
-    expect(view).toContain("if (activeTab.value === 'codes')")
-    expect(view).toContain('loadCodes()')
-  })
-
-  it('allows auto-refresh for verification codes without requiring codesAddr', () => {
-    const autoRefreshStart = view.indexOf('const autoRefreshList = () => {')
-    const autoRefreshEnd = view.indexOf('const startAutoRefresh = () => {', autoRefreshStart)
-    const autoRefreshBody = view.slice(autoRefreshStart, autoRefreshEnd)
-
-    expect(autoRefreshBody).toContain("activeTab.value === 'codes'")
-    expect(autoRefreshBody).not.toContain('codesAddr.value.trim()')
-    expect(autoRefreshBody).toContain('void loadCodes({ background: true })')
-  })
-
-  it('renders recipient to_addr in code cards when present', () => {
-    expect(view).toContain('{{ c.from_addr }} → {{ c.to_addr }}')
-    expect(view).toContain('c.to_addr')
-  })
-
-  it('supports clearing the address filter to instantly return to all-account aggregation', () => {
-    expect(view).toContain('@clear="loadCodes"')
-  })
+it('keeps partial code cards visible and identifies the unavailable shard', async () => {
+  ctx.route.query = { tab: 'codes' }
+  ctx.api.unified.verifcodes.mockResolvedValue({ results: [{ code: '123456', to_addr: 'alias@example.com' }], degraded: ['shard-b'] })
+  const { host } = await mount(UnifiedInbox)
+  expect(host.textContent).toContain('123456')
+  expect(host.textContent).toContain('shard-b')
 })

@@ -9,7 +9,7 @@ import { ptBRMessages } from './locales/source/ptBR'
 
 import type { SupportedLocale } from './locale-registry'
 
-type LocaleTree = Record<string, unknown>
+interface LocaleTree { [key: string]: string | LocaleTree }
 type SourceLocale = Extract<SupportedLocale, 'en' | 'zh'>
 type AdditionalLocale = Exclude<SupportedLocale, SourceLocale>
 
@@ -20,7 +20,7 @@ const additionalLocaleSources: Record<AdditionalLocale, Record<string, string>> 
   de: deMessages,
 }
 
-const setNestedValue = (target: LocaleTree, path: string, value: unknown) => {
+const setNestedValue = (target: LocaleTree, path: string, value: string) => {
   const segments = path.split('.')
   let current: LocaleTree = target
 

@@ -3,6 +3,7 @@ import { useScopedI18n } from '@/i18n/app'
 import { useIsMobile } from '../../utils/composables'
 import { useGlobalState } from '../../store'
 import ThemeToggle from '../../components/ai/ThemeToggle.vue'
+import MailIcon from '../../components/ui/MailIcon.vue'
 
 const props = defineProps({
     showUseSimpleIndex: {
@@ -18,27 +19,17 @@ const {
 const isMobile = useIsMobile()
 
 const { t } = useScopedI18n('views.common.Appearance')
+const { t: w } = useScopedI18n('workspace')
 </script>
 
 <template>
-    <div class="max-w-4xl mx-auto px-4 py-6 space-y-6 text-left">
-        <!-- 页面标题与主题切换器 -->
-        <div class="flex items-center justify-between flex-wrap gap-3 pb-3 border-b border-zinc-200 dark:border-zinc-800">
-            <div>
-                <h2 class="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                    <span>🎨</span>
-                    <span>{{ t('title') || '外观与体验设置' }}</span>
-                </h2>
-                <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">自定义主题配色、分栏布局与邮件渲染偏好</p>
-            </div>
-            <ThemeToggle />
-        </div>
-
+    <div class="workspace-page settings-page">
+        <div class="workspace-page-header"><div><div class="workspace-eyebrow">{{ w('account') }}</div><h1>{{ w('appearance') }}</h1><p>{{ w('appearanceSubtitle') }}</p></div><ThemeToggle /></div>
         <!-- 布局与主题卡片 -->
-        <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-5 shadow-xs space-y-4">
+        <div class="settings-section">
             <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
-                <span>📐</span>
-                <span>界面布局</span>
+                <MailIcon name="layers" :size="18" />
+                <span>{{ w('layout') }}</span>
             </h3>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -86,10 +77,10 @@ const { t } = useScopedI18n('views.common.Appearance')
         </div>
 
         <!-- 邮件阅读与安全卡片 -->
-        <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-5 shadow-xs space-y-4">
+        <div class="settings-section">
             <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
-                <span>📧</span>
-                <span>邮件阅读与安全</span>
+                <MailIcon name="shield" :size="18" />
+                <span>{{ w('readingSecurity') }}</span>
             </h3>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -112,10 +103,10 @@ const { t } = useScopedI18n('views.common.Appearance')
         </div>
 
         <!-- 自动刷新与同步 -->
-        <div class="rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/60 p-5 shadow-xs space-y-4">
+        <div class="settings-section">
             <h3 class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
-                <span>⏱️</span>
-                <span>数据同步</span>
+                <MailIcon name="refresh" :size="18" />
+                <span>{{ w('synchronization') }}</span>
             </h3>
 
             <n-form-item-row :label="t('autoRefreshInterval')">

@@ -1,4 +1,5 @@
 <script setup>
+import MailIcon from '../../components/ui/MailIcon.vue'
 import { ref, computed, onMounted, h } from 'vue'
 import { useScopedI18n } from '@/i18n/app'
 import { NButton, NTag, NPopconfirm, useMessage } from 'naive-ui'
@@ -293,7 +294,7 @@ const remove = async (row) => {
     }
 }
 
-const columns = [
+const columns = computed(() => [
     { title: t('label') || '标识名称', key: 'label', render(r) { return r.label || r.username } },
     { title: t('source') || '渠道类型', key: 'source', render(r) { return h(NTag, { type: 'info', size: 'small', round: true }, { default: () => r.source }) } },
     { title: t('protocol') || '协议', key: 'protocol', render(r) { return h(NTag, { type: r.protocol === 'pop3' ? 'warning' : 'info', size: 'small', round: true }, { default: () => r.protocol === 'auto' ? (t('auto') || '自动') : r.protocol.toUpperCase() }) } },
@@ -355,15 +356,17 @@ const columns = [
             })
         }
     }
-]
+])
 
 onMounted(async () => {
     if (userJwt.value) await fetchData()
 })
+const { t: w } = useScopedI18n('workspace')
 </script>
 
 <template>
-    <div class="space-y-6">
+    <div class="workspace-page settings-page">
+        <div class="workspace-page-header"><div><div class="workspace-eyebrow">{{ w('account') }}</div><h1>{{ w('accounts') }}</h1><p>{{ w('allAccountsDescription') }}</p></div></div>
         <!-- 弹窗：添加外部邮箱 -->
         <n-modal v-model:show="showModal" preset="card" :title="t('modalTitle') || '添加外部邮箱归集 (IMAP/POP3)'" class="rounded-3xl max-w-lg">
             <!-- 接入模式切换 -->
@@ -531,19 +534,19 @@ onMounted(async () => {
         </n-modal>
 
         <!-- 主面板（纯内容视图） -->
-        <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="settings-section space-y-6">
             <div class="flex items-center justify-between flex-wrap gap-4 pb-4 border-b border-slate-100 dark:border-slate-800/80">
                 <div>
-                    <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('title') || '外部邮箱归集与同步 (IMAP/POP3)' }}</h2>
+                    <h2 class="text-sm font-semibold">{{ t('title') || '外部邮箱归集与同步 (IMAP/POP3)' }}</h2>
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('description') || '由后台聚合器自动拉取邮件并归集到统一收件箱。' }}</p>
                 </div>
                 <n-button @click="showModal = true" type="primary" class="rounded-xl font-medium shadow-xs">
-                    + {{ t('connect') || '接入外部邮箱' }}
+                    <template #icon><MailIcon name="plus" :size="16" /></template>{{ t('connect') }}
                 </n-button>
             </div>
 
             <div class="space-y-4">
-                <n-data-table :columns="columns" :data="list" :loading="loading" :bordered="false" class="rounded-2xl overflow-hidden" />
+                <n-data-table :scroll-x="700" :columns="columns" :data="list" :loading="loading" :bordered="false" class="rounded-2xl overflow-hidden" />
             </div>
         </div>
     </div>

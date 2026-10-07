@@ -6,6 +6,7 @@ import i18n from '../i18n'
 import { getFingerprint } from '../utils/fingerprint'
 import { safeBearerHeader, safeHeaderValue } from '../utils/headers'
 import { sanitizeHtml } from '../utils/sanitize-html'
+import { createUnifiedMutationApi } from '../utils/unified-provider-mutations'
 import { getRouterPathWithLang } from '../utils'
 
 // 契约类型来自 @one-mail/shared（架构重构 P8）：运行时零引用，仅供 JSDoc 标注。
@@ -20,8 +21,8 @@ export const normalizeMailAccountBody = (body) => {
     let parsed;
     try {
         parsed = JSON.parse(body);
-    } catch {
-        throw new Error('mail account body must be valid JSON');
+    } catch (cause) {
+        throw new Error('mail account body must be valid JSON', { cause });
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         throw new Error('mail account body must be a JSON object');
@@ -60,6 +61,7 @@ const createApiClient = (headerInjector, hooks = {}) => {
                 method: options.method || 'GET',
                 data: options.body || null,
                 headers,
+                signal: options.signal,
             });
             if (response.status === 401 && hooks.onUnauthorized) {
                 hooks.onUnauthorized(response);
@@ -113,8 +115,18 @@ const siteClient = createApiClient(() => {
 // 不再静默抛 "Code 401..." 卡死。
 // 用动态 import 绕开 router→views→api 的静态环；hook 在运行时才触发，模块已缓存。
 const handleUnifiedUnauthorized = (r) => {
-    const usedUserChannel = Boolean(r?.config?.headers?.['x-user-token']);
-    const usedAdminChannel = Boolean(r?.config?.headers?.['x-admin-auth']);
+    const sentHeaders = r?.config?.headers || {};
+    const sentUser = safeHeaderValue(sentHeaders['x-user-token']);
+    const sentAdmin = safeHeaderValue(sentHeaders['x-admin-auth']);
+    const sentBearer = safeHeaderValue(sentHeaders.Authorization || sentHeaders.authorization);
+    const usedUserChannel = Boolean(sentUser);
+    const usedAdminChannel = Boolean(sentAdmin);
+    // A delayed response belongs to its original credential scope only.
+    if (sentUser !== safeHeaderValue(userJwt.value) && usedUserChannel) return;
+    if (sentAdmin !== safeHeaderValue(adminAuth.value) && usedAdminChannel) return;
+    if (!usedUserChannel && !usedAdminChannel && sentBearer !== safeBearerHeader(unifiedApiKey.value)) return;
+    if (!usedUserChannel && userJwt.value) return;
+    if (!usedAdminChannel && adminAuth.value) return;
     if (usedUserChannel && usedAdminChannel) {
         // 复合提权通道：普通用户已登录并在全域工作台原地输入了管理密码。
         // 若此时发生 401（管理密码错误/失效），仅剥离失效的管理密码 adminAuth，
@@ -132,33 +144,33 @@ const handleUnifiedUnauthorized = (r) => {
         unifiedApiKey.value = '';
     }
     const locale = i18n.global.locale.value;
+    const signedOut = () => !userJwt.value && !adminAuth.value && !unifiedApiKey.value;
     import('../router').then(({ default: router }) => {
-        router.push(getRouterPathWithLang('/user', locale));
+        if (!signedOut()) return;
+        return router.push(getRouterPathWithLang('/user', locale));
     }).catch(() => {
-        window.location.href = getRouterPathWithLang('/user', locale);
+        if (signedOut()) window.location.href = getRouterPathWithLang('/user', locale);
     });
 };
 
-// unified：Bearer API-key 单通道（不触发全局 loading）。
+// One credential snapshot drives reads, writes, and provider status polling.
+/** @returns {import('./contracts').UnifiedAuthSnapshot} */
+const getUnifiedAuth = () => {
+    const user = safeHeaderValue(userJwt.value);
+    const admin = safeHeaderValue(adminAuth.value);
+    const bearer = safeBearerHeader(unifiedApiKey.value);
+    if (user) return {
+        key: JSON.stringify(['user', user, admin || '']),
+        headers: { 'x-user-token': user, ...(admin ? { 'x-admin-auth': admin } : {}) },
+    };
+    if (admin) return { key: JSON.stringify(['admin', admin]), headers: { 'x-admin-auth': admin } };
+    if (bearer) return { key: JSON.stringify(['key', bearer]), headers: { Authorization: bearer } };
+    return { key: '', headers: {} };
+};
 const unifiedClient = createApiClient(() => {
-    const b = safeBearerHeader(unifiedApiKey.value);
-    if (!b) throw new Error("unified api key not set");
-    return { 'Authorization': b };
-}, { onUnauthorized: handleUnifiedUnauthorized });
-// unified user：x-user-token 通道（若已有 adminAuth 则附带以提升全域权限）。
-const unifiedUserClient = createApiClient(() => {
-    const t = safeHeaderValue(userJwt.value);
-    if (!t) throw new Error("not logged in");
-    const h = { 'x-user-token': t };
-    const a = safeHeaderValue(adminAuth.value);
-    if (a) h['x-admin-auth'] = a;
-    return h;
-}, { onUnauthorized: handleUnifiedUnauthorized });
-// unified admin：x-admin-auth 密码通道。
-const unifiedAdminClient = createApiClient(() => {
-    const a = safeHeaderValue(adminAuth.value);
-    if (!a) throw new Error("not logged in");
-    return { 'x-admin-auth': a };
+    const auth = getUnifiedAuth();
+    if (!auth.key) throw new Error('unified api key not set');
+    return auth.headers;
 }, { onUnauthorized: handleUnifiedUnauthorized });
 
 const apiFetch = async (path, options = {}) => {
@@ -376,25 +388,7 @@ const bindUserAddress = async () => {
     }
 }
 
-// 统一收件箱 API：走 Bearer API-key，不复用站点 JWT/自定义密码头。
-// 与 apiFetch 的区别：只带 Authorization: Bearer <unifiedApiKey>，不触发全局 loading。
-// （无 API-key → throw "unified api key not set" 已迁进 unifiedClient 的 headerInjector。）
-const unifiedFetch = (path, options = {}) => unifiedClient.request(path, options);
-
-// 统一收件箱用户通道：浏览器登录后使用现有用户 JWT，不依赖共享 API-key。
-// （未登录 → throw "not logged in" 已迁进 unifiedUserClient 的 headerInjector。）
-const unifiedUserFetch = (path, options = {}) => unifiedUserClient.request(path, options);
-
-// 登录用户优先；次选管理员管理密码；没有用户登录时保留 Bearer API-key 兼容路径。
-const unifiedAuthFetch = (path, options = {}) => {
-    if (safeHeaderValue(userJwt.value)) {
-        return unifiedUserFetch(path, options);
-    }
-    if (safeHeaderValue(adminAuth.value)) {
-        return unifiedAdminClient.request(path, options);
-    }
-    return unifiedFetch(path, options);
-};
+const unifiedAuthFetch = (path, options = {}) => unifiedClient.request(path, options);
 
 // 构造 /api/unified/emails 的查询串：source/account_id 逗号多值、未读标记、分页、关键词。
 const buildUnifiedQuery = (params = {}) => {
@@ -420,44 +414,48 @@ export const api = {
     adminDeleteAddress,
     bindUserAddress,
     unified: {
-        listEmails: async (params = {}) => {
+        /** @param {import('./contracts').UnifiedListQuery} params @param {import('./contracts').RequestOptions} options @returns {Promise<import('./contracts').UnifiedListResponse>} */
+        listEmails: async (params = {}, options = {}) => {
             const s = buildUnifiedQuery(params);
-            return unifiedAuthFetch(`/api/unified/emails${s ? `?${s}` : ''}`);
+            return unifiedAuthFetch(`/api/unified/emails${s ? `?${s}` : ''}`, options);
         },
-        getEmail: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}`),
-        count: async (params = {}) => {
+        /** @param {string} id @param {import('./contracts').RequestOptions} options @returns {Promise<import('./contracts').UnifiedEmailDetail>} */
+        getEmail: (id, options = {}) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}`, options),
+        count: async (params = {}, options = {}) => {
             const s = buildUnifiedQuery(params);
-            return unifiedAuthFetch(`/api/unified/count${s ? `?${s}` : ''}`);
+            return unifiedAuthFetch(`/api/unified/count${s ? `?${s}` : ''}`, options);
         },
-        stats: async (params = {}) => {
+        stats: async (params = {}, options = {}) => {
             const s = buildUnifiedQuery(params);
-            return unifiedAuthFetch(`/api/unified/stats${s ? `?${s}` : ''}`);
+            return unifiedAuthFetch(`/api/unified/stats${s ? `?${s}` : ''}`, options);
         },
-        meta: () => unifiedAuthFetch('/api/unified/meta'),
-        verifcodes: (addr, freshMs, domain) => {
+        meta: (options = {}) => unifiedAuthFetch('/api/unified/meta', options),
+        verifcodes: (addr, freshMs, domain, options = {}) => {
             // addr 与 domain 可选；若均未指定，则在当前租户范围内聚合全部可用邮箱的近期验证码
             const s = new URLSearchParams();
             if (addr) s.set('addr', addr);
             if (domain) s.set('domain', domain);
             if (freshMs) s.set('fresh', String(freshMs));
-            return unifiedAuthFetch(`/api/unified/verifcodes${s.toString() ? `?${s.toString()}` : ''}`);
+            return unifiedAuthFetch(`/api/unified/verifcodes${s.toString() ? `?${s.toString()}` : ''}`, options);
         },
-        markRead: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/read`, { method: 'POST' }),
-        markUnread: (id) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/unread`, { method: 'POST' }),
-        toggleStar: (id, isStarred) =>
-            unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}/star`, {
-                method: 'POST',
-                body: typeof isStarred === 'number' ? { is_starred: isStarred } : {},
-            }),
+        listFolders: (params = {}, options = {}) => {
+            const query = buildUnifiedQuery(params);
+            return unifiedAuthFetch(`/api/unified/folders${query ? `?${query}` : ''}`, options);
+        },
+        ...createUnifiedMutationApi({ request: unifiedAuthFetch, getAuth: getUnifiedAuth }),
     },
     admin: {
         // 走 siteClient（即原 apiFetch 通道）：自动附带 x-admin-auth + x-user-token 等站点鉴权头。
-        createUnifiedKey: (body) => siteClient.post('/admin/unified/keys', { body }),
+        createUnifiedKey: (body, adminPassword, options = {}) => siteClient.post('/admin/unified/keys', {
+            signal: options.signal,
+            body,
+            headers: adminPassword === undefined ? undefined : { 'x-admin-auth': safeHeaderValue(adminPassword) },
+        }),
     },
     // 用户自助接入外部邮箱归集：走 siteClient，自动附带 x-user-token
     userMailAccounts: {
-        list: async () => {
-            const res = await siteClient.get('/user_api/mail_accounts');
+        list: async (options = {}) => {
+            const res = await siteClient.get('/user_api/mail_accounts', options);
             // Rows from before protocol support are IMAP accounts. Keep the
             // response shape stable for the protocol-aware settings screen.
             return {

@@ -37,11 +37,12 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 
 import { api } from '../api'
+import { useGlobalState } from '../store'
 
 const props = defineProps({
   email: {
@@ -87,61 +88,76 @@ const folderOptions = computed(() => folders.value
     value: folder.id,
   })))
 
+const { userJwt, adminAuth, unifiedApiKey } = useGlobalState()
+let controller = new AbortController()
+const current = scope => scope === controller && !scope.signal.aborted
 let folderRequestSeq = 0
 const loadFolders = async () => {
   const requestId = ++folderRequestSeq
+  const scope = controller
   targetFolderId.value = null
   folders.value = []
-  if (!canMove.value) return
+  loadingFolders.value = false
+  if (!canMove.value || scope.signal.aborted) return
   loadingFolders.value = true
   try {
-    const result = await api.unified.listFolders({ account_id: props.email.account_id })
-    if (requestId !== folderRequestSeq) return
+    const result = await api.unified.listFolders({ account_id: props.email.account_id }, { signal: scope.signal })
+    if (requestId !== folderRequestSeq || !current(scope)) return
     folders.value = Array.isArray(result?.results) ? result.results : []
   } catch (error) {
-    if (requestId !== folderRequestSeq) return
+    if (requestId !== folderRequestSeq || !current(scope)) return
     message.error(error?.message || '文件夹加载失败')
   } finally {
-    if (requestId === folderRequestSeq) loadingFolders.value = false
+    if (requestId === folderRequestSeq && current(scope)) loadingFolders.value = false
   }
 }
 
-watch([
-  () => props.email?.id,
-  () => props.email?.account_id,
-  provider,
-], loadFolders, { immediate: true })
+const renewScope = () => {
+  controller.abort()
+  controller = new AbortController()
+  moving.value = false
+  deleting.value = false
+  void loadFolders()
+}
+watch([() => props.email, () => props.email?.id, () => props.email?.account_id, provider, userJwt, adminAuth, unifiedApiKey], renewScope, { immediate: true })
+onBeforeUnmount(() => controller.abort())
+onDeactivated(() => controller.abort())
+onActivated(() => { if (controller.signal.aborted) renewScope() })
 
 const move = async () => {
-  if (!canMove.value || !targetFolderId.value || moving.value) return
+  if (!canMove.value || !targetFolderId.value || busy.value) return
+  const scope = controller
+  const target = props.email
   moving.value = true
   try {
-    const result = await api.unified.moveEmail(props.email.id, targetFolderId.value)
-    // Provider terminal state is already awaited by the installed unified
-    // mutation adapter. Only now is it safe to update what the UI displays.
+    const result = await api.unified.moveEmail(target.id, targetFolderId.value, { signal: scope.signal })
+    if (!current(scope) || props.email !== target) return
+    // Provider terminal state is awaited by the unified API. Only now is it safe to update what the UI displays.
     props.email.source_folder = result.source_folder ?? props.email.source_folder
     props.email.source_folder_id = result.source_folder_id ?? props.email.source_folder_id
     message.success(`已移动到 ${props.email.source_folder || '目标文件夹'}`)
     await loadFolders()
   } catch (error) {
-    message.error(error?.message || '移动失败')
+    if (current(scope)) message.error(error?.message || '移动失败')
   } finally {
-    moving.value = false
+    if (current(scope)) moving.value = false
   }
 }
 
 const remove = async () => {
-  if (!canDelete.value || deleting.value) return
+  if (!canDelete.value || busy.value) return
   if (!window.confirm('确定要删除这封邮件吗？外部邮箱会同步执行删除。')) return
+  const scope = controller
   deleting.value = true
   try {
-    await api.unified.deleteEmail(props.email.id)
+    await api.unified.deleteEmail(props.email.id, { signal: scope.signal })
+    if (!current(scope)) return
     message.success('邮件已删除')
     await router.push('/unified')
   } catch (error) {
-    message.error(error?.message || '删除失败')
+    if (current(scope)) message.error(error?.message || '删除失败')
   } finally {
-    deleting.value = false
+    if (current(scope)) deleting.value = false
   }
 }
 </script>

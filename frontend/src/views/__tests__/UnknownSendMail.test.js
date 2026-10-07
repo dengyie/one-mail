@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url'
 
 const view = readFileSync(fileURLToPath(new URL('../admin/UnknownSendMail.vue', import.meta.url)), 'utf8')
 const admin = readFileSync(fileURLToPath(new URL('../Admin.vue', import.meta.url)), 'utf8')
-const sidebar = readFileSync(fileURLToPath(new URL('../../components/layout/AppSidebar.vue', import.meta.url)), 'utf8')
 const router = readFileSync(fileURLToPath(new URL('../../router/index.js', import.meta.url)), 'utf8')
 
 describe('admin unknown delivery page contracts', () => {
@@ -33,8 +32,7 @@ describe('admin unknown delivery page contracts', () => {
     expect(router).toContain("path: '/admin/send-unknown'")
     expect(admin).toContain("if (p.includes('/admin/send-unknown')) return 'send_unknown'")
     expect(admin).toContain('<UnknownSendMail />')
-    expect(sidebar).toContain("handleNavigate('/admin/send-unknown')")
-    expect(sidebar).toContain("handleNavigate('/admin/sender-access')")
-    expect(sidebar).toContain("handleNavigate('/admin/sendmail')")
+    // Actual sidebar links and administrator visibility are covered by the
+    // mounted AppSidebar tests, rather than its previous inline click syntax.
   })
 })

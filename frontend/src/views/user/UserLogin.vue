@@ -3,24 +3,18 @@ import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
-import {
-  LockFilled, ShieldFilled, MarkEmailReadFilled,
-  AutoAwesomeFilled, VpnKeyFilled, PersonFilled,
-  ArrowForwardFilled, EmailFilled, VisibilityFilled,
-  VisibilityOffFilled, RefreshFilled
-} from '@vicons/material'
-import { KeyFilled } from '@vicons/material'
+import MailIcon from '../../components/ui/MailIcon.vue'
 import { startAuthentication } from '@simplewebauthn/browser'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import { getRouterPathWithLang } from '../../utils'
-import StatusIndicator from '../../components/ai/StatusIndicator.vue'
 import Turnstile from '../../components/Turnstile.vue'
 
 const router = useRouter()
 const message = useMessage()
 const { t, locale } = useScopedI18n('views.user.UserLogin')
+const { t: w } = useScopedI18n('workspace')
 
 const {
   userJwt, userOpenSettings, openSettings,
@@ -30,6 +24,7 @@ const {
 const mode = ref('login') // 'login' | 'register' | 'passkey'
 const showPassword = ref(false)
 const submitting = ref(false)
+const authenticatingPasskey = ref(false)
 
 const form = ref({
   email: '',
@@ -144,6 +139,8 @@ const handleRegister = async () => {
 }
 
 const passkeyLogin = async () => {
+  if (authenticatingPasskey.value) return
+  authenticatingPasskey.value = true
   try {
     const opts = await api.fetch('/user_api/passkey/authenticate_request', {
       method: 'POST',
@@ -165,6 +162,8 @@ const passkeyLogin = async () => {
     await router.push(getRouterPathWithLang('/unified', locale.value))
   } catch (error) {
     message.error(error.message || 'Passkey 登录失败')
+  } finally {
+    authenticatingPasskey.value = false
   }
 }
 
@@ -186,222 +185,29 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="min-h-[calc(100vh-140px)] flex flex-col justify-center py-4">
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center max-w-6xl mx-auto w-full">
-      
-      <!-- Left Column: Hero & Core Product Features (仿照 tfm 架构展示) -->
-      <div class="lg:col-span-7 space-y-8 text-left">
-        <div class="space-y-4">
-          <!-- Status Pill -->
-          <div class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 text-xs font-semibold tracking-wide border border-blue-200/60 dark:border-blue-800/60 shadow-xs">
-            <StatusIndicator status="online" size="sm" />
-            <span>智能隐私收件工作台</span>
-          </div>
-
-          <h1 class="text-3xl sm:text-5xl font-black text-slate-900 dark:text-white tracking-tight leading-tight">
-            随取随用的 <span class="bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 bg-clip-text text-transparent">智能收件箱</span>
-          </h1>
-
-          <p class="text-base sm:text-lg text-slate-600 dark:text-slate-300 leading-relaxed max-w-xl">
-            来信毫秒级自动送达，AI 智能提取验证码与关键操作。登录后解锁永久多源归集与统一工作台。
-          </p>
-        </div>
-
-        <!-- 3 Feature Highlight Cards (类似 tfm.memom.mom) -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-          <!-- Feature 1 -->
-          <div class="p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 shadow-xs space-y-2 hover:border-blue-500/40 transition-all">
-            <div class="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <n-icon size="20" :component="ShieldFilled" />
-            </div>
-            <h2 class="font-bold text-sm text-slate-900 dark:text-white">地址永久保留</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 leading-normal">
-              专属绑定的地址永不回收，不被他人抢注，随时登录找回。
-            </p>
-          </div>
-
-          <!-- Feature 2 -->
-          <div class="p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 shadow-xs space-y-2 hover:border-indigo-500/40 transition-all">
-            <div class="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-              <n-icon size="20" :component="MarkEmailReadFilled" />
-            </div>
-            <h2 class="font-bold text-sm text-slate-900 dark:text-white">验证码一键复制</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 leading-normal">
-              邮件到达后自动识别 OTP 与链接，大字置顶展示一键提取。
-            </p>
-          </div>
-
-          <!-- Feature 3 -->
-          <div class="p-4 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 shadow-xs space-y-2 hover:border-cyan-500/40 transition-all">
-            <div class="w-9 h-9 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center">
-              <n-icon size="20" :component="AutoAwesomeFilled" />
-            </div>
-            <h2 class="font-bold text-sm text-slate-900 dark:text-white">私人专属邮箱</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 leading-normal">
-              登录后自选前缀创建私人信箱，仅你可见，支持多端归集。
-            </p>
-          </div>
-        </div>
-
-        <!-- Hint -->
-        <div class="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500 pt-1">
-          <n-icon size="16" :component="LockFilled" />
-          <span>全链路端到端加密与 Cloudflare 安全防护 · 登录后进入专属邮箱侧边栏</span>
-        </div>
+  <div class="mail-auth">
+    <section class="mail-auth__story">
+      <div class="workspace-eyebrow">ONE MAIL / {{ w('privateSpace') }}</div>
+      <h1>{{ w('loginHero') }}</h1>
+      <p class="mail-auth__intro">{{ w('loginDescription') }}</p>
+      <div class="mail-auth__features">
+        <div v-for="feature in [{ icon: 'layers', title: 'featureUnified', text: 'featureUnifiedText' }, { icon: 'key', title: 'featureCodes', text: 'featureCodesText' }, { icon: 'address', title: 'featurePrivate', text: 'featurePrivateText' }]" :key="feature.title" class="mail-auth__feature"><span><MailIcon :name="feature.icon" :size="20" /></span><div><h2>{{ w(feature.title) }}</h2><p>{{ w(feature.text) }}</p></div></div>
       </div>
-
-      <!-- Right Column: Login / Register Authentication Card -->
-      <div class="lg:col-span-5 w-full">
-        <div class="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl rounded-3xl border border-slate-200/90 dark:border-slate-800/90 shadow-2xl shadow-blue-500/5 p-6 sm:p-8">
-          
-          <!-- Card Header & Tabs -->
-          <div class="flex items-center justify-between pb-6 border-b border-slate-100 dark:border-slate-800/80">
-            <div>
-              <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-                {{ mode === 'login' ? '账号登录' : '快速注册' }}
-              </h2>
-              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {{ mode === 'login' ? '登录以进入专属收件控制台' : '注册账号以永久保留您的私人信箱' }}
-              </p>
-            </div>
-
-            <!-- Mode Switch Pills -->
-            <div v-if="userOpenSettings.enable" class="flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
-              <button
-                @click="mode = 'login'"
-                class="px-3 py-1 text-xs font-semibold rounded-lg transition-all"
-                :class="mode === 'login' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'"
-              >
-                登录
-              </button>
-              <button
-                @click="mode = 'register'"
-                class="px-3 py-1 text-xs font-semibold rounded-lg transition-all"
-                :class="mode === 'register' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs' : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'"
-              >
-                注册
-              </button>
-            </div>
-          </div>
-
-          <!-- Form Area -->
-          <form @submit.prevent="mode === 'login' ? handleLogin() : handleRegister()" class="mt-6 space-y-4">
-            <!-- Email Input -->
-            <div class="space-y-1.5">
-              <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                电子邮箱账号
-              </label>
-              <div class="relative">
-                <input
-                  v-model="form.email"
-                  type="email"
-                  required
-                  placeholder="name@example.com"
-                  class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all"
-                />
-              </div>
-            </div>
-
-            <!-- Password Input -->
-            <div class="space-y-1.5">
-              <div class="flex items-center justify-between">
-                <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  登录密码
-                </label>
-              </div>
-              <div class="relative">
-                <input
-                  v-model="form.password"
-                  :type="showPassword ? 'text' : 'password'"
-                  required
-                  placeholder="••••••••"
-                  class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all pr-10"
-                />
-                <button
-                  type="button"
-                  @click="showPassword = !showPassword"
-                  class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                >
-                  <n-icon size="18" :component="showPassword ? VisibilityOffFilled : VisibilityFilled" />
-                </button>
-              </div>
-            </div>
-
-            <!-- Verification Code (Only for Register when mail verify enabled) -->
-            <div v-if="mode === 'register' && userOpenSettings.enableMailVerify" class="space-y-1.5">
-              <label class="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                邮箱验证码
-              </label>
-              <div class="flex gap-2">
-                <input
-                  v-model="form.code"
-                  type="text"
-                  placeholder="6位验证码"
-                  class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all"
-                />
-                <button
-                  type="button"
-                  :disabled="verifyCodeTimeout > 0"
-                  @click="sendVerificationCode"
-                  class="px-4 py-2.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl whitespace-nowrap transition-all disabled:opacity-50"
-                >
-                  {{ verifyCodeTimeout > 0 ? `${verifyCodeTimeout}s` : '获取验证码' }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Turnstile Protection -->
-            <div v-if="openSettings.enableGlobalTurnstileCheck" class="py-1">
-              <Turnstile
-                ref="loginTurnstileRef"
-                v-if="mode === 'login'"
-                v-model:value="loginCfToken"
-              />
-              <Turnstile
-                ref="signupTurnstileRef"
-                v-else
-                v-model:value="signupCfToken"
-              />
-            </div>
-
-            <!-- Submit Button -->
-            <button
-              type="submit"
-              :disabled="submitting"
-              class="w-full mt-2 py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-sm font-bold rounded-xl shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70"
-            >
-              <n-icon v-if="submitting" size="18" class="animate-spin" :component="RefreshFilled" />
-              <span>{{ mode === 'login' ? '立即登录' : '立即注册' }}</span>
-              <n-icon v-if="!submitting" size="18" :component="ArrowForwardFilled" />
-            </button>
-          </form>
-
-          <!-- Alternative Auth Methods: Passkey & OAuth2 -->
-          <div class="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80 space-y-3">
-            <button
-              type="button"
-              @click="passkeyLogin"
-              class="w-full py-2.5 px-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700/80 transition-all flex items-center justify-center gap-2"
-            >
-              <n-icon size="16" :component="KeyFilled" />
-              <span>{{ t('loginWithPasskey') || '使用 Passkey 通行密钥登录' }}</span>
-            </button>
-
-            <!-- OAuth2 Providers (e.g., LinuxDo, GitHub, etc.) -->
-            <div v-if="userOpenSettings.oauth2ClientIDs && userOpenSettings.oauth2ClientIDs.length > 0" class="grid grid-cols-1 gap-2 pt-1">
-              <button
-                v-for="provider in userOpenSettings.oauth2ClientIDs"
-                :key="provider.clientID"
-                type="button"
-                @click="oauth2Login(provider.clientID)"
-                class="w-full py-2.5 px-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700/80 transition-all flex items-center justify-center gap-2"
-              >
-                <span>使用 {{ provider.name }} 快捷登录</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      <div class="mail-auth__privacy"><MailIcon name="shield" :size="15" />{{ w('privacyHint') }}</div>
+    </section>
+    <section class="mail-auth__card">
+      <div class="mail-auth__heading"><div class="mail-auth__badge"><MailIcon name="inbox" :size="23" /></div><h2>{{ w(mode === 'login' ? 'welcome' : 'registerTitle') }}</h2><p>{{ w(mode === 'login' ? 'welcomeSubtitle' : 'registerSubtitle') }}</p></div>
+      <div v-if="userOpenSettings.enable" class="mail-auth__tabs" role="group" :aria-label="w('account')"><button type="button" :aria-pressed="mode === 'login'" @click="mode = 'login'">{{ w('loginTab') }}</button><button type="button" :aria-pressed="mode === 'register'" @click="mode = 'register'">{{ w('registerTab') }}</button></div>
+      <form class="mail-auth__form" @submit.prevent="mode === 'login' ? handleLogin() : handleRegister()">
+        <div class="mail-field"><label for="auth-email">{{ w('emailLabel') }}</label><input id="auth-email" v-model="form.email" type="email" required autocomplete="email" placeholder="name@example.com" /></div>
+        <div class="mail-field"><label for="auth-password">{{ w('passwordLabel') }}</label><div class="mail-field__password"><input id="auth-password" v-model="form.password" :type="showPassword ? 'text' : 'password'" required :autocomplete="mode === 'login' ? 'current-password' : 'new-password'" placeholder="••••••••" /><button type="button" class="mail-icon-button" :aria-label="w(showPassword ? 'hidePassword' : 'showPassword')" :aria-pressed="showPassword" @click="showPassword = !showPassword"><MailIcon :name="showPassword ? 'lock' : 'eye'" :size="17" /></button></div></div>
+        <div v-if="mode === 'register' && userOpenSettings.enableMailVerify" class="mail-field"><label for="auth-code">{{ w('codeLabel') }}</label><div class="flex gap-2"><input id="auth-code" v-model="form.code" type="text" required autocomplete="one-time-code" inputmode="numeric" /><n-button :disabled="verifyCodeTimeout > 0" @click="sendVerificationCode">{{ verifyCodeTimeout > 0 ? `${verifyCodeTimeout}s` : w('sendCode') }}</n-button></div></div>
+        <div v-if="openSettings.enableGlobalTurnstileCheck"><Turnstile v-if="mode === 'login'" ref="loginTurnstileRef" v-model:value="loginCfToken" /><Turnstile v-else ref="signupTurnstileRef" v-model:value="signupCfToken" /></div>
+        <n-button attr-type="submit" type="primary" block size="large" :loading="submitting">{{ w(mode === 'login' ? 'login' : 'register') }}<template #icon><MailIcon name="arrow-right" :size="17" /></template></n-button>
+      </form>
+      <div class="mail-auth__separator"><span>{{ w('alternativeLogin') }}</span></div>
+      <n-button block :loading="authenticatingPasskey" @click="passkeyLogin"><template #icon><MailIcon name="key" :size="17" /></template>{{ t('loginWithPasskey') }}</n-button>
+      <div v-if="userOpenSettings.oauth2ClientIDs?.length" class="space-y-2 mt-3"><n-button v-for="provider in userOpenSettings.oauth2ClientIDs" :key="provider.clientID" block @click="oauth2Login(provider.clientID)">{{ w('loginProvider', { name: provider.name }) }}</n-button></div>
+    </section>
   </div>
 </template>

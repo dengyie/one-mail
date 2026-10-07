@@ -1,4 +1,5 @@
 <script setup>
+import MailIcon from '../../components/ui/MailIcon.vue'
 import { ref, h, onMounted, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
@@ -200,10 +201,12 @@ onMounted(async () => {
 watch([page, pageSize], async () => {
     await fetchData()
 })
+const { t: w } = useScopedI18n('workspace')
 </script>
 
 <template>
-    <div class="space-y-6">
+    <div class="workspace-page settings-page">
+        <div class="workspace-page-header"><div><div class="workspace-eyebrow">{{ w('account') }}</div><h1>{{ w('addresses') }}</h1><p>{{ w('addressesDescription') }}</p></div></div>
         <!-- 弹窗：转让地址 -->
         <n-modal v-model:show="showTranferAddress" preset="dialog" :title="t('transferAddress')" class="rounded-3xl">
             <div class="space-y-3 py-2">
@@ -228,25 +231,25 @@ watch([page, pageSize], async () => {
         </n-modal>
 
         <!-- 地址列表主面板（纯内容视图，零顶部内嵌 Tab） -->
-        <div class="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-200/80 dark:border-slate-800/80 p-5 sm:p-7 shadow-sm space-y-6">
+        <div class="settings-section space-y-6">
             <div class="flex items-center justify-between flex-wrap gap-4 pb-4 border-b border-slate-100 dark:border-slate-800/80">
                 <div>
-                    <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">专属邮箱地址管理</h2>
+                    <h2 class="text-sm font-semibold">专属邮箱地址管理</h2>
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">永久绑定到当前账号的名下邮箱，随时切换收信身份与转让管理</p>
                 </div>
                 <n-button @click="showCreateModal = true" type="primary" class="rounded-xl font-medium shadow-xs">
-                    + 创建 / 绑定新邮箱
+                    <template #icon><MailIcon name="plus" :size="16" /></template>创建 / 绑定新邮箱
                 </n-button>
             </div>
 
             <div class="space-y-4">
-                <div class="flex items-center justify-between text-xs text-slate-500">
+                <div class="flex items-center justify-between gap-3 flex-wrap text-xs text-slate-500">
                     <span>共绑定 {{ count }} 个专属邮箱地址</span>
                     <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count" :page-sizes="[20, 50, 100]" size="small">
                         <template #prefix>{{ t('itemCount') }}: {{ count }}</template>
                     </n-pagination>
                 </div>
-                <n-data-table :columns="columns" :data="data" :bordered="false" class="rounded-2xl overflow-hidden" />
+                <n-data-table :scroll-x="700" :columns="columns" :data="data" :bordered="false" class="rounded-2xl overflow-hidden" />
             </div>
         </div>
     </div>
