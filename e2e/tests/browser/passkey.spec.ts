@@ -1,14 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { request as apiRequest } from '@playwright/test';
-import { createHash } from 'crypto';
 import { WORKER_URL, FRONTEND_URL } from '../../fixtures/test-helpers';
 
 const TEST_USER_EMAIL = `passkey-browser-${Date.now()}@test.example.com`;
 const TEST_USER_PASSWORD = 'browser-test-pwd-123';
-
-// Frontend hashes passwords with SHA-256 before sending to the API.
-// Register with the hashed password so UI login matches.
-const HASHED_PASSWORD = createHash('sha256').update(TEST_USER_PASSWORD).digest('hex');
 
 test.describe('Passkey Browser Flow', () => {
   let userJwt: string;
@@ -20,13 +15,13 @@ test.describe('Passkey Browser Flow', () => {
       await api.post(`${WORKER_URL}/admin/user_settings`, {
         data: { enable: true, enableMailVerify: false },
       });
-      // Register user with hashed password (matching frontend behavior)
+      // Register with the same raw-password contract used by the frontend.
       await api.post(`${WORKER_URL}/user_api/register`, {
-        data: { email: TEST_USER_EMAIL, password: HASHED_PASSWORD },
+        data: { email: TEST_USER_EMAIL, password: TEST_USER_PASSWORD },
       });
       // Login to get JWT for localStorage injection
       const loginRes = await api.post(`${WORKER_URL}/user_api/login`, {
-        data: { email: TEST_USER_EMAIL, password: HASHED_PASSWORD },
+        data: { email: TEST_USER_EMAIL, password: TEST_USER_PASSWORD },
       });
       const body = await loginRes.json();
       userJwt = body.jwt;
@@ -62,8 +57,8 @@ test.describe('Passkey Browser Flow', () => {
       // Wait for user settings to load (shows user email)
       await expect(page.getByRole('complementary').getByText(TEST_USER_EMAIL)).toBeVisible({ timeout: 15_000 });
 
-      // === Step 2: Click "User Settings" tab ===
-      await page.getByText('User Settings').click();
+      // === Step 2: Open account security from workspace navigation ===
+      await page.getByRole('link', { name: 'Account & security', exact: true }).click();
 
       // === Step 3: Create a passkey ===
       // The bind button now auto-assigns a timestamped name and opens the
@@ -80,13 +75,13 @@ test.describe('Passkey Browser Flow', () => {
       await page.keyboard.press('Escape');
 
       // === Step 5: Logout ===
-      await page.getByRole('button', { name: 'Logout' }).click();
+      await page.getByRole('button', { name: 'Sign out', exact: true }).click();
       const logoutModal = page.locator('.n-dialog');
       await expect(logoutModal).toBeVisible({ timeout: 5_000 });
-      await logoutModal.getByRole('button', { name: 'Logout' }).click();
+      await logoutModal.getByRole('button', { name: 'Sign out', exact: true }).click();
 
       // Wait for logout to complete and navigate to user page
-      await page.waitForTimeout(2000);
+      await expect(logoutModal).toBeHidden();
       await page.goto(`${FRONTEND_URL}/en/user`);
 
       // === Step 6: Login with passkey ===
@@ -98,8 +93,10 @@ test.describe('Passkey Browser Flow', () => {
       // Wait for login to complete — user email should appear
       await expect(page.getByRole('complementary').getByText(TEST_USER_EMAIL)).toBeVisible({ timeout: 15_000 });
     } finally {
-      await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
-      await cdp.detach();
+      if (!page.isClosed()) {
+        await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
+        await cdp.detach();
+      }
     }
   });
 });
