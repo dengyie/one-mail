@@ -14,6 +14,20 @@ const twelveShards = Array.from({ length: 12 }, (_, index) => ({
 }));
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 
+test("redirect responses are never accepted and their bodies are cancelled", async () => {
+    let cancelled = false;
+    const result = await fetchShardJson(shard, "/shard/health", {
+        acceptedStatuses: [302],
+        fetchImpl: async () => new Response(new ReadableStream({ cancel() { cancelled = true; } }), {
+            status: 302, headers: { location: "https://wrong.example" },
+        }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "http_302");
+    await result.diagnostics.cleanup;
+    assert.equal(cancelled, true);
+});
+
 test("readBearerToken requires the Bearer scheme", () => {
     assert.equal(readBearerToken(new Request("https://x", { headers: { authorization: "Bearer abc" } })), "abc");
     assert.equal(readBearerToken(new Request("https://x", { headers: { authorization: "abc" } })), "");
@@ -108,7 +122,7 @@ test("scope is encoded, redirects forbidden, and network cause retained", async 
     const cause = new Error("private network detail");
     const result = await fetchShardJson(shard, "/shard/x", {
         scope, fetchImpl: async (_url, init) => {
-            assert.equal(init.redirect, "error");
+            assert.equal(init.redirect, "manual");
             assert.deepEqual(JSON.parse(decodeURIComponent(init.headers["x-one-mail-shard-scope"])), scope);
             throw cause;
         },

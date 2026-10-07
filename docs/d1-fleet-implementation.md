@@ -69,7 +69,7 @@ configure/metrics的期望revision为规范十进制字符串。成功回执丢�
 | --- | --- |
 | Shared build | 通过 |
 | Worker typecheck / 全量lint | 通过 |
-| Worker完整测试 | 512通过，0失败 |
+| Worker完整测试 | 514通过，0失败 |
 | Worker Wrangler bundle | dry-run通过，已识别FleetRegistry绑定 |
 | 数据库工具测试 | 29通过，0失败 |
 | 前端typecheck / build | 通过 |
@@ -127,4 +127,6 @@ Worker build使用从模板生成的本地 `wrangler.toml`，是`--dry-run`。�
 2. 退休指标挤掉第13条当前账户指标：配置移除账户时清理其指标；plan按当前最多12个账户键批量get，不再截取历史前缀前12项。覆盖满额账户多次替换与历史脏记录。
 3. 部分刷新保留已不匹配筛选的行：只保留`unavailable_mailbox_ids`对应旧行；成功操作先移除失效筛选成员，再刷新。保留行沿用对象身份判断，所以刷新期间provider拒绝仍能回滚乐观状态。覆盖星标/未读/组合筛选及失败回滚。
 
-本地完整门禁合计1443项通过。发布范围是静态/observe基础能力，生产数据面继续使用静态路由；隔离Cloudflare验证实例用于配置替换故障场景，不向生产registry写入合成配置。完整动态分配与迁移仍须先完成第6节安全依赖及D7验收。实际部署版本与线上测试结果以发布记录为准。
+随后在Cloudflare真实DO实例首次configure时复现503：Workers不支持`fetch`的`redirect: "error"`。注册表与分片客户端统一改为`manual`并显式拒绝3xx、取消响应流；服务边界保留传输错误异常链，避免诊断只剩503。新增`e2e/tests/api/fleet-registry.spec.ts`通过真实Worker/DO绑定验证configure、snapshot、plan和幂等重放，弥补Node模拟边界。
+
+本地完整门禁合计1445项通过。Cloudflare隔离实例18项检查通过，覆盖换库/换账户重新资格化、满额12账户连续替换、幂等重放、权限隔离与条件快照。发布范围是静态/observe基础能力，生产数据面继续使用静态路由；隔离实例未绑定生产D1，不向生产registry写入合成配置。完整动态分配与迁移仍须先完成第6节安全依赖及D7验收。实际部署版本与线上测试结果以发布记录为准。

@@ -164,14 +164,14 @@ export const fetchShardJson = async <T>(
                     headers,
                     body: requestBody,
                     signal: ac.signal,
-                    redirect: "error",
+                    redirect: "manual",
                 },
             );
             if (stopped || performance.now() >= deadlineAtMs) {
                 if (response.body) cancel(response.body);
                 checkStopped();
             }
-            if (!response.ok && !init.acceptedStatuses?.includes(response.status)) {
+            if ((response.status >= 300 && response.status < 400) || (!response.ok && !init.acceptedStatuses?.includes(response.status))) {
                 if (response.body) cancel(response.body);
                 return fail(`http_${response.status}`);
             }

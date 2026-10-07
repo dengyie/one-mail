@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { safeEqual } from "../core/timing.ts";
+import { serializeError } from "../core/error_serialization.ts";
 import { FleetError } from "./contracts.ts";
 import { readFleetJson } from "./http_io.ts";
 import { deployedFleetMode } from "./mode.ts";
@@ -58,9 +59,16 @@ api.all(`${PREFIX}/*`, async c => {
         const result = await requestFleetRegistry(c.env, path, { method: "POST", body: command, signal: abort.signal });
         return Response.json(result, { headers: { "Cache-Control": "no-store" } });
     } catch (cause) {
-        if (cause instanceof FleetError) return failure(cause.code, cause.status, requestId, cause.retryable);
+        if (cause instanceof FleetError) {
+            // Domain failures are already diagnosed by the registry. Transport
+            // failures retain their local cause and need this boundary log.
+            if (cause.code === "REGISTRY_UNAVAILABLE" && cause.cause !== undefined) {
+                console.error("fleet service request failed", { request_id: requestId, error: serializeError(cause) });
+            }
+            return failure(cause.code, cause.status, requestId, cause.retryable);
+        }
         // No tokens, payloads or remote response text enter this boundary log.
-        console.error("fleet service request failed", { request_id: requestId, error_name: cause instanceof Error ? cause.name : "UnknownError" });
+        console.error("fleet service request failed", { request_id: requestId, error: serializeError(cause) });
         return failure("REGISTRY_UNAVAILABLE", 503, requestId, true);
     } finally {
         clearTimeout(timer);

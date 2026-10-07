@@ -89,9 +89,13 @@ export async function requestFleetRegistry(env: RegistryBindings, path: string, 
             method: options.method ?? "GET",
             headers: { "Content-Type": "application/json" },
             body: options.body === undefined ? undefined : JSON.stringify(options.body),
-            redirect: "error",
+            redirect: "manual",
             signal: abort.signal,
         }), abort.signal);
+        if (response.status >= 300 && response.status < 400) {
+            await abortable(response.body?.cancel() ?? Promise.resolve(), abort.signal);
+            throw new FleetError("REGISTRY_UNAVAILABLE", 503, true, new Error(`Unexpected registry redirect: HTTP ${response.status}`));
+        }
         let parsed: Record<string, unknown> | FleetError;
         try {
             const body = await abortable(readFleetJson(response, MAX_SNAPSHOT_BYTES, abort.signal), abort.signal);

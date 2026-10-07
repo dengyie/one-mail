@@ -104,7 +104,9 @@ test("control requests retain stable idempotency body and plan never uses a writ
     assert.equal(f.calls[1].url, "https://fleet-registry.internal/plan");
 });
 
-test("registry failure has stable error, retry hint and no infrastructure response leakage", async () => {
+test("registry failure retains boundary diagnostics without leaking infrastructure errors to clients", async t => {
+    const logs = [];
+    t.mock.method(console, "error", (...args) => logs.push(args));
     const f = fixture(() => { throw new Error("credential or SQL must stay private"); });
     const response = await f.request();
     assert.equal(response.status, 503);
@@ -114,6 +116,9 @@ test("registry failure has stable error, retry hint and no infrastructure respon
     assert.equal(body.retryable, true);
     assert.match(body.request_id, /^[a-z0-9-]{36}$/);
     assert.ok(!JSON.stringify(body).includes("credential or SQL"));
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0][1].request_id, body.request_id);
+    assert.equal(logs[0][1].error.cause.message, "credential or SQL must stay private");
 });
 
 test("outer deadline covers a client upload stream that never completes", async t => {

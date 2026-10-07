@@ -500,11 +500,22 @@ test("operation retention is bounded and pruning never releases unknown-outcome 
 test("client uses one named registry, validates public snapshots and fails closed without binding", async t => {
     const { registry } = await fixture(t);
     const names = [];
-    const env = { FLEET_REGISTRY: { idFromName(name) { names.push(name); return name; }, get() { return { fetch: (url, options) => registry.fetch(new Request(url, options)) }; } } };
+    const env = { FLEET_REGISTRY: { idFromName(name) { names.push(name); return name; }, get() { return { fetch: (url, options) => {
+        assert.equal(options.redirect, "manual", "Workers only supports follow/manual redirect modes");
+        return registry.fetch(new Request(url, options));
+    } }; } } };
     assert.equal((await getFleetRegistrySnapshot(env)).revision, "4");
     assert.deepEqual(names, [FLEET_REGISTRY_OBJECT_NAME]);
     await assert.rejects(getFleetRegistrySnapshot({}), /REGISTRY_UNAVAILABLE/);
     await assert.rejects(requestFleetRegistry(env, "https://attacker.test"), /INVALID_REQUEST/);
+});
+
+test("registry redirects are cancelled and never exposed as domain responses", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({ cancel() { cancelled = true; } });
+    const env = { FLEET_REGISTRY: { idFromName: name => name, get: () => ({ fetch: async () => new Response(body, { status: 302, headers: { location: "https://wrong.example" } }) }) } };
+    await assert.rejects(getFleetRegistrySnapshot(env), error => error.code === "REGISTRY_UNAVAILABLE" && error.status === 503);
+    assert.equal(cancelled, true);
 });
 
 test("client enforces its deadline when the registry fetch ignores AbortSignal", async t => {
