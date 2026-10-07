@@ -546,8 +546,15 @@ const { t: w } = useScopedI18n('workspace')
             </div>
 
             <div class="space-y-4">
-                <n-data-table :scroll-x="700" :columns="columns" :data="list" :loading="loading" :bordered="false" class="rounded-2xl overflow-hidden" />
+                <n-data-table :scroll-x="700" :columns="columns" :data="list" :loading="loading" :bordered="false" class="external-accounts-table rounded-2xl overflow-hidden" />
             </div>
         </div>
     </div>
 </template>
+
+<style scoped>
+.external-accounts-table :deep(th),
+.external-accounts-table :deep(td) {
+    white-space: nowrap;
+}
+</style>
