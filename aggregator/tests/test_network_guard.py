@@ -82,3 +82,39 @@ def test_reserved_test_domains_do_not_require_dns():
     # IANA-reserved test names are non-routable and used throughout the suite.
     assert_public_mail_host("mail.example.test", 993)
     assert_public_mail_host("imap.example.com", 993)
+
+
+def test_overseas_hosts_do_not_require_dns(monkeypatch):
+    # Overseas hosts (e.g. mail.linux.do, imap.gmail.com) route via SOCKS5 proxy
+    # and must not be rejected by local DNS poisoning.
+    def poisoned_resolver(host, port, **kwargs):
+        raise socket.gaierror("local DNS poisoned or unavailable")
+    monkeypatch.setattr(socket, "getaddrinfo", poisoned_resolver)
+
+    assert_public_mail_host("mail.linux.do", 993)
+    assert_public_mail_host("imap.gmail.com", 993)
+
+
+def test_ipv6_2001_routable_accepted_and_doc_rejected():
+    # 2001::/23 routable addresses must be accepted
+    assert_public_mail_host("2001::68f4:2eba:993", 993)
+
+    # 2001:db8::/32 documentation addresses must be rejected
+    with pytest.raises(UnsafeMailTargetError):
+        assert_public_mail_host("2001:db8::1", 993)
+
+
+def test_user_account_can_send_validates_smtp_target():
+    account = AccountConfig(
+        id="u2",
+        source="imap_custom",
+        host="8.8.8.8",
+        port=993,
+        username="u@example.net",
+        password="secret",
+        can_send=True,
+        smtp_host="10.0.0.1",  # private IP -> must be rejected
+        smtp_port=465,
+    )
+    with pytest.raises(UnsafeMailTargetError):
+        assert_public_user_account(account)

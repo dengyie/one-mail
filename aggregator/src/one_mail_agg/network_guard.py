@@ -12,6 +12,7 @@ import socket
 from typing import Iterable
 
 from .config import AccountConfig
+from .proxy_client import is_overseas_imap_host, is_overseas_smtp_host
 
 
 class UnsafeMailTargetError(ValueError):
@@ -22,6 +23,24 @@ class UnsafeMailTargetError(ValueError):
 # as syntactically safe keeps unit tests deterministic; actual connections still
 # fail normally if someone configures them in production.
 _RESERVED_TEST_SUFFIXES = (".example", ".example.com", ".test", ".invalid")
+_DOC_NET_V6 = ipaddress.ip_network("2001:db8::/32")
+_TEREDO_IETF_V6 = ipaddress.ip_network("2001::/23")
+
+
+def _is_public_ip(ip: ipaddress._BaseAddress) -> bool:
+    if ip.version == 4:
+        return ip.is_global
+    # IPv6: Python standard library's ip.is_global classifies all 2001::/23 as
+    # private (RFC 6890 IETF assignments). Disallow documentation prefix
+    # 2001:db8::/32, unique local fc00::/7, link-local, multicast, etc.,
+    # but treat other routable 2001::/23 addresses as public.
+    if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_reserved or ip.is_link_local:
+        return False
+    if ip in ipaddress.ip_network("fc00::/7"):
+        return False
+    if ip in _DOC_NET_V6:
+        return False
+    return ip.is_global or (ip in _TEREDO_IETF_V6)
 
 
 def _is_reserved_test_name(host: str) -> bool:
@@ -68,15 +87,18 @@ def assert_public_mail_host(host: str, port: int) -> None:
 
     literal = _literal_ip(normalized)
     if literal is not None:
-        if not literal.is_global:
+        if not _is_public_ip(literal):
             raise UnsafeMailTargetError("mail target is not public")
         return
 
     if _is_reserved_test_name(normalized):
         return
 
+    if is_overseas_imap_host(normalized) or is_overseas_smtp_host(normalized):
+        return
+
     for ip in _resolved_ips(normalized, port):
-        if not ip.is_global:
+        if not _is_public_ip(ip):
             raise UnsafeMailTargetError("mail target resolved to a non-public address")
 
 
@@ -89,3 +111,6 @@ def assert_public_user_account(account: AccountConfig) -> None:
         pop3_port = account.resolve_pop3_port()
         if (pop3_host.rstrip(".").lower(), pop3_port) != (account.host.rstrip(".").lower(), account.port):
             assert_public_mail_host(pop3_host, pop3_port)
+
+    if getattr(account, "can_send", False) and getattr(account, "smtp_host", None) and getattr(account, "smtp_port", None):
+        assert_public_mail_host(account.smtp_host, account.smtp_port)

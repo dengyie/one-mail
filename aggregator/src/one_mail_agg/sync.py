@@ -9,7 +9,13 @@ from .imap_base import fetch_new_messages
 from .normalize import normalize_message
 from .uploader import upload_emails
 from .pop3_source import connect_pop3, fetch_new_pop3_messages, uidl_to_key
-from .proxy_client import ProxiedIMAPClient, create_imap_client, _maybe_send_id, OVERSEAS_IMAP_HOSTS
+from .proxy_client import (
+    ProxiedIMAPClient,
+    create_imap_client,
+    _maybe_send_id,
+    OVERSEAS_IMAP_HOSTS,
+    is_overseas_imap_host,
+)
 from .folder_catalog import maybe_sync_imap_folder_catalog
 
 log = logging.getLogger("one-mail-agg")
@@ -39,7 +45,7 @@ def _safe_auto_pop3_fallback(account: AccountConfig, state: SyncState,
     return (
         account.protocol == "auto"
         and account.source not in ("imap_gmail", "imap_qq", "imap_outlook")
-        and str(account.host).lower() not in OVERSEAS_IMAP_HOSTS
+        and not is_overseas_imap_host(account.host)
         and account.oauth is None
         and _only_inbox(account)
         and not state.has_imap_history(account.id)
@@ -161,7 +167,7 @@ def sync_account(client_factory, config: Config, account: AccountConfig, state: 
         # 文件夹，都必须解除旧 pin，而不是被历史状态永久劫持到 POP3。
         # 修复：Gmail / QQ / Outlook / 海外邮箱 绝不应被锁定在 POP3（若历史有被误 pin 的账号，自动解除恢复 IMAP）。
         if (account.source in ("imap_gmail", "imap_qq", "imap_outlook")
-                or str(account.host).lower() in OVERSEAS_IMAP_HOSTS
+                or is_overseas_imap_host(account.host)
                 or account.protocol == "imap"):
             state.set_fallback_pinned(account.id, False)
         elif account.protocol == "auto" and _only_inbox(account):
