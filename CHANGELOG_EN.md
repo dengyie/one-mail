@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Migration| Use received_at/id keysets and bounded target primary-key verification for shard migration, avoiding repeated mailbox scans while preserving exact content checks and deletion safeguards.
+
 - fix: |Frontend| Keep external account table headers and cells on one line so long error messages cannot squeeze adjacent columns into vertical text; narrow screens scroll horizontally inside the table.
 
 - fix: |Frontend| Route read/unread, star, move, and delete through the shared API client and await provider terminal state. Keep user/admin/API-key authentication consistent across writes and polling; bound in-flight requests with cancellation and deadlines. Refresh cursor boundaries and counts after filtered mutations, remove the obsolete pagination adapter, and cover the production API path and component disposal in regression tests.

@@ -211,19 +211,10 @@ export class FileStore {
 
 const rows = async (db, sql, params = []) => (await db.query(sql, params)).results;
 const emailScope = "account_id = ? AND source != 'cf_routing'";
-async function emailPage(db, account, cursor, size, byId = false) {
-    const suffix = cursor ? (byId ? ' AND id > ?' : ' AND (received_at > ? OR (received_at = ? AND id > ?))') : '';
-    const params = [account, ...(cursor ? (byId ? [cursor] : [cursor.receivedAt, cursor.receivedAt, cursor.id]) : []), size];
-    return rows(db, `SELECT ${EMAIL_COLUMNS.map(quoted).join(',')} FROM emails WHERE ${emailScope}${suffix} ORDER BY ${byId ? 'id' : 'received_at, id'} LIMIT ?`, params);
-}
-async function* emailsById(db, account, size) {
-    let cursor = null;
-    while (true) {
-        const page = await emailPage(db, account, cursor, size, true);
-        if (!page.length) return;
-        for (const row of page) yield row;
-        cursor = page.at(-1).id;
-    }
+async function emailPage(db, account, cursor, size) {
+    const suffix = cursor ? ' AND (received_at, id) > (?, ?)' : '';
+    const params = [account, ...(cursor ? [cursor.receivedAt, cursor.id] : []), size];
+    return rows(db, `SELECT ${EMAIL_COLUMNS.map(quoted).join(',')} FROM emails WHERE ${emailScope}${suffix} ORDER BY received_at, id LIMIT ?`, params);
 }
 async function folderPage(db, account, cursor, size) {
     return rows(db, `SELECT ${['id', ...FOLDER_COLUMNS].map(quoted).join(',')} FROM mail_account_folders WHERE mail_account_id = ?${cursor == null ? '' : ' AND id > ?'} ORDER BY id LIMIT ?`, [account, ...(cursor == null ? [] : [cursor]), size]);
@@ -263,16 +254,19 @@ async function verifyFolderChunk(db, page, columns = FOLDER_DIGEST_COLUMNS) {
 
 export async function verify(source, target, account, size) {
     const hash = Buffer.alloc(32);
-    let sourceCount = 0, targetCount = 0;
-    const iterator = emailsById(target, account, size)[Symbol.asyncIterator]();
-    let remote = await iterator.next();
-    for await (const row of emailsById(source, account, size)) {
-        while (!remote.done && remote.value.id < row.id) { targetCount++; remote = await iterator.next(); }
-        requireThat(!remote.done && remote.value.id === row.id && digest(row) === digest(remote.value), 'Verification failed: source email ID/content/state mismatch');
-        xorDigest(hash, digest(row)); sourceCount++; targetCount++;
-        remote = await iterator.next();
+    let sourceCount = 0, cursor = null;
+    const targetCount = (await rows(target, `SELECT COUNT(*) AS count FROM emails WHERE ${emailScope} LIMIT 1`, [account]))[0].count;
+    while (true) {
+        // The existing account/received_at index bounds each source page. Target
+        // primary-key lookups verify every column without repeatedly sorting an
+        // entire mailbox by its unrelated random UUID.
+        const page = await emailPage(source, account, cursor, size);
+        if (!page.length) break;
+        await verifyEmailChunk(target, page, 'Verification failed: source email ID/content/state mismatch');
+        for (const row of page) xorDigest(hash, digest(row));
+        sourceCount += page.length;
+        cursor = { receivedAt: page.at(-1).received_at, id: page.at(-1).id };
     }
-    while (!remote.done) { targetCount++; remote = await iterator.next(); }
     let folderCursor = null, folderCount = 0;
     while (true) {
         const page = await folderPage(source, account, folderCursor, size);
