@@ -20,7 +20,11 @@ from email.utils import formataddr, localtime, parsedate_to_datetime
 from imapclient.exceptions import IMAPClientAbortError, IMAPClientError
 from .config import AccountConfig
 from .oauth import oauth_client_factory
-from .proxy_client import create_socks5_socket
+from .proxy_client import (
+    create_socks5_socket,
+    OVERSEAS_SMTP_HOSTS,
+    is_overseas_smtp_host,
+)
 from .sync import default_client_factory
 
 log = logging.getLogger("one-mail-agg")
@@ -33,11 +37,6 @@ SMTP_DEFAULTS: dict[str, tuple[str, int, bool]] = {
     "imap_gmail": ("smtp.gmail.com", 587, False),
     "imap_outlook": ("smtp-mail.outlook.com", 587, False),
     "msa": ("smtp-mail.outlook.com", 587, False),
-}
-
-OVERSEAS_SMTP_HOSTS: set[str] = {
-    "smtp.gmail.com",
-    "smtp-mail.outlook.com",
 }
 
 # Well-known Sent folder names by provider. Reconciliation falls back to a few
@@ -94,7 +93,7 @@ def _resolve_smtp_endpoint(account: AccountConfig) -> tuple[str, int, bool]:
 
 
 def _use_proxy(host: str) -> bool:
-    return host.lower() in OVERSEAS_SMTP_HOSTS
+    return is_overseas_smtp_host(host)
 
 
 class _ProxySMTP_SSL(smtplib.SMTP_SSL):

@@ -48,6 +48,8 @@ _DENY_V6 = [
     "ff00::/8",
 ]
 _DENY_NETS = [ipaddress.ip_network(n) for n in _DENY_V4 + _DENY_V6]
+_DOC_NET_V6 = ipaddress.ip_network("2001:db8::/32")
+_TEREDO_IETF_V6 = ipaddress.ip_network("2001::/23")
 
 _original_connect = socket.socket.connect
 
@@ -72,6 +74,8 @@ def _is_denied(ip: ipaddress._BaseAddress, port: int) -> bool:
     for net in _DENY_NETS:
         if ip in net:
             return True
+    if ip.version == 6 and ip in _TEREDO_IETF_V6 and ip not in _DOC_NET_V6:
+        return False
     return not ip.is_global
 
 

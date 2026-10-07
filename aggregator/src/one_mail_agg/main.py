@@ -14,7 +14,7 @@ from .remote_accounts import fetch_user_accounts, report_sync_status
 from .idle_worker import ensure_idle_workers
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .egress_guard import install_egress_guard
-from .proxy_client import OVERSEAS_IMAP_HOSTS
+from .proxy_client import OVERSEAS_IMAP_HOSTS, is_overseas_imap_host
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("one-mail-agg")
@@ -64,7 +64,7 @@ def get_account_poll_interval(account, state: SyncState, default_poll_interval: 
         return account.poll_interval
     if getattr(account, "protocol", "auto") == "pop3" or state.is_fallback_pinned(account.id):
         if (getattr(account, "source", "") in ("imap_gmail", "imap_qq", "imap_outlook")
-                or str(getattr(account, "host", "")).lower() in OVERSEAS_IMAP_HOSTS):
+                or is_overseas_imap_host(getattr(account, "host", ""))):
             return max(default_poll_interval, 60)
         return 600
     if (getattr(account, "source", "") in ("graph_outlook", "imap_163")

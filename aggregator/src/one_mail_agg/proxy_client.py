@@ -13,9 +13,28 @@ OVERSEAS_IMAP_HOSTS = {
     "imap-mail.outlook.com",
     "imap.mail.yahoo.com",
     "imap.mail.me.com",
+    "mail.linux.do",
+    "imap.linux.do",
+}
+
+OVERSEAS_SMTP_HOSTS = {
+    "smtp.gmail.com",
+    "smtp-mail.outlook.com",
+    "mail.linux.do",
+    "smtp.linux.do",
 }
 
 DEFAULT_SOCKS5_PROXY = ("127.0.0.1", 1080)
+
+
+def is_overseas_imap_host(host: str | None) -> bool:
+    h = str(host or "").strip().lower()
+    return h in OVERSEAS_IMAP_HOSTS or h.endswith(".linux.do") or h == "linux.do"
+
+
+def is_overseas_smtp_host(host: str | None) -> bool:
+    h = str(host or "").strip().lower()
+    return h in OVERSEAS_SMTP_HOSTS or h.endswith(".linux.do") or h == "linux.do"
 
 
 def _maybe_send_id(client, account) -> None:
@@ -43,7 +62,7 @@ def create_socks5_socket(
 ) -> socket.socket:
     """创建经由 SOCKS5 代理建立的底层 TCP socket（支持域名端解析）。"""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    if timeout:
+    if isinstance(timeout, (int, float)):
         s.settimeout(timeout)
     s.connect((proxy_host, proxy_port))
 
@@ -117,7 +136,7 @@ def create_imap_client(
     调用方保持现有注入能力。
     """
     host = str(account.host).strip()
-    client_cls = proxied_client_cls if host.lower() in OVERSEAS_IMAP_HOSTS else direct_client_cls
+    client_cls = proxied_client_cls if is_overseas_imap_host(host) else direct_client_cls
     client = client_cls(host, port=account.port, ssl=account.use_ssl, timeout=timeout)
     if send_id:
         _maybe_send_id(client, account)

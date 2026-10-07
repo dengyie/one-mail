@@ -73,6 +73,7 @@ def test_loopback_denied_except_socks_tunnel(guarded):
         ("fe80::1", 993),
         ("ff02::1", 993),
         ("::", 993),
+        ("2001:db8::1", 993),
     ],
 )
 def test_private_and_metadata_targets_blocked(guarded, ip, port):
@@ -89,6 +90,19 @@ def test_public_address_allowed(guarded):
         s.connect(("1.1.1.1", 443))
     except EgressBlockedError:
         pytest.fail("public address was rejected by egress policy")
+    except OSError:
+        pass
+    finally:
+        s.close()
+
+
+def test_ipv6_2001_routable_allowed_by_egress_policy(guarded):
+    s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    try:
+        s.connect(("2001::68f4:2eba", 993))
+    except EgressBlockedError:
+        pytest.fail("routable 2001:: address was rejected by egress policy")
     except OSError:
         pass
     finally:
