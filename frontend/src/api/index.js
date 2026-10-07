@@ -8,6 +8,7 @@ import { safeBearerHeader, safeHeaderValue } from '../utils/headers'
 import { sanitizeHtml } from '../utils/sanitize-html'
 import { createUnifiedMutationApi } from '../utils/unified-provider-mutations'
 import { getRouterPathWithLang } from '../utils'
+import { resolveStaleChannel } from './session_channel'
 
 // 契约类型来自 @one-mail/shared（架构重构 P8）：运行时零引用，仅供 JSDoc 标注。
 // ApiPath 已由 shared 导出（Task 1 定义），此处引用即可，勿重新声明。
@@ -32,7 +33,7 @@ export const normalizeMailAccountBody = (body) => {
 const {
     loading, auth, jwt, settings, openSettings,
     userOpenSettings, userSettings, announcement,
-    showAuth, adminAuth, showAdminAuth, userJwt,
+    showAuth, adminAuth, userJwt,
     unifiedApiKey
 } = useGlobalState();
 
@@ -90,7 +91,20 @@ const createApiClient = (headerInjector, hooks = {}) => {
     };
 };
 
-// siteClient：站点全通道（x-lang + 五个鉴权头）+ loading + 401 弹窗。
+// 跳登录页。用动态 import 绕开 router→views→api 的静态环；hook 在运行时才触发，模块已缓存。
+// 仅在三个通道都清空后才跳转，避免把仍持有管理密码/API-Key 的复合提权用户踢出正常会话。
+const redirectToLogin = () => {
+    const locale = i18n.global.locale.value;
+    const signedOut = () => !userJwt.value && !adminAuth.value && !unifiedApiKey.value;
+    import('../router').then(({ default: router }) => {
+        if (!signedOut()) return;
+        return router.push(getRouterPathWithLang('/user', locale));
+    }).catch(() => {
+        if (signedOut()) window.location.href = getRouterPathWithLang('/user', locale);
+    });
+};
+
+// siteClient：站点全通道（x-lang + 五个鉴权头）+ loading + 401 自愈。
 // 注：指纹异步、仅经 apiFetch 包装层注入——siteClient 不挂指纹。
 const siteClient = createApiClient(() => {
     const h = { 'x-lang': i18n.global.locale.value };
@@ -105,8 +119,30 @@ const siteClient = createApiClient(() => {
 }, {
     onRequest: () => { loading.value = true; },
     onDone: () => { loading.value = false; },
+    // 401 = 凭据本身失效。此前这里只弹窗、从不清理，坏 token 会永久留在
+    // localStorage，页面反复抛 "Code 401" 而无法自愈；apiFetch 只是本客户端的
+    // 包装层，所以这一处同时修好了全部走 api.fetch 的页面。
     onUnauthorized: (r) => {
-        if (r.config.url && r.config.url.startsWith("/admin")) showAdminAuth.value = true;
+        const url = (r && r.config && r.config.url) || '';
+        const sentHeaders = (r && r.config && r.config.headers) || {};
+        const stale = resolveStaleChannel({
+            url,
+            sentUser: safeHeaderValue(sentHeaders['x-user-token']),
+            currentUser: safeHeaderValue(userJwt.value),
+            sentAdmin: safeHeaderValue(sentHeaders['x-admin-auth']),
+            currentAdmin: safeHeaderValue(adminAuth.value),
+        });
+        if (stale === 'admin') {
+            // Admin.vue 的密码卡片由 `!adminAuth` 驱动，清掉失效的管理密码就够它
+            // 重新出现；这里绝不能动 userJwt——用户会话此刻可能完全正常。
+            adminAuth.value = '';
+            return;
+        }
+        if (stale === 'user') {
+            userJwt.value = '';
+            redirectToLogin();
+            return;
+        }
         if (openSettings.value.needAuth) showAuth.value = true;
     },
 });
@@ -143,14 +179,7 @@ const handleUnifiedUnauthorized = (r) => {
     } else {
         unifiedApiKey.value = '';
     }
-    const locale = i18n.global.locale.value;
-    const signedOut = () => !userJwt.value && !adminAuth.value && !unifiedApiKey.value;
-    import('../router').then(({ default: router }) => {
-        if (!signedOut()) return;
-        return router.push(getRouterPathWithLang('/user', locale));
-    }).catch(() => {
-        if (signedOut()) window.location.href = getRouterPathWithLang('/user', locale);
-    });
+    redirectToLogin();
 };
 
 // One credential snapshot drives reads, writes, and provider status polling.

@@ -91,7 +91,6 @@ export const useGlobalState = createGlobalState(
         });
         const showAuth = ref(false);
         const showAddressCredential = ref(false);
-        const showAdminAuth = ref(false);
         // 统一收件箱（/api/unified/*）的 Bearer API-key，localStorage 持久化
         const unifiedApiKey = useLocalStorage('unifiedApiKey', '');
         const auth = useStorage('auth', '');
@@ -161,6 +160,10 @@ export const useGlobalState = createGlobalState(
                     ? 'disabled_check'
                     : ''
         );
+        // 用户会话是否成立（单源判定，供路由守卫与导航消费）。
+        // 只认用户 JWT：地址会话(jwt)/管理密码(adminAuth)/API-Key 都不能访问
+        // /user_api/*，把它们算进来会让守卫放行后立刻 401。
+        const hasUserSession = computed(() => Boolean(userJwt.value));
         const telegramApp = ref(window.Telegram?.WebApp || {});
         const isTelegram = ref(!!window.Telegram?.WebApp?.initData);
         const _oauth2StateSession = useSessionStorage('userOauth2SessionState', '');
@@ -189,9 +192,8 @@ export const useGlobalState = createGlobalState(
             auth,
             jwt,
             adminAuth,
-            unifiedApiKey,
-            showAdminAuth,
-            adminTab,
+unifiedApiKey,
+adminTab,
             adminMailTabAddress,
             adminSendBoxTabAddress,
             mailboxSplitSize,
@@ -214,6 +216,7 @@ export const useGlobalState = createGlobalState(
             isTelegram,
             showAdminPage,
             adminLoginMode,
+            hasUserSession,
             userOauth2SessionState,
             userOauth2SessionClientID,
             useSimpleIndex,

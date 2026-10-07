@@ -1247,6 +1247,14 @@ export const MESSAGE_REGISTRY = {
   },
   "views.user.UserMailAccounts": {
     "modalTitle": { "zh": "接入外部邮箱", "en": "Connect a mailbox" },
+    "sessionRequired": {
+      "en": "Sign in to view and connect your external mailboxes.",
+      "zh": "登录后才能查看与接入外部邮箱。"
+    },
+    "sessionRequiredAction": {
+      "en": "Sign in",
+      "zh": "去登录"
+    },
     "status": { "zh": "自动同步", "en": "Auto sync" },
     "actions": { "zh": "操作", "en": "Actions" },
     "canSend": { "zh": "允许发送", "en": "Sending access" },

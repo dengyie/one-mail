@@ -76,7 +76,7 @@ export const getPreferredLocale = (
 
 export const getInitialLocale = () => DEFAULT_LOCALE
 
-const splitPathSuffix = (fullPath: string) => {
+export const splitPathSuffix = (fullPath: string) => {
   const match = fullPath.match(/^([^?#]*)(.*)$/)
   return {
     path: match?.[1] || '/',
