@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| Keep external account table headers and cells on one line so long error messages cannot squeeze adjacent columns into vertical text; narrow screens scroll horizontally inside the table.
+
 - fix: |Frontend| Route read/unread, star, move, and delete through the shared API client and await provider terminal state. Keep user/admin/API-key authentication consistent across writes and polling; bound in-flight requests with cancellation and deadlines. Refresh cursor boundaries and counts after filtered mutations, remove the obsolete pagination adapter, and cover the production API path and component disposal in regression tests.
 
 - fix: |Frontend| Align the workspace with repository specifications: one sending entry, cursor pagination, visible partial shard results without crossing an incomplete boundary, and automatic recovery. Bind inbox/detail/action requests to the view lifetime and isolate stale identity responses and 401s. Render untrusted overview fields as literal text; keep key-creation admin credentials request-local. Add API DTO/JSDoc contracts, type checking, and mounted behavior regressions.
