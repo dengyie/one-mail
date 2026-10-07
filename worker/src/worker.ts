@@ -23,6 +23,7 @@ import { recordAdminFailure, clearAdminFailures, decideAdminAuth, getAdminFailCo
 import { resolveCorsOrigin } from './cors_policy';
 import shardApi from './unified/shard_routes.ts';
 import { attachD1Quota, flushD1Quota, isShardMode, maybeFlushD1Quota } from './core/d1_quota.ts';
+import { serializeError } from './core/error_serialization.ts';
 import { PasskeyChallengeDurableObject } from './user_api/passkey_challenge_do.ts';
 import { D1QuotaCoordinatorDurableObject } from './core/d1_quota_coordinator_do.ts';
 
@@ -51,7 +52,14 @@ app.use('/*', cors({
 }));
 // error handler
 app.onError((err, c) => {
-	console.error("Worker request failed", { method: c.req.method, path: c.req.path, error: err });
+	// Error 的 message/stack 是不可枚举属性，直接交给 console.error 会被
+	// JSON.stringify 序列化成 `{}` —— tail 里只剩 `error: {}`，真实异常文本与堆栈
+	// 全部丢失，500 无法从日志定位根因。必须先转成可序列化的普通对象。
+	console.error("Worker request failed", {
+		method: c.req.method,
+		path: c.req.path,
+		error: serializeError(err),
+	});
 	const res = c.json({ error: "Internal server error" }, 500);
 	// cors() 在 `await next()` 之后才回写响应头，请求阶段抛错会跳过中间件的
 	// 后置逻辑，500 响应丢掉 Access-Control-Allow-Origin，浏览器读不到响应体、
