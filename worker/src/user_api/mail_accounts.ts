@@ -7,6 +7,8 @@ import { encryptCredCtx as encryptCred, decryptCredCtx as decryptCred } from "./
 import { unsupportedMailAccountAction, mergeRotatedRefreshToken } from "../unified/mail_account_actions";
 import { hasRemoteShards, loadShardMap, purgeShardAccounts } from "../unified/federation.ts";
 import { ensureAccountLifecycleTable, lifecycleUpsert } from "../unified/account_lifecycle_schema.ts";
+import { discoverMailConfig } from "../core/mail_auto_discovery";
+import { validateMailAccountCreateTarget } from "./mail_target_policy";
 
 // 每用户最多可接入的外部邮箱数（全局默认）。外部邮箱不消耗 mangoqwq 域名地址配额
 // （maxAddressCount 已在 utils.ts isAddressCountLimitReached 排除 source_meta='external'
@@ -79,6 +81,10 @@ interface MailAccountRow {
     pop3_use_stls: number | null;
     enabled: number;
     can_send: number;
+    smtp_host?: string | null;
+    smtp_port?: number | null;
+    smtp_ssl?: number | null;
+    proxy_policy?: string | null;
     last_sync_at: number | null;
     last_error: string | null;
     created_at: number;
@@ -115,6 +121,10 @@ const safeRow = (r: MailAccountRow) => ({
     pop3_port: r.pop3_port ?? null,
     pop3_ssl: r.pop3_ssl == null ? null : r.pop3_ssl === 1,
     pop3_use_stls: r.pop3_use_stls == null ? false : r.pop3_use_stls === 1,
+    smtp_host: r.smtp_host || null,
+    smtp_port: r.smtp_port ?? null,
+    smtp_ssl: r.smtp_ssl == null ? true : r.smtp_ssl === 1,
+    proxy_policy: r.proxy_policy || "auto",
     enabled: r.enabled === 1,
     can_send: r.can_send === 1,
     last_sync_at: r.last_sync_at,
@@ -202,6 +212,178 @@ const ensureExternalBinding = async (c: Context<HonoCustomType>, userId: number,
     }
 };
 
+const executeCreateAccount = async (c: Context<HonoCustomType>, body: Record<string, unknown>) => {
+    const msgs = i18n.getMessagesbyContext(c);
+    const { user_id } = c.get("userPayload");
+
+    if (!validateMailAccountCreateTarget(body)) {
+        return c.text(msgs.InvalidInputMsg, 400);
+    }
+
+    const username = (typeof body.username === "string" ? body.username : "").trim().toLowerCase();
+    const source = (typeof body.source === "string" ? body.source : "").trim();
+    const cred = typeof body.cred === "string" ? body.cred : "";
+    const protocol = (typeof body.protocol === "string" ? body.protocol : "auto").trim();
+    const useSsl = parseOptionalBoolean(body.use_ssl, true);
+    const requestedPop3Host = body.pop3_host == null ? null
+        : typeof body.pop3_host === "string" ? body.pop3_host.trim() : undefined;
+    const requestedPop3Port = parseOptionalPort(body.pop3_port);
+    // POP3 requests may omit the IMAP-shaped host/port entirely. For old
+    // requests, the top-level values remain the POP3 compatibility fields.
+    const host = (typeof body.host === "string" ? body.host.trim() : "")
+        || (protocol === "pop3" ? requestedPop3Host || "" : "");
+    const port = parseOptionalPort(body.port)
+        ?? (protocol === "pop3" ? requestedPop3Port : undefined);
+    // Older clients used host/port for POP3 and did not send the POP3
+    // fields. Normalize that shape before validating/storing it.
+    const pop3Host = requestedPop3Host ?? (protocol === "pop3" ? host : null);
+    const pop3Port = requestedPop3Port ?? (protocol === "pop3" ? port : null);
+    // POP3's well-known ports are useful compatibility defaults: an omitted
+    // SSL flag on 110 means plaintext, while 995 means POP3S. Other ports
+    // remain nullable and are resolved by the aggregator's historical rules.
+    const parsedPop3Ssl = parseOptionalBoolean(body.pop3_ssl,
+        pop3Port === 110 ? false : pop3Port === 995 ? true : null);
+    const pop3UseStls = parseOptionalBoolean(body.pop3_use_stls, false);
+    // STLS is plaintext-first. Persist an explicit false rather than null
+    // (which the aggregator interprets as inheriting IMAP use_ssl).
+    const pop3Ssl = pop3UseStls === true ? false : parsedPop3Ssl;
+
+    const requestedSmtpHost = body.smtp_host == null ? null
+        : typeof body.smtp_host === "string" ? body.smtp_host.trim() : undefined;
+    const requestedSmtpPort = parseOptionalPort(body.smtp_port);
+    const smtpHost = requestedSmtpHost ?? null;
+    const smtpPort = requestedSmtpPort ?? (smtpHost ? 465 : null);
+    const smtpSsl = parseOptionalBoolean(body.smtp_ssl, true);
+    const rawProxyPolicy = typeof body.proxy_policy === "string" ? body.proxy_policy.trim().toLowerCase() : "auto";
+    const proxyPolicy = ["auto", "always", "never"].includes(rawProxyPolicy) ? rawProxyPolicy : "auto";
+
+    // label 防非 string 类型崩溃（Minor）：先 String() 再 trim/slice
+    const label = String(body.label ?? "").trim().slice(0, 60);
+    // folders 校验为数组（I3）：非数组/空 → 兜底 ["INBOX"]，避免 safeRow 读取时
+    // JSON.parse 出字符串导致前端 v-for 类型混乱。
+    const foldersRaw = Array.isArray(body.folders)
+        ? body.folders.filter((f) => typeof f === "string" && f.trim()).map((f) => f.trim())
+        : [];
+
+    if (!username || !host || !source || !cred || typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65535
+        || useSsl === undefined || pop3Host === undefined || pop3Port === undefined
+        || parsedPop3Ssl === undefined || pop3UseStls === undefined
+        || requestedSmtpHost === undefined || requestedSmtpPort === undefined || smtpSsl === undefined) {
+        return c.text(msgs.RequiredFieldMsg, 400);
+    }
+    if (!ALLOWED_SOURCES.has(source)) return c.text(msgs.InvalidInputMsg, 400);
+    if (!ALLOWED_PROTOCOLS.has(protocol)) return c.text(msgs.InvalidInputMsg, 400);
+    if (protocol === "pop3" && (!pop3Host || pop3Port == null
+        || !validatePop3Settings(parsedPop3Ssl, pop3UseStls, useSsl === true))) {
+        return c.text(msgs.InvalidInputMsg, 400);
+    }
+
+    // review W1-3：oauth 是可选的 provider 白名单校验。body.oauth 是 JSON 字符串
+    // （聚合器 oauth_client_factory 直接 `account.oauth.get("provider")`）。
+    // 未知 provider 让聚合器 `_TOKEN_FN[provider]` KeyError 冻结整轮同步，故这里
+    // 在落库前先拒绝。带 oauth 但非字符串 / 畸形 JSON / 缺 provider / 未知
+    // provider 一律 400（fail-closed）。
+    if (body.oauth != null && (typeof body.oauth !== "string" || body.oauth.trim() !== "")) {
+        let oauthObj: { provider?: unknown } | null;
+        try {
+            oauthObj = JSON.parse(body.oauth as string) as { provider?: unknown };
+        } catch {
+            oauthObj = null;
+        }
+        if (!oauthObj || typeof oauthObj.provider !== "string"
+            || !OAUTH_PROVIDERS.has(oauthObj.provider)) {
+            return c.text(msgs.InvalidInputMsg, 400);
+        }
+    }
+
+    // 接入操作限流，防止刷凭据/占资源（与注册同源 KV 限流器）
+    if (!(await checkRegistrationRateLimit(c, "mail_account_create", 5, 60))) {
+        return c.text(msgs.RateLimitExceededMsg, 429);
+    }
+
+    // 每用户上限（按角色可配 role_address_config.maxMailAccountCount，缺失回退默认 5；
+    // 返回 0 = 不限，与 maxAddressCount 同口径）
+    const user_role = await commonGetUserRole(c, user_id);
+    const maxMailAccounts = await getMaxMailAccountCount(c, user_role?.role);
+    const { count } = await c.env.DB.prepare(
+        `SELECT COUNT(*) as count FROM user_mail_accounts WHERE user_id = ?`
+    ).bind(user_id).first<{ count: number }>() || { count: 0 };
+    if (maxMailAccounts > 0 && count >= maxMailAccounts) {
+        return c.text(msgs.MaxAddressCountReachedMsg, 400);
+    }
+
+    // C1 一址一户：跨用户接入同名外部邮箱直接拒绝。同一用户重连/同名合法（user_id != ?）。
+    // 已禁用的账号也必须计入查重：删除账号前历史邮件按 to_addr 归属，允许
+    // 另一用户在此窗口接入会把旧历史暴露给新用户。移除账号会一并清理其归集邮件，
+    // 然后才允许该用户名重新绑定。
+    // DB 部分唯一索引 idx_user_mail_accounts_username_uq 是最终兜底；此处前置给出明确 400。
+    const dupRow = await c.env.DB.prepare(
+        `SELECT COUNT(*) AS c FROM user_mail_accounts WHERE username = ? AND user_id != ?`
+    ).bind(username, user_id).first<{ c: number }>();
+    if (dupRow && dupRow.c > 0) {
+        return c.text(msgs.AddressAlreadyExistsMsg, 400);
+    }
+
+    const credEnc = await encryptCred(c, cred);
+    const oauthEnc = typeof body.oauth === "string" && body.oauth ? await encryptCred(c, body.oauth) : null;
+    const foldersJson = JSON.stringify(foldersRaw.length ? foldersRaw : ["INBOX"]);
+    const id = crypto.randomUUID();
+    const now = Date.now();
+
+    try {
+        await c.env.DB.prepare(
+            `INSERT INTO user_mail_accounts
+             (id, user_id, label, source, host, port, username, cred_enc, protocol,
+              folders_json, oauth_enc, use_ssl, pop3_host, pop3_port, pop3_ssl,
+              pop3_use_stls, enabled, smtp_host, smtp_port, smtp_ssl, proxy_policy, created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)`
+        ).bind(id, user_id, label || null, source, host, port, username, credEnc,
+            protocol, foldersJson, oauthEnc, useSsl ? 1 : 0, pop3Host, pop3Port,
+            pop3Ssl == null ? null : pop3Ssl ? 1 : 0, pop3UseStls ? 1 : 0,
+            smtpHost, smtpPort, smtpSsl ? 1 : 0, proxyPolicy, now).run();
+    } catch (e) {
+        const error = e as Error;
+        if (error.message && error.message.includes("UNIQUE")) {
+            return c.text(msgs.AddressAlreadyExistsMsg, 400);
+        }
+        throw e;
+    }
+
+    // I7e TOCTOU 补偿：前置配额检查（SELECT COUNT）与 INSERT 是两条独立 D1 语句，
+    // 并发下两个请求可能都过检查都插入，超限 1 条。这里在 INSERT 成功、副作用
+    // （ensureExternalBinding）之前重数——若超 max（max>0 非无限）则删除刚插的行并
+    // 返回上限错误，使超限瞬态自纠。放在 ensureExternalBinding 之前，删除后不产生
+    // 归属作用域副作用。
+    if (maxMailAccounts > 0) {
+        const { count: afterCount } = await c.env.DB.prepare(
+            `SELECT COUNT(*) as count FROM user_mail_accounts WHERE user_id = ?`
+        ).bind(user_id).first<{ count: number }>() || { count: 0 };
+        if (afterCount > maxMailAccounts) {
+            await c.env.DB.prepare(`DELETE FROM user_mail_accounts WHERE id = ?`).bind(id).run();
+            return c.text(msgs.MaxAddressCountReachedMsg, 400);
+        }
+    }
+
+    // 自动绑定：把 to_addr=username 纳入该用户的归属作用域。绑定失败时必须
+    // 删除刚写入的 enabled account，否则聚合器会看到一个永远无法归属的孤儿账号。
+    try {
+        await ensureExternalBinding(c, user_id, username);
+    } catch (error) {
+        try {
+            await c.env.DB.prepare(`DELETE FROM user_mail_accounts WHERE id = ? AND user_id = ?`)
+                .bind(id, user_id).run();
+        } catch (cleanupError) {
+            console.error(`failed to compensate mail account ${id}`, cleanupError);
+        }
+        if (error instanceof ExternalBindingConflictError) {
+            return c.text(error.message, 400);
+        }
+        throw error;
+    }
+
+    return c.json({ id, success: true });
+};
+
 const UserMailAccountsModule = {
     list: async (c: Context<HonoCustomType>) => {
         const { user_id } = c.get("userPayload");
@@ -212,166 +394,63 @@ const UserMailAccountsModule = {
     },
 
     create: async (c: Context<HonoCustomType>) => {
+        const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+        return executeCreateAccount(c, body);
+    },
+
+    discover: async (c: Context<HonoCustomType>) => {
+        const body = await c.req.json().catch(() => ({})) as { email?: string };
+        const email = typeof body.email === "string" ? body.email.trim() : "";
+        if (!email) {
+            return c.text("email is required", 400);
+        }
+        try {
+            const config = await discoverMailConfig(email);
+            return c.json({ success: true, config });
+        } catch (e) {
+            return c.text((e as Error).message || "discovery failed", 400);
+        }
+    },
+
+    smartConnect: async (c: Context<HonoCustomType>) => {
         const msgs = i18n.getMessagesbyContext(c);
-        const { user_id } = c.get("userPayload");
         const body = await c.req.json().catch(() => ({})) as {
-            label?: string; source?: string; host?: string; port?: number;
-            username?: string; cred?: string; protocol?: string; folders?: string[];
-            oauth?: string; use_ssl?: unknown;
-            pop3_host?: unknown; pop3_port?: unknown;
-            pop3_ssl?: unknown; pop3_use_stls?: unknown;
+            email?: string;
+            cred?: string;
+            label?: string;
+            proxy_policy?: string;
         };
-
-        const username = (typeof body.username === "string" ? body.username : "").trim().toLowerCase();
-        const source = (typeof body.source === "string" ? body.source : "").trim();
+        const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
         const cred = typeof body.cred === "string" ? body.cred : "";
-        const protocol = (typeof body.protocol === "string" ? body.protocol : "auto").trim();
-        const useSsl = parseOptionalBoolean(body.use_ssl, true);
-        const requestedPop3Host = body.pop3_host == null ? null
-            : typeof body.pop3_host === "string" ? body.pop3_host.trim() : undefined;
-        const requestedPop3Port = parseOptionalPort(body.pop3_port);
-        // POP3 requests may omit the IMAP-shaped host/port entirely. For old
-        // requests, the top-level values remain the POP3 compatibility fields.
-        const host = (typeof body.host === "string" ? body.host.trim() : "")
-            || (protocol === "pop3" ? requestedPop3Host || "" : "");
-        const port = parseOptionalPort(body.port)
-            ?? (protocol === "pop3" ? requestedPop3Port : undefined);
-        // Older clients used host/port for POP3 and did not send the POP3
-        // fields. Normalize that shape before validating/storing it.
-        const pop3Host = requestedPop3Host ?? (protocol === "pop3" ? host : null);
-        const pop3Port = requestedPop3Port ?? (protocol === "pop3" ? port : null);
-        // POP3's well-known ports are useful compatibility defaults: an omitted
-        // SSL flag on 110 means plaintext, while 995 means POP3S. Other ports
-        // remain nullable and are resolved by the aggregator's historical rules.
-        const parsedPop3Ssl = parseOptionalBoolean(body.pop3_ssl,
-            pop3Port === 110 ? false : pop3Port === 995 ? true : null);
-        const pop3UseStls = parseOptionalBoolean(body.pop3_use_stls, false);
-        // STLS is plaintext-first. Persist an explicit false rather than null
-        // (which the aggregator interprets as inheriting IMAP use_ssl).
-        const pop3Ssl = pop3UseStls === true ? false : parsedPop3Ssl;
-        // label 防非 string 类型崩溃（Minor）：先 String() 再 trim/slice
-        const label = String(body.label ?? "").trim().slice(0, 60);
-        // folders 校验为数组（I3）：非数组/空 → 兜底 ["INBOX"]，避免 safeRow 读取时
-        // JSON.parse 出字符串导致前端 v-for 类型混乱。
-        const foldersRaw = Array.isArray(body.folders)
-            ? body.folders.filter((f) => typeof f === "string" && f.trim()).map((f) => f.trim())
-            : [];
-
-        if (!username || !host || !source || !cred || typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65535
-            || useSsl === undefined || pop3Host === undefined || pop3Port === undefined
-            || parsedPop3Ssl === undefined || pop3UseStls === undefined) {
+        if (!email || !cred) {
             return c.text(msgs.RequiredFieldMsg, 400);
         }
-        if (!ALLOWED_SOURCES.has(source)) return c.text(msgs.InvalidInputMsg, 400);
-        if (!ALLOWED_PROTOCOLS.has(protocol)) return c.text(msgs.InvalidInputMsg, 400);
-        if (protocol === "pop3" && (!pop3Host || pop3Port == null
-            || !validatePop3Settings(parsedPop3Ssl, pop3UseStls, useSsl === true))) {
+
+        let discovered;
+        try {
+            discovered = await discoverMailConfig(email);
+        } catch {
             return c.text(msgs.InvalidInputMsg, 400);
         }
 
-        // review W1-3：oauth 是可选的 provider 白名单校验。body.oauth 是 JSON 字符串
-        // （聚合器 oauth_client_factory 直接 `account.oauth.get("provider")`）。
-        // 未知 provider 让聚合器 `_TOKEN_FN[provider]` KeyError 冻结整轮同步，故这里
-        // 在落库前先拒绝。带 oauth 但非字符串 / 畸形 JSON / 缺 provider / 未知
-        // provider 一律 400（fail-closed）。
-        if (body.oauth != null && (typeof body.oauth !== "string" || body.oauth.trim() !== "")) {
-            let oauthObj: { provider?: unknown } | null;
-            try {
-                oauthObj = JSON.parse(body.oauth) as { provider?: unknown };
-            } catch {
-                oauthObj = null;
-            }
-            if (!oauthObj || typeof oauthObj.provider !== "string"
-                || !OAUTH_PROVIDERS.has(oauthObj.provider)) {
-                return c.text(msgs.InvalidInputMsg, 400);
-            }
-        }
+        const createPayload: Record<string, unknown> = {
+            username: email,
+            source: discovered.source,
+            host: discovered.host,
+            port: discovered.port,
+            use_ssl: discovered.use_ssl,
+            protocol: discovered.protocol || "auto",
+            cred,
+            label: typeof body.label === "string" && body.label.trim() ? body.label.trim() : (discovered.display_name || ""),
+            smtp_host: discovered.smtp_host || null,
+            smtp_port: discovered.smtp_port ?? null,
+            smtp_ssl: discovered.smtp_ssl ?? true,
+            proxy_policy: typeof body.proxy_policy === "string" && ["auto", "always", "never"].includes(body.proxy_policy)
+                ? body.proxy_policy
+                : (discovered.proxy_policy || "auto"),
+        };
 
-        // 接入操作限流，防止刷凭据/占资源（与注册同源 KV 限流器）
-        if (!(await checkRegistrationRateLimit(c, "mail_account_create", 5, 60))) {
-            return c.text(msgs.RateLimitExceededMsg, 429);
-        }
-
-        // 每用户上限（按角色可配 role_address_config.maxMailAccountCount，缺失回退默认 5；
-        // 返回 0 = 不限，与 maxAddressCount 同口径）
-        const user_role = await commonGetUserRole(c, user_id);
-        const maxMailAccounts = await getMaxMailAccountCount(c, user_role?.role);
-        const { count } = await c.env.DB.prepare(
-            `SELECT COUNT(*) as count FROM user_mail_accounts WHERE user_id = ?`
-        ).bind(user_id).first<{ count: number }>() || { count: 0 };
-        if (maxMailAccounts > 0 && count >= maxMailAccounts) {
-            return c.text(msgs.MaxAddressCountReachedMsg, 400);
-        }
-
-        // C1 一址一户：跨用户接入同名外部邮箱直接拒绝。同一用户重连/同名合法（user_id != ?）。
-        // 已禁用的账号也必须计入查重：删除账号前历史邮件按 to_addr 归属，允许
-        // 另一用户在此窗口接入会把旧历史暴露给新用户。移除账号会一并清理其归集邮件，
-        // 然后才允许该用户名重新绑定。
-        // DB 部分唯一索引 idx_user_mail_accounts_username_uq 是最终兜底；此处前置给出明确 400。
-        const { c: dupCount } = await c.env.DB.prepare(
-            `SELECT COUNT(*) AS c FROM user_mail_accounts WHERE username = ? AND user_id != ?`
-        ).bind(username, user_id).first<{ c: number }>() || { c: 0 };
-        if (dupCount > 0) {
-            return c.text(msgs.AddressAlreadyExistsMsg, 400);
-        }
-
-        const credEnc = await encryptCred(c, cred);
-        const oauthEnc = body.oauth ? await encryptCred(c, body.oauth) : null;
-        const foldersJson = JSON.stringify(foldersRaw.length ? foldersRaw : ["INBOX"]);
-        const id = crypto.randomUUID();
-        const now = Date.now();
-
-        try {
-            await c.env.DB.prepare(
-                `INSERT INTO user_mail_accounts
-                 (id, user_id, label, source, host, port, username, cred_enc, protocol,
-                  folders_json, oauth_enc, use_ssl, pop3_host, pop3_port, pop3_ssl,
-                  pop3_use_stls, enabled, created_at)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)`
-            ).bind(id, user_id, label || null, source, host, port, username, credEnc,
-                protocol, foldersJson, oauthEnc, useSsl ? 1 : 0, pop3Host, pop3Port,
-                pop3Ssl == null ? null : pop3Ssl ? 1 : 0, pop3UseStls ? 1 : 0, now).run();
-        } catch (e) {
-            const error = e as Error;
-            if (error.message && error.message.includes("UNIQUE")) {
-                return c.text(msgs.AddressAlreadyExistsMsg, 400);
-            }
-            throw e;
-        }
-
-        // I7e TOCTOU 补偿：前置配额检查（SELECT COUNT）与 INSERT 是两条独立 D1 语句，
-        // 并发下两个请求可能都过检查都插入，超限 1 条。这里在 INSERT 成功、副作用
-        // （ensureExternalBinding）之前重数——若超 max（max>0 非无限）则删除刚插的行并
-        // 返回上限错误，使超限瞬态自纠。放在 ensureExternalBinding 之前，删除后不产生
-        // 归属作用域副作用。
-        if (maxMailAccounts > 0) {
-            const { count: afterCount } = await c.env.DB.prepare(
-                `SELECT COUNT(*) as count FROM user_mail_accounts WHERE user_id = ?`
-            ).bind(user_id).first<{ count: number }>() || { count: 0 };
-            if (afterCount > maxMailAccounts) {
-                await c.env.DB.prepare(`DELETE FROM user_mail_accounts WHERE id = ?`).bind(id).run();
-                return c.text(msgs.MaxAddressCountReachedMsg, 400);
-            }
-        }
-
-        // 自动绑定：把 to_addr=username 纳入该用户的归属作用域。绑定失败时必须
-        // 删除刚写入的 enabled account，否则聚合器会看到一个永远无法归属的孤儿账号。
-        try {
-            await ensureExternalBinding(c, user_id, username);
-        } catch (error) {
-            try {
-                await c.env.DB.prepare(`DELETE FROM user_mail_accounts WHERE id = ? AND user_id = ?`)
-                    .bind(id, user_id).run();
-            } catch (cleanupError) {
-                console.error(`failed to compensate mail account ${id}`, cleanupError);
-            }
-            if (error instanceof ExternalBindingConflictError) {
-                return c.text(error.message, 400);
-            }
-            throw error;
-        }
-
-        return c.json({ id, success: true });
+        return executeCreateAccount(c, createPayload);
     },
 
     remove: async (c: Context<HonoCustomType>) => {
@@ -471,7 +550,8 @@ const UserMailAccountsModule = {
         const { results } = await c.env.DB.prepare(
             `SELECT id, user_id, source, host, port, username, cred_enc, protocol,
                     folders_json, oauth_enc, use_ssl, pop3_host, pop3_port, pop3_ssl,
-                    pop3_use_stls, can_send FROM user_mail_accounts WHERE enabled = 1`
+                    pop3_use_stls, can_send, smtp_host, smtp_port, smtp_ssl, proxy_policy
+             FROM user_mail_accounts WHERE enabled = 1`
         ).all<MailAccountRow>();
         const out = [];
         for (const r of results || []) {
@@ -524,6 +604,10 @@ const UserMailAccountsModule = {
                     pop3_port: r.pop3_port ?? null,
                     pop3_ssl: r.pop3_ssl == null ? null : r.pop3_ssl === 1,
                     pop3_use_stls: r.pop3_use_stls == null ? false : r.pop3_use_stls === 1,
+                    smtp_host: r.smtp_host || null,
+                    smtp_port: r.smtp_port ?? null,
+                    smtp_ssl: r.smtp_ssl == null ? true : r.smtp_ssl === 1,
+                    proxy_policy: r.proxy_policy || "auto",
                     can_send: r.can_send === 1,
                     oauth: oauth == null ? null : JSON.parse(oauth),
                 });

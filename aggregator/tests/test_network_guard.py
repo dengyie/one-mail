@@ -118,3 +118,21 @@ def test_user_account_can_send_validates_smtp_target():
     )
     with pytest.raises(UnsafeMailTargetError):
         assert_public_user_account(account)
+
+
+def test_user_account_proxy_policy_always_bypasses_dns(monkeypatch):
+    def poisoned_resolver(host, port, **kwargs):
+        raise socket.gaierror("local DNS poisoned or unavailable")
+    monkeypatch.setattr(socket, "getaddrinfo", poisoned_resolver)
+
+    account = AccountConfig(
+        id="u3",
+        source="imap_custom",
+        host="mail.custom-overseas.org",
+        port=993,
+        username="u@custom.org",
+        password="secret",
+        proxy_policy="always",
+    )
+    # Should not raise because proxy_policy="always" uses SOCKS5 remote domain addressing
+    assert_public_user_account(account)

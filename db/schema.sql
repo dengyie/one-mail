@@ -154,6 +154,11 @@ CREATE TABLE IF NOT EXISTS user_mail_accounts (
     pop3_ssl INTEGER,
     pop3_use_stls INTEGER DEFAULT 0,
     enabled INTEGER DEFAULT 1,
+    can_send INTEGER NOT NULL DEFAULT 0,
+    smtp_host TEXT,
+    smtp_port INTEGER,
+    smtp_ssl INTEGER DEFAULT 1,
+    proxy_policy TEXT DEFAULT 'auto',
     last_sync_at INTEGER,
     last_error TEXT,
     created_at INTEGER

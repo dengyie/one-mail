@@ -126,4 +126,22 @@ test("raw create-account gate preserves valid presets and rejects endpoint tampe
     pop3_host: "127.0.0.1",
     pop3_port: 995,
   }), false);
+
+  assert.equal(validateMailAccountCreateTarget({
+    source: "imap_custom",
+    protocol: "imap",
+    host: "mail.example.com",
+    port: 993,
+    smtp_host: "smtp.example.com",
+    smtp_port: 465,
+  }), true);
+
+  assert.equal(validateMailAccountCreateTarget({
+    source: "imap_custom",
+    protocol: "imap",
+    host: "mail.example.com",
+    port: 993,
+    smtp_host: "127.0.0.1",
+    smtp_port: 465,
+  }), false);
 });

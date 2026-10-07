@@ -5,6 +5,7 @@ import { NButton, NTag, NPopconfirm, useMessage } from 'naive-ui'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
+import { getProviderContextHint } from './onboarding_hints.js'
 
 const { userJwt, userSettings, adminAuth } = useGlobalState()
 const message = useMessage()
@@ -19,6 +20,7 @@ const list = ref([])
 const loading = ref(false)
 const showModal = ref(false)
 const submitting = ref(false)
+const connectMode = ref('smart') // 'smart' | 'manual'
 
 // Provider presets intentionally reuse the existing backend sources. 126 / iCloud /
 // Yahoo are standard IMAP providers and therefore use imap_custom instead of adding
@@ -40,6 +42,21 @@ const protocolOptions = computed(() => ([
     { label: t('pop3') || 'POP3', value: 'pop3' },
 ]))
 
+const proxyPolicyOptions = [
+    { label: '智能加速 (自动判定)', value: 'auto' },
+    { label: '强制代理加速', value: 'always' },
+    { label: '直连 (不使用代理)', value: 'never' },
+]
+
+const smartForm = ref({
+    email: '',
+    cred: '',
+    label: '',
+    proxy_policy: 'auto',
+})
+
+const providerHint = computed(() => getProviderContextHint(smartForm.value.email))
+
 const form = ref(emptyForm())
 
 function emptyForm() {
@@ -47,6 +64,7 @@ function emptyForm() {
         provider: 'gmail', label: '', source: 'imap_gmail', protocol: 'imap',
         host: 'imap.gmail.com', port: 993, use_ssl: true,
         pop3_host: 'pop.gmail.com', pop3_port: 995, pop3_ssl: true, pop3_use_stls: false,
+        smtp_host: '', smtp_port: null, smtp_ssl: true, proxy_policy: 'auto',
         username: '', cred: '', oauth_json: '', folders: ''
     }
 }
@@ -108,6 +126,37 @@ const onProtocolChange = (v) => {
     }
 }
 
+const onPop3SslChange = (checked) => {
+    form.value.pop3_ssl = checked
+    if (checked) {
+        form.value.pop3_use_stls = false
+    }
+}
+
+const onPop3StlsChange = (checked) => {
+    form.value.pop3_use_stls = checked
+    if (checked) {
+        form.value.pop3_ssl = false
+    }
+}
+
+const setConnectMode = (mode) => {
+    connectMode.value = mode
+    if (mode === 'manual' && smartForm.value.email) {
+        if (!form.value.username) form.value.username = smartForm.value.email
+        if (!form.value.cred) form.value.cred = smartForm.value.cred
+        if (!form.value.label && smartForm.value.label) form.value.label = smartForm.value.label
+        if (smartForm.value.proxy_policy) form.value.proxy_policy = smartForm.value.proxy_policy
+    }
+}
+
+const switchToOutlookOauth = () => {
+    setConnectMode('manual')
+    form.value.provider = 'outlook'
+    onSourceChange('outlook')
+    if (smartForm.value.email) form.value.username = smartForm.value.email
+}
+
 const fetchData = async () => {
     loading.value = true
     try {
@@ -124,6 +173,39 @@ const fetchData = async () => {
         message.error(e.message || 'error')
     } finally {
         loading.value = false
+    }
+}
+
+const handleSmartConnect = async () => {
+    const email = smartForm.value.email.trim().toLowerCase()
+    const cred = smartForm.value.cred
+    if (!email || !cred) {
+        message.error('请填写邮箱地址与密码/授权码')
+        return
+    }
+    submitting.value = true
+    try {
+        await api.userMailAccounts.smartConnect({
+            email,
+            cred,
+            label: smartForm.value.label.trim() || undefined,
+            proxy_policy: smartForm.value.proxy_policy || 'auto',
+        })
+        message.success(t('addSuccessTip') || '一键智能接入成功')
+        showModal.value = false
+        smartForm.value = { email: '', cred: '', label: '', proxy_policy: 'auto' }
+        await fetchData()
+    } catch (e) {
+        const errMsg = e.message || String(e)
+        if (errMsg.includes('AUTH_LINUX_DO_IP_TRAP') || (email.endsWith('@linux.do') && errMsg.includes('AUTHENTICATIONFAILED'))) {
+            message.error('认证失败：生成 LINUX DO 认证令牌时，“授权IP”请务必完全留空，切勿填写 0.0.0.0。')
+        } else if (errMsg.includes('AUTHENTICATIONFAILED')) {
+            message.error('认证失败：账号或授权码不匹配。部分邮箱（如 QQ/网易）需使用专用授权码而非主密码。')
+        } else {
+            message.error(errMsg || '智能接入失败')
+        }
+    } finally {
+        submitting.value = false
     }
 }
 
@@ -155,6 +237,10 @@ const submit = async () => {
         message.error('SSL/STLS 配置无效')
         return
     }
+    if (f.pop3_ssl && f.pop3_use_stls) {
+        message.error('POP3 SSL 与 STLS 互斥，请勿同时勾选')
+        return
+    }
     submitting.value = true
     try {
         const folders = f.folders ? f.folders.split(',').map(s => s.trim()).filter(Boolean) : []
@@ -163,6 +249,10 @@ const submit = async () => {
             pop3_host: effectivePop3Host || null, pop3_port: effectivePop3Port ? Number(effectivePop3Port) : null,
             pop3_ssl: f.pop3_ssl, pop3_use_stls: f.pop3_use_stls, username: f.username, cred: effectiveCred,
             protocol: f.protocol, folders, oauth: outlookOauth?.text,
+            smtp_host: f.smtp_host ? f.smtp_host.trim() : null,
+            smtp_port: f.smtp_port ? Number(f.smtp_port) : null,
+            smtp_ssl: f.smtp_ssl ?? true,
+            proxy_policy: f.proxy_policy || 'auto',
         })
         message.success(t('addSuccessTip') || '添加外部邮箱成功')
         showModal.value = false
@@ -276,75 +366,168 @@ onMounted(async () => {
     <div class="space-y-6">
         <!-- 弹窗：添加外部邮箱 -->
         <n-modal v-model:show="showModal" preset="card" :title="t('modalTitle') || '添加外部邮箱归集 (IMAP/POP3)'" class="rounded-3xl max-w-lg">
-            <n-form :model="form" label-placement="top" class="space-y-3">
-                <n-form-item :label="t('emailType') || '邮箱服务商'">
-                    <n-select v-model:value="form.provider" :options="sourceOptions" @update:value="onSourceChange" class="rounded-xl" />
-                </n-form-item>
-                <n-form-item :label="t('protocol') || '协议'">
-                    <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook" @update:value="onProtocolChange" class="rounded-xl" />
-                </n-form-item>
-                <n-form-item :label="t('customLabel') || '自定义标签（选填）'">
-                    <n-input v-model:value="form.label" placeholder="如：我的个人 QQ 邮箱" class="rounded-xl" />
-                </n-form-item>
-                <n-form-item :label="t('emailUsername') || '邮箱地址 / 用户名'">
-                    <n-input v-model:value="form.username" placeholder="user@example.com" class="rounded-xl" />
-                </n-form-item>
-                <template v-if="isOutlook">
-                    <n-alert type="info" :show-icon="false" class="rounded-xl">
-                        Outlook / Hotmail / Microsoft 365 使用 OAuth2。个人账号可粘贴 msa_authorize.py 生成的 JSON；组织账号使用 provider=outlook，并包含 client_secret。
-                    </n-alert>
-                    <n-form-item label="OAuth 配置 JSON">
+            <!-- 接入模式切换 -->
+            <div class="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-4">
+                <button
+                    type="button"
+                    class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-all"
+                    :class="connectMode === 'smart' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'"
+                    @click="setConnectMode('smart')"
+                >
+                    ⚡ 一键智能接入 (推荐)
+                </button>
+                <button
+                    type="button"
+                    class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-all"
+                    :class="connectMode === 'manual' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'"
+                    @click="setConnectMode('manual')"
+                >
+                    ⚙️ 手动高级配置
+                </button>
+            </div>
+
+            <!-- 模式一：极简两字段智能一键接入 -->
+            <div v-if="connectMode === 'smart'" class="space-y-3">
+                <n-form :model="smartForm" label-placement="top" class="space-y-3">
+                    <n-form-item :label="t('emailUsername') || '邮箱地址'">
                         <n-input
-                            v-model:value="form.oauth_json"
-                            type="password"
-                            show-password-on="click"
-                            placeholder='{"provider":"msa","client_id":"...","refresh_token":"..."}'
+                            v-model:value="smartForm.email"
+                            placeholder="如：mangoqwq@linux.do, myname@qq.com"
                             class="rounded-xl"
                         />
                     </n-form-item>
-                </template>
-                <n-form-item v-else :label="t('credential') || '授权码 / 应用专用密码'">
-                    <n-input v-model:value="form.cred" type="password" show-password-on="click" placeholder="应用专用密码或授权码" class="rounded-xl" />
-                </n-form-item>
-                <p v-if="form.protocol === 'auto'" class="text-xs text-slate-500 dark:text-slate-400">
-                    {{ t('autoDescription') || '自动：优先使用 IMAP；IMAP 失败时仅对 INBOX 使用 POP3 fallback。' }}
-                </p>
-                <p v-else-if="form.protocol === 'pop3'" class="text-xs text-slate-500 dark:text-slate-400">
-                    {{ t('pop3OnlyDescription') || 'POP3-only：仅同步 INBOX；IMAP 主机与端口仍需按接口要求填写。' }}
-                </p>
-                <template v-if="showPop3">
+
+                    <!-- 实时服务商上下文智能避坑提示 -->
+                    <div v-if="providerHint" class="rounded-2xl p-3 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/50 flex items-start gap-2.5">
+                        <div class="text-amber-500 font-bold text-base leading-none mt-0.5">💡</div>
+                        <div class="flex-1 text-xs">
+                            <div class="font-semibold text-amber-900 dark:text-amber-200">{{ providerHint.badge }}</div>
+                            <div class="text-amber-700 dark:text-amber-300/90 mt-0.5">{{ providerHint.warningText }}</div>
+                            <div v-if="providerHint.providerKey === 'outlook'" class="pt-2">
+                                <n-button size="small" type="warning" dashed @click="switchToOutlookOauth" class="rounded-lg text-xs">
+                                    点击切换至 Outlook OAuth 配置
+                                </n-button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <n-form-item :label="t('credential') || '密码 / 专用授权码 / 认证令牌'">
+                        <n-input
+                            v-model:value="smartForm.cred"
+                            type="password"
+                            show-password-on="click"
+                            placeholder="输入邮箱授权码或认证令牌"
+                            class="rounded-xl"
+                        />
+                    </n-form-item>
+
                     <div class="grid grid-cols-2 gap-3">
-                        <n-form-item :label="t('pop3Host') || 'POP3 主机'">
-                            <n-input v-model:value="form.pop3_host" placeholder="pop.example.com" class="rounded-xl" />
+                        <n-form-item :label="t('customLabel') || '自定义名称（选填）'">
+                            <n-input v-model:value="smartForm.label" placeholder="如：我的个人邮箱" class="rounded-xl" />
                         </n-form-item>
-                        <n-form-item :label="t('pop3Port') || 'POP3 端口'">
-                            <n-input-number v-model:value="form.pop3_port" :min="1" :max="65535" class="rounded-xl w-full" />
+                        <n-form-item label="网络加速 / 代理策略">
+                            <n-select v-model:value="smartForm.proxy_policy" :options="proxyPolicyOptions" class="rounded-xl" />
                         </n-form-item>
                     </div>
-                    <div class="flex gap-6">
-                        <n-checkbox v-model:checked="form.pop3_ssl">{{ t('pop3Ssl') || 'POP3 SSL' }}</n-checkbox>
-                        <n-checkbox v-model:checked="form.pop3_use_stls">{{ t('pop3Stls') || 'POP3 STLS' }}</n-checkbox>
+
+                    <div class="flex items-center justify-between pt-3">
+                        <button
+                            type="button"
+                            class="text-xs text-slate-500 hover:text-primary transition-colors underline underline-offset-2"
+                            @click="setConnectMode('manual')"
+                        >
+                            需要自定义端口与协议？切换到手动配置 →
+                        </button>
+                        <div class="flex gap-2">
+                            <n-button @click="showModal = false" class="rounded-xl">{{ t('cancelAction') || '取消' }}</n-button>
+                            <n-button type="primary" :loading="submitting" @click="handleSmartConnect" class="rounded-xl px-5 font-medium">
+                                ⚡ {{ t('confirm') || '确认接入' }}
+                            </n-button>
+                        </div>
                     </div>
-                </template>
-                <template v-if="showImap">
+                </n-form>
+            </div>
+
+            <!-- 模式二：全参数手动高级配置（完全向下兼容既有契约） -->
+            <div v-else>
+                <n-form :model="form" label-placement="top" class="space-y-3">
+                    <n-form-item :label="t('emailType') || '邮箱服务商'">
+                        <n-select v-model:value="form.provider" :options="sourceOptions" @update:value="onSourceChange" class="rounded-xl" />
+                    </n-form-item>
+                    <n-form-item :label="t('protocol') || '协议'">
+                        <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook" @update:value="onProtocolChange" class="rounded-xl" />
+                    </n-form-item>
+                    <n-form-item :label="t('customLabel') || '自定义标签（选填）'">
+                        <n-input v-model:value="form.label" placeholder="如：我的个人 QQ 邮箱" class="rounded-xl" />
+                    </n-form-item>
+                    <n-form-item :label="t('emailUsername') || '邮箱地址 / 用户名'">
+                        <n-input v-model:value="form.username" placeholder="user@example.com" class="rounded-xl" />
+                    </n-form-item>
+                    <template v-if="isOutlook">
+                        <n-alert type="info" :show-icon="false" class="rounded-xl">
+                            Outlook / Hotmail / Microsoft 365 使用 OAuth2。个人账号可粘贴 msa_authorize.py 生成的 JSON；组织账号使用 provider=outlook，并包含 client_secret。
+                        </n-alert>
+                        <n-form-item label="OAuth 配置 JSON">
+                            <n-input
+                                v-model:value="form.oauth_json"
+                                type="password"
+                                show-password-on="click"
+                                placeholder='{"provider":"msa","client_id":"...","refresh_token":"..."}'
+                                class="rounded-xl"
+                            />
+                        </n-form-item>
+                    </template>
+                    <n-form-item v-else :label="t('credential') || '授权码 / 应用专用密码'">
+                        <n-input v-model:value="form.cred" type="password" show-password-on="click" placeholder="应用专用密码或授权码" class="rounded-xl" />
+                    </n-form-item>
+                    <p v-if="form.protocol === 'auto'" class="text-xs text-slate-500 dark:text-slate-400">
+                        {{ t('autoDescription') || '自动：优先使用 IMAP；IMAP 失败时仅对 INBOX 使用 POP3 fallback。' }}
+                    </p>
+                    <p v-else-if="form.protocol === 'pop3'" class="text-xs text-slate-500 dark:text-slate-400">
+                        {{ t('pop3OnlyDescription') || 'POP3-only：仅同步 INBOX；IMAP 主机与端口仍需按接口要求填写。' }}
+                    </p>
+                    <template v-if="showPop3">
+                        <div class="grid grid-cols-2 gap-3">
+                            <n-form-item :label="t('pop3Host') || 'POP3 主机'">
+                                <n-input v-model:value="form.pop3_host" placeholder="pop.example.com" class="rounded-xl" />
+                            </n-form-item>
+                            <n-form-item :label="t('pop3Port') || 'POP3 端口'">
+                                <n-input-number v-model:value="form.pop3_port" :min="1" :max="65535" class="rounded-xl w-full" />
+                            </n-form-item>
+                        </div>
+                        <div class="flex gap-6">
+                            <n-checkbox :checked="form.pop3_ssl" @update:checked="onPop3SslChange">{{ t('pop3Ssl') || 'POP3 SSL' }}</n-checkbox>
+                            <n-checkbox :checked="form.pop3_use_stls" @update:checked="onPop3StlsChange">{{ t('pop3Stls') || 'POP3 STLS' }}</n-checkbox>
+                        </div>
+                    </template>
+                    <template v-if="showImap">
+                        <div class="grid grid-cols-2 gap-3">
+                            <n-form-item :label="t('imapHost') || 'IMAP 主机'">
+                                <n-input v-model:value="form.host" placeholder="imap.example.com" class="rounded-xl" />
+                            </n-form-item>
+                            <n-form-item :label="t('port') || 'IMAP 端口'">
+                                <n-input-number v-model:value="form.port" :min="1" :max="65535" class="rounded-xl w-full" />
+                            </n-form-item>
+                        </div>
+                        <n-checkbox v-model:checked="form.use_ssl">{{ t('imapSsl') || 'IMAP SSL' }}</n-checkbox>
+                    </template>
                     <div class="grid grid-cols-2 gap-3">
-                        <n-form-item :label="t('imapHost') || 'IMAP 主机'">
-                            <n-input v-model:value="form.host" placeholder="imap.example.com" class="rounded-xl" />
+                        <n-form-item label="出站代理策略">
+                            <n-select v-model:value="form.proxy_policy" :options="proxyPolicyOptions" class="rounded-xl" />
                         </n-form-item>
-                        <n-form-item :label="t('port') || 'IMAP 端口'">
-                            <n-input-number v-model:value="form.port" :min="1" :max="65535" class="rounded-xl w-full" />
+                        <n-form-item label="发件 SMTP 主机（选填）">
+                            <n-input v-model:value="form.smtp_host" placeholder="留空自动推导" class="rounded-xl" />
                         </n-form-item>
                     </div>
-                    <n-checkbox v-model:checked="form.use_ssl">{{ t('imapSsl') || 'IMAP SSL' }}</n-checkbox>
-                </template>
-                <n-form-item v-if="form.protocol !== 'pop3'" :label="t('folders') || '文件夹（逗号分隔，默认 INBOX）'">
-                    <n-input v-model:value="form.folders" placeholder="INBOX, Archive" class="rounded-xl" />
-                </n-form-item>
-                <div class="flex justify-end gap-3 pt-4">
-                    <n-button @click="showModal = false" class="rounded-xl">{{ t('cancelAction') || '取消' }}</n-button>
-                    <n-button type="primary" :loading="submitting" @click="submit" class="rounded-xl px-5 font-medium">{{ t('confirm') || '确认接入' }}</n-button>
-                </div>
-            </n-form>
+                    <n-form-item v-if="form.protocol !== 'pop3'" :label="t('folders') || '文件夹（逗号分隔，默认 INBOX）'">
+                        <n-input v-model:value="form.folders" placeholder="INBOX, Archive" class="rounded-xl" />
+                    </n-form-item>
+                    <div class="flex justify-end gap-3 pt-4">
+                        <n-button @click="showModal = false" class="rounded-xl">{{ t('cancelAction') || '取消' }}</n-button>
+                        <n-button type="primary" :loading="submitting" @click="submit" class="rounded-xl px-5 font-medium">{{ t('confirm') || '确认接入' }}</n-button>
+                    </div>
+                </n-form>
+            </div>
         </n-modal>
 
         <!-- 主面板（纯内容视图） -->

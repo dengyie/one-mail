@@ -90,11 +90,22 @@ def test_resolve_endpoint_unknown_source_has_no_host():
     assert smtp._resolve_smtp_endpoint(account) == ("", 0, False)
 
 
+def test_resolve_endpoint_custom_derives_smtp_from_host():
+    acc1 = _smtp_account("imap_custom", host="imap.domain.com", smtp_host="")
+    assert smtp._resolve_smtp_endpoint(acc1) == ("smtp.domain.com", 465, True)
+
+    acc2 = _smtp_account("imap_custom", host="mail.domain.com", smtp_host="")
+    assert smtp._resolve_smtp_endpoint(acc2) == ("mail.domain.com", 465, True)
+
+
 def test_use_proxy_only_for_overseas_hosts():
     assert smtp._use_proxy("smtp.gmail.com") is True
     assert smtp._use_proxy("smtp-mail.outlook.com") is True
     assert smtp._use_proxy("smtp.qq.com") is False
     assert smtp._use_proxy("smtp.163.com") is False
+    # policy overrides
+    assert smtp._use_proxy("smtp.qq.com", "always") is True
+    assert smtp._use_proxy("smtp.gmail.com", "never") is False
 
 
 def test_build_outbound_mime_plain_text():

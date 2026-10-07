@@ -81,4 +81,13 @@ describe('external mailbox provider form contract', () => {
         expect(view).toContain("key: 'last_sync_at'")
         expect(view).toContain("key: 'last_error'")
     })
+
+    it('implements zero-config smart onboarding mode with contextual hints and outbound proxy policy', () => {
+        expect(view).toContain("connectMode = ref('smart')")
+        expect(view).toContain("api.userMailAccounts.smartConnect")
+        expect(view).toContain("getProviderContextHint")
+        expect(view).toContain("onPop3SslChange")
+        expect(view).toContain("onPop3StlsChange")
+        expect(view).toContain("proxy_policy: 'auto'")
+    })
 })

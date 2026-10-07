@@ -26,15 +26,40 @@ OVERSEAS_SMTP_HOSTS = {
 
 DEFAULT_SOCKS5_PROXY = ("127.0.0.1", 1080)
 
+# 运行时自愈代理缓存：若直连受阻/握手降级，自动记录该域名走代理隧道
+_AUTO_PROXY_FALLBACK_CACHE: set[str] = set()
+
+
+def record_proxy_fallback(host: str | None) -> None:
+    """在运行时将连接遇阻的域名加入代理自愈缓存。"""
+    if host:
+        _AUTO_PROXY_FALLBACK_CACHE.add(str(host).strip().lower())
+
 
 def is_overseas_imap_host(host: str | None) -> bool:
     h = str(host or "").strip().lower()
-    return h in OVERSEAS_IMAP_HOSTS or h.endswith(".linux.do") or h == "linux.do"
+    return h in OVERSEAS_IMAP_HOSTS or h.endswith(".linux.do") or h == "linux.do" or h in _AUTO_PROXY_FALLBACK_CACHE
 
 
 def is_overseas_smtp_host(host: str | None) -> bool:
     h = str(host or "").strip().lower()
-    return h in OVERSEAS_SMTP_HOSTS or h.endswith(".linux.do") or h == "linux.do"
+    return h in OVERSEAS_SMTP_HOSTS or h.endswith(".linux.do") or h == "linux.do" or h in _AUTO_PROXY_FALLBACK_CACHE
+
+
+def is_overseas_host(host: str | None) -> bool:
+    h = str(host or "").strip().lower()
+    return is_overseas_imap_host(h) or is_overseas_smtp_host(h)
+
+
+def should_use_proxy(host: str | None, proxy_policy: str = "auto") -> bool:
+    """根据账号出站策略及目标主机综合决断是否走 SOCKS5 代理。"""
+    policy = str(proxy_policy or "auto").strip().lower()
+    if policy == "always":
+        return True
+    if policy == "never":
+        return False
+    # auto
+    return is_overseas_host(host)
 
 
 def _maybe_send_id(client, account) -> None:
@@ -136,7 +161,7 @@ def create_imap_client(
     调用方保持现有注入能力。
     """
     host = str(account.host).strip()
-    client_cls = proxied_client_cls if is_overseas_imap_host(host) else direct_client_cls
+    client_cls = proxied_client_cls if should_use_proxy(host, getattr(account, "proxy_policy", "auto")) else direct_client_cls
     client = client_cls(host, port=account.port, ssl=account.use_ssl, timeout=timeout)
     if send_id:
         _maybe_send_id(client, account)
