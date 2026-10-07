@@ -5,6 +5,9 @@ compatibility_flags = [ "nodejs_compat" ]
 keep_vars = true
 
 [vars]
+FLEET_MODE = "observe"
+FLEET_READ_TOKEN = "e2e-fleet-read-rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+FLEET_CONTROL_TOKEN = "e2e-fleet-control-cccccccccccccccccccccccccccccccc"
 PREFIX = "TMP"
 DEFAULT_DOMAINS = []
 DOMAINS = ["TEST.EXAMPLE.COM"]
@@ -41,3 +44,11 @@ id = "e2e-test-kv-00000000-0000-0000-0000-000000000000"
 binding = "DB"
 database_name = "e2e-temp-email"
 database_id = "e2e-test-db-00000000-0000-0000-0000-000000000000"
+
+[[durable_objects.bindings]]
+name = "FLEET_REGISTRY"
+class_name = "FleetRegistryDurableObject"
+
+[[migrations]]
+tag = "fleet-registry-v2"
+new_sqlite_classes = ["FleetRegistryDurableObject"]

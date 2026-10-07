@@ -53,6 +53,7 @@ describe('resolveSessionRedirect', () => {
         // /en/user/... 的访客被送回 /user 会静默退回中文，属语言丢失。
         const result = resolveSessionRedirect(guard({ fullPath: '/en/user/external-accounts', locale: 'en' }))
         expect(result.kind).toBe('redirect')
+        if (result.kind !== 'redirect') throw new Error('Expected a locale-preserving redirect')
         expect(result.to.startsWith('/zh')).toBe(false)
     })
 

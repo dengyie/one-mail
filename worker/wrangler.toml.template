@@ -36,6 +36,11 @@ class_name = "PasskeyChallengeDurableObject"
 name = "D1_QUOTA_COORDINATOR"
 class_name = "D1QuotaCoordinatorDurableObject"
 
+# Registry is dormant in legacy-static. Bind only in the primary account.
+[[durable_objects.bindings]]
+name = "FLEET_REGISTRY"
+class_name = "FleetRegistryDurableObject"
+
 [[migrations]]
 tag = "passkey-challenge-v1"
 new_sqlite_classes = ["PasskeyChallengeDurableObject"]
@@ -43,6 +48,10 @@ new_sqlite_classes = ["PasskeyChallengeDurableObject"]
 [[migrations]]
 tag = "d1-quota-coordinator-v1"
 new_sqlite_classes = ["D1QuotaCoordinatorDurableObject"]
+
+[[migrations]]
+tag = "fleet-registry-v2"
+new_sqlite_classes = ["FleetRegistryDurableObject"]
 
 # send_email must stay top-level. Wrangler 4 treats send_email inside
 # [triggers] as an unexpected field and drops the SEND_MAIL binding.
@@ -74,6 +83,10 @@ new_sqlite_classes = ["D1QuotaCoordinatorDurableObject"]
 # MX/SPF on the send. subdomain only. ENABLE_AUTO_REPLY must stay false.
 
 [vars]
+# Current release supports legacy-static or observe only; allocate/rebalance fail closed.
+FLEET_MODE = "legacy-static"
+# For observe, configure distinct secrets with wrangler secret put:
+# FLEET_READ_TOKEN and FLEET_CONTROL_TOKEN (32-512 printable ASCII characters).
 # DEFAULT_LANG = "zh"
 # TITLE = "Custom Title" # custom title
 # ANNOUNCEMENT = "Custom Announcement"

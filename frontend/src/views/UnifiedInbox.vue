@@ -399,6 +399,7 @@ let backgroundCodesPending = false
 // 基线没变化就完全不拉列表、不跑 COUNT(*)，避免无谓的 D1 rows_read。
 const emailSortKey = (row) => `${Number(row?.received_at) || 0}:${row?.id ?? ''}`
 let newestSeenKey = ''
+let displayedListKey = ''
 let autoRefreshTimer = null
 let componentDisposed = false
 const autoRefresh = ref(true)
@@ -409,6 +410,7 @@ const loadList = async ({ background = false } = {}) => {
   const controller = beginRequest('list')
   const requestedPage = page.value
   const requestedParams = listParams.value
+  const requestedKey = JSON.stringify(requestedParams)
 
   backgroundListPending = background
   loading.value = !background
@@ -417,28 +419,40 @@ const loadList = async ({ background = false } = {}) => {
   try {
     const listRes = await api.unified.listEmails(requestedParams, { signal: controller.signal })
     if (!currentRequest('list', controller)) return false
-    emails.value = listRes.results || []
+    const incomplete = Boolean(listRes.incomplete || listRes.degraded?.length)
+    const received = listRes.results || []
+    if (incomplete && displayedListKey === requestedKey) {
+      const unavailable = new Set(listRes.unavailable_mailbox_ids || [])
+      const byId = new Map(emails.value.filter(row => unavailable.has(row.account_id)).map(row => [row.id, row]))
+      for (const row of received) byId.set(row.id, row)
+      emails.value = Array.from(byId.values()).sort((a, b) => {
+        const timeOrder = Number(b.received_at) - Number(a.received_at)
+        if (timeOrder || a.id === b.id) return timeOrder
+        return a.id < b.id ? 1 : -1
+      }).slice(0, PAGE_SIZE)
+    } else emails.value = received
+    displayedListKey = requestedKey
     // Refreshing a boundary invalidates every later cursor derived from it.
     for (const boundary of pageCursors.keys()) {
       if (boundary > requestedPage) pageCursors.delete(boundary)
     }
     hasMore.value = Boolean(listRes.has_more)
-    nextCursor.value = listRes.degraded?.length ? null : listRes.next_cursor || null
+    nextCursor.value = incomplete ? null : listRes.next_cursor || null
     if (nextCursor.value) pageCursors.set(requestedPage + 1, nextCursor.value)
     // The first page already includes the scoped count; avoid a second full-table scan.
     if (requestedPage === 1 && typeof listRes.count === 'number') {
       count.value = listRes.count
     }
     // 刷新探测基线（仅第一页代表全域最新一封）
-    if (requestedPage === 1 && !listRes.degraded?.length) {
+    if (requestedPage === 1 && !incomplete) {
       newestSeenKey = emails.value.length ? emailSortKey(emails.value[0]) : ''
     }
     degradedShards.value = Array.isArray(listRes.degraded) ? listRes.degraded : []
     listError.value = ''
-    if (degradedShards.value.length) count.value = null
-    connected.value = degradedShards.value.length === 0
+    if (incomplete) count.value = null
+    connected.value = !incomplete
     lastLoaded.value = new Date()
-    return degradedShards.value.length === 0
+    return !incomplete
   } catch (e) {
     if (!currentRequest('list', controller)) return false
     connected.value = false
@@ -517,7 +531,9 @@ const updateRow = async (row, field) => {
   const identity = authIdentity.value
   const filters = filterParams.value
   const ownsScope = () => !componentDisposed && !controller.signal.aborted && identity === authIdentity.value && filters === filterParams.value
-  const current = () => ownsScope() && rows === emails.value
+  // Partial refresh can retain this exact row in a new array. Its optimistic
+  // state still belongs to this request and must roll back on provider failure.
+  const current = () => ownsScope() && emails.value.includes(row)
   const previous = row[field]
   const target = previous ? 0 : 1
   row[field] = target
@@ -532,6 +548,10 @@ const updateRow = async (row, field) => {
     if (field === 'is_starred') message.success(w(row[field] ? 'protected' : 'removeStar'))
     const affectsFilter = field === 'is_starred' ? filters.starred : filters.unread
     if (affectsFilter || rows !== emails.value) {
+      const finalValue = result[field] ?? target
+      if (affectsFilter && (field === 'is_starred' ? !finalValue : finalValue)) {
+        emails.value = emails.value.filter(candidate => candidate.id !== row.id)
+      }
       cancelRequest('probe')
       resetPagination()
       count.value = null

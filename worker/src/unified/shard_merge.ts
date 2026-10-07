@@ -1,9 +1,9 @@
 /**
  * Cross-shard merge helpers. Pure functions, no I/O.
  *
- * Sort identity is (received_at DESC, id DESC). emails.id is a UUID so two
- * shards cannot emit the same (received_at, id) pair; the comparator is a
- * total order and k-way merge is safe.
+ * Sort identity is (received_at DESC, id DESC), where received_at is the
+ * effective-date projection supplied by unified_list. Duplicate identities
+ * retain page order; callers must exclude copies outside the active owner.
  */
 
 export const MAX_UNIFIED_OFFSET = 500;
@@ -25,7 +25,8 @@ export const compareEmailOrder = (a: MergeEmailRow, b: MergeEmailRow): number =>
 };
 
 /**
- * k-way merge of already-sorted pages. O(k · out) comparisons, no full sort.
+ * Heap merge of already-sorted pages. O(k + (skip + out) log k) comparisons,
+ * O(k + out) memory; skipped rows are not buffered and inputs are not mutated.
  * Each page must already be in UNIFIED_EMAIL_ORDER. `outLimit` is the number
  * of rows to keep after skipping `skip` leading rows (offset).
  */
@@ -36,27 +37,44 @@ export const mergeSortedEmailPages = (
 ): MergeEmailRow[] => {
     const k = pages.length;
     if (k === 0 || outLimit <= 0) return [];
-    const index = new Array<number>(k).fill(0);
+    type Head = { page: number; index: number; row: MergeEmailRow };
+    const heap = new Array<Head>(k);
+    let size = 0;
+    for (let page = 0; page < k; page++) {
+        if (pages[page].length) heap[size++] = { page, index: 0, row: pages[page][0] };
+    }
+    heap.length = size;
+    const compare = (a: Head, b: Head): number => compareEmailOrder(a.row, b.row) || a.page - b.page;
+    const siftDown = (start: number): void => {
+        const head = heap[start];
+        let parent = start;
+        while (parent * 2 + 1 < size) {
+            let child = parent * 2 + 1;
+            if (child + 1 < size && compare(heap[child + 1], heap[child]) < 0) child++;
+            if (compare(head, heap[child]) <= 0) break;
+            heap[parent] = heap[child];
+            parent = child;
+        }
+        heap[parent] = head;
+    };
+    for (let parent = Math.floor(size / 2) - 1; parent >= 0; parent--) siftDown(parent);
     const needed = skip + outLimit;
     const taken: MergeEmailRow[] = [];
-    taken.length = 0;
-
-    while (taken.length < needed) {
-        let best = -1;
-        let bestRow: MergeEmailRow | null = null;
-        for (let i = 0; i < k; i++) {
-            const row = pages[i][index[i]];
-            if (!row) continue;
-            if (best < 0 || compareEmailOrder(row, bestRow as MergeEmailRow) < 0) {
-                best = i;
-                bestRow = row;
-            }
+    for (let consumed = 0; consumed < needed && size > 0; consumed++) {
+        const head = heap[0];
+        if (consumed >= skip) taken.push(head.row);
+        head.index++;
+        const next = pages[head.page][head.index];
+        if (next) {
+            head.row = next;
+        } else {
+            size--;
+            heap[0] = heap[size];
+            heap.length = size;
         }
-        if (best < 0 || !bestRow) break;
-        index[best] += 1;
-        taken.push(bestRow);
+        if (size > 0) siftDown(0);
     }
-    return taken.slice(skip, skip + outLimit);
+    return taken;
 };
 
 export const mergeCounts = (counts: readonly (number | null | undefined)[]): number | null => {

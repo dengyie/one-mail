@@ -11,6 +11,22 @@ describe('unified inbox isolation and lifecycle', () => {
     expect(host.querySelectorAll('.inbox-message')).toHaveLength(1)
     expect(host.textContent).toContain('shard-b')
   })
+  it('retains the displayed boundary during partial refresh, deduplicates, then replaces on recovery', async () => {
+    ctx.api.unified.listEmails.mockResolvedValueOnce({ results: [email('old', 'Previously loaded')], count: 2, next_cursor: 'next', has_more: true })
+    const { host } = await mount(UnifiedInbox)
+    ctx.api.unified.listEmails.mockResolvedValue({ results: [{ ...email('healthy', 'Healthy shard'), account_id: 'account-b' }], count: null, incomplete: true, degraded: ['shard-a'], unavailable_mailbox_ids: ['account-a'], next_cursor: null, has_more: true })
+    host.querySelector('button[aria-label="Refresh mail"]').click(); await flush()
+    expect(host.textContent).toContain('Previously loaded')
+    expect(host.textContent).toContain('Healthy shard')
+    host.querySelector('button[aria-label="Refresh mail"]').click(); await flush()
+    expect(host.querySelectorAll('.inbox-message')).toHaveLength(2)
+    expect(host.querySelector('button[aria-label="Next page"]').disabled).toBe(true)
+    ctx.api.unified.listEmails.mockResolvedValue({ results: [email('recovered', 'Recovered boundary')], count: 1, incomplete: false, next_cursor: null, has_more: false })
+    host.querySelector('button[aria-label="Refresh mail"]').click(); await flush()
+    expect(host.textContent).not.toContain('Previously loaded')
+    expect(host.textContent).toContain('Recovered boundary')
+    expect(ctx.api.unified.listEmails.mock.calls.at(-1)[0].cursor).toBeUndefined()
+  })
   it('invalidates data when an attached admin credential is removed', async () => {
     ctx.state.adminAuth.value = 'admin-a'
     const { host } = await mount(UnifiedInbox)
@@ -164,6 +180,40 @@ it('cannot restore an API credential after logout during key creation', async ()
 })
 
 describe('filtered mutation membership', () => {
+  it.each(['starred', 'unread', 'combined'])('removes confirmed changes from a partial %s page while retaining unavailable mail', async view => {
+    ctx.route.query = view === 'combined' ? { starred: '1', unread: '1' } : { view }
+    const top = { ...email('top'), is_starred: 1 }
+    const second = { ...email('second'), account_id: 'account-b', is_starred: 1 }
+    const unavailable = { ...email('unavailable'), account_id: 'account-b', is_starred: 1 }
+    const staleHealthy = { ...email('stale-healthy'), is_starred: 1 }
+    ctx.api.unified.listEmails.mockResolvedValueOnce({ results: [top, second, unavailable, staleHealthy], count: 4, has_more: false })
+      .mockResolvedValue({ results: [top], count: null, incomplete: true, degraded: ['shard-b'], unavailable_mailbox_ids: ['account-b'], next_cursor: null, has_more: true })
+    ctx.api.unified.toggleStar.mockResolvedValue({ is_starred: 0 })
+    ctx.api.unified.markRead.mockResolvedValue({ is_read: 1 })
+    const { host } = await mount(UnifiedInbox)
+    const action = view === 'unread' ? 'Mark as read' : 'Remove star'
+    host.querySelector(`[data-mail-id="second"] button[aria-label="${action}"]`).click(); await flush()
+    expect(ctx.api.unified.listEmails).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[data-mail-id="unavailable"]')).not.toBeNull()
+    expect(host.querySelector('[data-mail-id="second"]')).toBeNull()
+    expect(host.querySelector('[data-mail-id="stale-healthy"]')).toBeNull()
+    expect(host.querySelector('button[aria-label="Next page"]').disabled).toBe(true)
+  })
+
+  it('rolls back a rejected action on a row retained during a partial refresh', async () => {
+    ctx.route.query = { view: 'starred' }
+    ctx.api.unified.listEmails.mockResolvedValueOnce({ results: [{ ...email('pending'), is_starred: 1 }], count: 1, has_more: false })
+      .mockResolvedValue({ results: [], count: null, incomplete: true, degraded: ['shard-a'], unavailable_mailbox_ids: ['account-a'], next_cursor: null, has_more: true })
+    const pending = deferred()
+    ctx.api.unified.toggleStar.mockReturnValue(pending.promise)
+    const { host } = await mount(UnifiedInbox)
+    host.querySelector('[data-mail-id="pending"] button[aria-label="Remove star"]').click(); await flush()
+    host.querySelector('button[aria-label="Refresh mail"]').click(); await flush()
+    pending.reject(new Error('provider refused')); await flush()
+    expect(host.querySelector('[data-mail-id="pending"] button[aria-label="Remove star"]')).not.toBeNull()
+    expect(ctx.messages.error).toHaveBeenCalledWith('provider refused')
+  })
+
   it.each(['starred', 'unread', 'combined'])('reloads membership and count after changing a non-top %s row', async view => {
     ctx.route.query = view === 'combined' ? { starred: '1', unread: '1' } : { view }
     const top = { ...email('top'), is_starred: 1 }

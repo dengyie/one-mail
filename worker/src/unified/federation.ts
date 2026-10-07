@@ -1,5 +1,9 @@
 import type { Context } from "hono";
-import { fetchShardJson, SHARD_SCOPE_HEADER } from "./shard_client.ts";
+import {
+    createShardResponseBudget, fanOutShardRequests, fetchShardJson,
+    SHARD_LIST_MAX_BYTES, SHARD_DETAIL_MAX_BYTES,
+    type ShardFetchOptions, type ShardCallResult, type ShardRequest,
+} from "./shard_client.ts";
 import {
     groupAccountsByShard,
     hasRemoteShards,
@@ -10,6 +14,8 @@ import {
 } from "./shard_map.ts";
 import {
     MAX_UNIFIED_OFFSET,
+    SHARD_FETCH_TIMEOUT_MS,
+    compareEmailOrder,
     mergeCounts,
     mergeSortedEmailPages,
     mergeStringSets,
@@ -56,31 +62,6 @@ const requestedAccounts = (rest: Record<string, string | undefined>): string[] |
     return uniqueStrings(rest.account_id.split(","));
 };
 
-const shardAccountFilter = (
-    map: ShardMap,
-    shard: ShardEndpoint,
-    rest: Record<string, string | undefined>,
-    owned: string[] | null,
-): { skip: boolean; account_ids: string[] | null } => {
-    const onShard = Object.entries(map.accounts)
-        .filter(([, id]) => id === shard.id)
-        .map(([accountId]) => accountId);
-    let ids = onShard;
-    const requested = requestedAccounts(rest);
-    if (requested) {
-        const reqSet = new Set(requested);
-        ids = ids.filter((id) => reqSet.has(id));
-    }
-    if (owned) {
-        const ownedSet = new Set(owned);
-        ids = ids.filter((id) => ownedSet.has(id));
-    }
-    if (owned && ids.length === 0) return { skip: true, account_ids: [] };
-    if (owned == null && !requested) return { skip: false, account_ids: null };
-    if (ids.length === 0) return { skip: true, account_ids: [] };
-    return { skip: false, account_ids: ids };
-};
-
 export type FederationScope = { account_ids: string[] | null; sources: string[] | null };
 
 const scopedRest = (
@@ -108,17 +89,41 @@ const listOwnedAccountIds = async (c: Context<HonoCustomType>): Promise<string[]
     return accounts ? uniqueStrings(accounts.split(",")) : null;
 };
 
-const scopeForShard = (
-    shard: ShardEndpoint,
-    map: ShardMap,
-    owned: string[] | null,
-    rest: Record<string, string | undefined>,
-): FederationScope => ({
-    account_ids: shardAccountFilter(map, shard, rest, owned).account_ids,
-    sources: rest.source ? uniqueStrings(rest.source.split(",")) : null,
+type ScopedTarget = { shard: ShardEndpoint; scope: FederationScope };
+
+/** Group once by active owner; idle shards and stale copies are never queried. */
+const scopedTargets = (
+    map: ShardMap, rest: Record<string, string | undefined>, owned: string[] | null,
+): ScopedTarget[] => {
+    const requested = requestedAccounts(rest);
+    const requestedSet = requested ? new Set(requested) : null;
+    const candidates = owned ?? requested ?? Object.keys(map.accounts);
+    const grouped = new Map<string, string[]>();
+    for (const id of candidates) {
+        if (!Object.hasOwn(map.accounts, id) || (requestedSet && !requestedSet.has(id))) continue;
+        const owner = map.accounts[id];
+        const ids = grouped.get(owner);
+        if (ids) ids.push(id);
+        else grouped.set(owner, [id]);
+    }
+    const sources = rest.source ? uniqueStrings(rest.source.split(",")) : null;
+    const targets: ScopedTarget[] = [];
+    for (const shard of map.shards) {
+        const ids = grouped.get(shard.id);
+        if (ids?.length) targets.push({ shard, scope: { account_ids: ids, sources } });
+    }
+    return targets;
+};
+
+const requestLimits = (c: Context<HonoCustomType>, maxBodyBytes: number): ShardFetchOptions => ({
+    deadlineAtMs: performance.now() + SHARD_FETCH_TIMEOUT_MS,
+    signal: c.req.raw?.signal,
+    responseBudget: createShardResponseBudget(),
+    maxBodyBytes,
 });
 
-type RemoteList = { results?: UnifiedListRow[]; count?: number | null };
+type RemoteList = { results?: UnifiedListRow[]; count?: number | null; has_more?: boolean; next_cursor?: string | null };
+const MAX_REMOTE_LIST_CALLS = 24;
 
 const localList = async (
     c: Context<HonoCustomType>,
@@ -149,6 +154,72 @@ const localList = async (
     });
 };
 
+const validRemotePage = (data: RemoteList, limit: number): data is RemoteList & { results: UnifiedListRow[] } => {
+    if (!Array.isArray(data.results) || data.results.length > limit) return false;
+    const ids = new Set<string>();
+    for (let index = 0; index < data.results.length; index++) {
+        const row = data.results[index];
+        if (!row || typeof row.id !== "string" || !row.id || !Number.isSafeInteger(row.received_at) || ids.has(row.id)) return false;
+        if (index && compareEmailOrder(data.results[index - 1], row) > 0) return false;
+        ids.add(row.id);
+    }
+    return data.count == null || (Number.isSafeInteger(data.count) && data.count >= 0);
+};
+
+/** Fetch only continuations that can affect the global boundary. Every wire page
+ * has <=100 rows; an offset of 500 does not request 600 rows from every owner. */
+const remoteListPages = async (
+    targets: ScopedTarget[], input: FederatedListInput, local: MergeEmailRow[],
+    needed: number, limits: ShardFetchOptions,
+): Promise<{ pages: MergeEmailRow[][]; counts: (number | null)[]; degraded: string[]; unavailable: string[] }> => {
+    const states = targets.map(target => ({ ...target, rows: [] as UnifiedListRow[], cursor: input.offset === undefined ? input.cursor : undefined,
+        count: null as number | null, more: true, failed: false }));
+    let pending = states;
+    let calls = 0;
+    const pageSize = Math.min(100, needed);
+    while (pending.length) {
+        // At 12 owners, reserve 12 initial COUNTs plus primary auth/query work
+        // below the 50-query interaction budget; continuations never recount.
+        if (calls + pending.length > MAX_REMOTE_LIST_CALLS) { for (const state of pending) state.failed = true; break; }
+        calls += pending.length;
+        const requests: ShardRequest[] = pending.map(state => ({
+            shard: state.shard, path: "/shard/emails", init: {
+                method: "POST", scope: state.scope,
+                body: {
+                    account_ids: state.scope.account_ids, source: input.rest.source,
+                    unread: input.rest.unread, starred: input.rest.starred, q: input.rest.q,
+                    since: input.rest.since, until: input.rest.until, to_addr: input.rest.to_addr,
+                    limit: pageSize, cursor: state.cursor,
+                    with_count: input.withCount && state.rows.length === 0 ? 1 : 0,
+                },
+            },
+        }));
+        const results = await fanOutShardRequests<RemoteList>(requests, limits);
+        for (let index = 0; index < results.length; index++) {
+            const result = results[index];
+            const state = pending[index];
+            if (!result.ok || !validRemotePage(result.data, pageSize)) { state.failed = true; continue; }
+            const rows = result.data.results;
+            const previous = state.rows.at(-1);
+            if (previous && rows.length && compareEmailOrder(previous, rows[0]) >= 0) { state.failed = true; continue; }
+            if (state.rows.length === 0) state.count = result.data.count ?? null;
+            state.rows.push(...rows);
+            state.more = result.data.has_more === true && rows.length === pageSize;
+            const last = rows.at(-1);
+            state.cursor = state.more && last ? encodeEmailCursor(last.received_at, last.id) : undefined;
+        }
+        const merged = mergeSortedEmailPages([local, ...states.map(state => state.rows)], needed);
+        const boundary = merged.length === needed ? merged.at(-1) : undefined;
+        pending = states.filter(state => !state.failed && state.more
+            && (!boundary || compareEmailOrder(state.rows[state.rows.length - 1], boundary) < 0));
+    }
+    return {
+        pages: states.map(state => state.rows), counts: states.map(state => state.count),
+        degraded: states.filter(state => state.failed).map(state => state.shard.id),
+        unavailable: states.filter(state => state.failed).flatMap(state => state.scope.account_ids ?? []),
+    };
+};
+
 /** Remote-map list. Caller must have already confirmed hasRemoteShards(map). */
 export const federatedListEmails = async (
     c: Context<HonoCustomType>,
@@ -164,6 +235,7 @@ export const federatedListEmails = async (
     if (input.offset !== undefined && input.offset > MAX_UNIFIED_OFFSET) {
         return c.json({ error: "offset exceeds 500; use cursor pagination" }, 400);
     }
+    const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     input = { ...input, rest: scopedRest(c, input.rest) };
 
     const fetchLimit = input.offset !== undefined ? input.offset + input.limit : input.limit + 1;
@@ -181,40 +253,14 @@ export const federatedListEmails = async (
     const pages: MergeEmailRow[][] = [local.results];
     const counts: (number | null)[] = [local.count];
 
+    let unavailable: string[] = [];
     if (!skipRemoteForFilter(input.rest)) {
         const owned = await listOwnedAccountIds(c);
-        const remoteResults = await Promise.all(map.shards.map(async (shard) => {
-            const filter = shardAccountFilter(map, shard, input.rest, owned);
-            if (filter.skip) {
-                return { ok: true as const, shard_id: shard.id, data: { results: [] as UnifiedListRow[], count: input.withCount ? 0 : null } };
-            }
-            return fetchShardJson<RemoteList>(shard, "/shard/emails", {
-                method: "POST",
-                scope: scopeForShard(shard, map, owned, input.rest),
-                body: {
-                    account_ids: filter.account_ids,
-                    source: input.rest.source,
-                    unread: input.rest.unread,
-                    starred: input.rest.starred,
-                    q: input.rest.q,
-                    since: input.rest.since,
-                    until: input.rest.until,
-                    to_addr: input.rest.to_addr,
-                    limit: fetchLimit,
-                    cursor: input.offset !== undefined ? undefined : input.cursor,
-                    offset: input.offset !== undefined ? 0 : undefined,
-                    with_count: input.withCount ? 1 : 0,
-                },
-            });
-        }));
-        for (const result of remoteResults) {
-            if (!result.ok) {
-                degraded.push(result.shard_id);
-                continue;
-            }
-            pages.push(result.data.results || []);
-            counts.push(result.data.count ?? null);
-        }
+        const remote = await remoteListPages(scopedTargets(map, input.rest, owned), input, local.results, fetchLimit, limits);
+        pages.push(...remote.pages);
+        counts.push(...remote.counts);
+        degraded.push(...remote.degraded);
+        unavailable = remote.unavailable;
     }
 
     const keep = input.offset !== undefined ? input.limit : input.limit + 1;
@@ -237,7 +283,7 @@ export const federatedListEmails = async (
             ? (input.offset === 0 ? (input.withCount ? (mergeCounts(counts) ?? 0) : null) : 0)
             : (input.cursor ? 0 : (input.withCount ? (mergeCounts(counts) ?? 0) : 0));
 
-    const body: Record<string, unknown> = { results: page, count };
+    const body: Record<string, unknown> = { results: page, count, incomplete, unavailable_mailbox_ids: unavailable };
     if (input.offset === undefined) {
         body.next_cursor = incomplete ? null : nextCursor;
         // Keep the boundary retryable without claiming that the partial page is
@@ -254,71 +300,21 @@ type ScopedShardResult = {
     data: Record<string, unknown> | null;
 };
 
-/** Keep endpoint errors distinct from transport failures; mutation 409 is not a miss. */
-const fetchScopedShard = async (
-    shard: ShardEndpoint,
-    path: string,
-    scope: FederationScope,
-    init: { method?: string; body?: unknown },
-): Promise<ScopedShardResult> => {
-    const url = new URL(`${shard.base_url}${path}`);
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    const unavailable = (): ScopedShardResult => ({ shard_id: shard.id, status: 503, data: null });
-    try {
-        const deadline = new Promise<ScopedShardResult>((resolve) => {
-            timer = setTimeout(() => {
-                controller.abort();
-                if (reader) void reader.cancel().catch(() => {});
-                resolve(unavailable());
-            }, 3000);
-        });
-        const work = async (): Promise<ScopedShardResult> => {
-            const response = await fetch(url.toString(), {
-                method: init.method ?? "GET",
-                headers: {
-                    authorization: `Bearer ${shard.token}`,
-                    "content-type": "application/json",
-                    [SHARD_SCOPE_HEADER]: encodeURIComponent(JSON.stringify(scope)),
-                },
-                redirect: "error",
-                body: init.body === undefined ? undefined : JSON.stringify(init.body),
-                signal: controller.signal,
-            });
-            if (controller.signal.aborted) {
-                void response.body?.cancel().catch(() => {});
-                return unavailable();
-            }
-            const chunks: Uint8Array[] = [];
-            let length = 0;
-            if (response.body) {
-                reader = response.body.getReader();
-                while (true) {
-                    const part = await reader.read();
-                    if (part.done) break;
-                    length += part.value.byteLength;
-                    if (length > 16 * 1024 * 1024) {
-                        void reader.cancel().catch(() => {});
-                        return unavailable();
-                    }
-                    chunks.push(part.value);
-                }
-            }
-            const bytes = new Uint8Array(length);
-            let offset = 0;
-            for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-            const data: unknown = JSON.parse(new TextDecoder().decode(bytes));
-            if (!data || typeof data !== "object" || Array.isArray(data)) return unavailable();
-            return { shard_id: shard.id, status: response.status, data: data as Record<string, unknown> };
-        };
-        return await Promise.race([work(), deadline]);
-    } catch {
-        return unavailable();
-    } finally {
-        clearTimeout(timer);
-    }
+const scopedResult = (result: ShardCallResult<Record<string, unknown>>): ScopedShardResult => {
+    if (!result.ok || Array.isArray(result.data)) return { shard_id: result.shard_id, status: 503, data: null };
+    return { shard_id: result.shard_id, status: result.status ?? 200, data: result.data };
 };
+const scopedRequest = (
+    target: ScopedTarget, path: string, init: { method?: string; body?: unknown },
+): ShardRequest => ({
+    shard: target.shard, path,
+    init: { ...init, scope: target.scope, acceptedStatuses: [400, 403, 404, 409] },
+});
+const fetchScopedShards = async (
+    targets: ScopedTarget[], path: string, init: { method?: string; body?: unknown }, limits: ShardFetchOptions,
+): Promise<ScopedShardResult[]> => (await fanOutShardRequests<Record<string, unknown>>(
+    targets.map(target => scopedRequest(target, path, init)), limits,
+)).map(scopedResult);
 
 const scopedSingleFanOut = async (
     c: Context<HonoCustomType>,
@@ -326,12 +322,11 @@ const scopedSingleFanOut = async (
     path: string,
     init: { method?: string; body?: unknown },
 ): Promise<Response> => {
+    const limits = requestLimits(c, SHARD_DETAIL_MAX_BYTES);
     const owned = await listOwnedAccountIds(c);
     // Query source/account restrictions may narrow access, never replace key scope.
     const rest = scopedRest(c, {});
-    const targets = map.shards.filter((shard) => !shardAccountFilter(map, shard, rest, owned).skip);
-    const results = await Promise.all(targets.map((shard) =>
-        fetchScopedShard(shard, path, scopeForShard(shard, map, owned, rest), init)));
+    const results = await fetchScopedShards(scopedTargets(map, rest, owned), path, init, limits);
     const degraded = results.filter((result) =>
         result.status >= 500 || ![200, 202, 400, 403, 404, 409].includes(result.status))
         .map((result) => result.shard_id);
@@ -354,12 +349,38 @@ export const fanOutGet = (
     path: string,
 ): Promise<Response> => scopedSingleFanOut(c, map, path, {});
 
-export const fanOutApply = (
-    c: Context<HonoCustomType>,
-    map: ShardMap,
-    path: string,
-    init: { method?: string; body?: unknown },
-): Promise<Response> => scopedSingleFanOut(c, map, path, init);
+export type RemoteEmailLocation = {
+    shard: ShardEndpoint | null;
+    emailId: string;
+    accountId: string | null;
+    degraded: string[];
+    duplicate: boolean;
+    rejected: ScopedShardResult | null;
+    primary: boolean;
+    /** The locator and its single mutation consume one interaction budget. */
+    limits: ShardFetchOptions;
+};
+
+const authoritativeEmailResult = (
+    result: ScopedShardResult, target: ScopedTarget, map: ShardMap, emailId: string,
+): ScopedShardResult => {
+    if (result.status < 200 || result.status >= 300) return result;
+    const row = result.data;
+    if (!row || row.id !== emailId || typeof row.account_id !== "string" || typeof row.source !== "string") {
+        return { shard_id: result.shard_id, status: 503, data: null };
+    }
+    // A readable migration copy is still not an owner. UUID equality alone is
+    // insufficient; active mailbox ownership and the native-mail boundary win.
+    if (row.source === "cf_routing" || !Object.hasOwn(map.accounts, row.account_id)
+        || map.accounts[row.account_id] !== target.shard.id) {
+        return { shard_id: result.shard_id, status: 404, data: null };
+    }
+    const allowed = new Set(target.scope.account_ids);
+    if (!allowed.has(row.account_id) || (target.scope.sources && !target.scope.sources.includes(row.source))) {
+        return { shard_id: result.shard_id, status: 403, data: { error: "forbidden" } };
+    }
+    return result;
+};
 
 /**
  * Preflight all mapped owners before a mutation. A shard outage is not allowed
@@ -369,23 +390,35 @@ export const locateRemoteEmailOwner = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
     emailPath: string,
-): Promise<{ shard: ShardEndpoint | null; degraded: string[]; duplicate: boolean; rejected: ScopedShardResult | null; primary: boolean }> => {
+): Promise<RemoteEmailLocation> => {
+    const emailId = c.req.param("id") ?? "";
+    const limits = requestLimits(c, SHARD_DETAIL_MAX_BYTES);
+    if (!emailId || emailPath !== `/shard/emails/${encodeURIComponent(emailId)}`) {
+        return { shard: null, emailId, accountId: null, limits, degraded: [], duplicate: false, primary: false,
+            rejected: { shard_id: "primary", status: 400, data: { error: "invalid email id" } } };
+    }
     const owned = await listOwnedAccountIds(c);
     const rest = scopedRest(c, {});
     const exclude = excludeRemoteSql(map);
     const primaryRow = await c.env.DB.prepare(
         `SELECT source, account_id, to_addr FROM emails WHERE id = ? AND ${exclude.sql}`,
-    ).bind(c.req.param("id"), ...exclude.params).first<{ source?: string | null; account_id?: string | null; to_addr?: string | null }>();
-    if (primaryRow) return { shard: null, degraded: [], duplicate: false, rejected: null, primary: true };
-    const targets = map.shards.filter((shard) => !shardAccountFilter(map, shard, rest, owned).skip);
-    const results = await Promise.all(targets.map(async (shard) => ({
-        shard,
-        result: await fetchScopedShard(shard, emailPath, scopeForShard(shard, map, owned, rest), {}),
-    })));
+    ).bind(emailId, ...exclude.params).first<{ source?: string | null; account_id?: string | null; to_addr?: string | null }>();
+    if (primaryRow) return { shard: null, emailId, accountId: null, limits, degraded: [], duplicate: false, rejected: null, primary: true };
+    const targets = scopedTargets(map, rest, owned);
+    const fetched = await fetchScopedShards(targets, emailPath, {}, limits);
+    const results = fetched.map((result, index) => ({
+        shard: targets[index].shard,
+        result: authoritativeEmailResult(result, targets[index], map, emailId),
+    }));
     const degraded = results.filter(({ result }) => result.status >= 500).map(({ shard }) => shard.id);
     const hits = results.filter(({ result }) => result.status >= 200 && result.status < 300);
-    const rejected = results.find(({ result }) => [400, 403, 409].includes(result.status))?.result ?? null;
-    return { shard: hits.length === 1 ? hits[0].shard : null, degraded, duplicate: hits.length > 1, rejected, primary: !!primaryRow };
+    // An unrelated shard may reject an orphan copy because its scope excludes
+    // that mailbox. A validated owner hit already proves row authorization.
+    const rejected = hits.length ? null : results.find(({ result }) => [400, 403, 409].includes(result.status))?.result ?? null;
+    const hit = hits.length === 1 ? hits[0] : null;
+    const accountId = hit?.result.data?.account_id;
+    return { shard: hit?.shard ?? null, emailId, accountId: typeof accountId === "string" ? accountId : null,
+        limits, degraded, duplicate: hits.length > 1, rejected, primary: false };
 };
 
 export const applyToShard = async (
@@ -394,10 +427,24 @@ export const applyToShard = async (
     shard: ShardEndpoint,
     path: string,
     init: { method?: string; body?: unknown },
+    location: RemoteEmailLocation,
 ): Promise<Response> => {
+    const match = /^\/shard\/emails\/([^/]+)(?:\/(?:read|unread|star|move))?$/.exec(path);
+    const expectedPath = `/shard/emails/${encodeURIComponent(location.emailId)}`;
+    if (!match || (path !== expectedPath && !path.startsWith(`${expectedPath}/`))
+        || location.shard?.id !== shard.id || !location.accountId || location.duplicate || location.degraded.length
+        || map.accounts[location.accountId] !== shard.id) {
+        return c.json({ error: "email owner changed" }, 409);
+    }
+    const limits = location.limits;
     const owned = await listOwnedAccountIds(c);
     const rest = scopedRest(c, {});
-    const result = await fetchScopedShard(shard, path, scopeForShard(shard, map, owned, rest), init);
+    const target = scopedTargets(map, rest, owned).find(target => target.shard.id === shard.id);
+    if (!target || !target.scope.account_ids?.includes(location.accountId)) return c.json({ error: "forbidden" }, 403);
+    // Re-read permissions, then bind the write to this exact mailbox. A changed
+    // row on the same shard cannot broaden the authorization from the locator.
+    const request = scopedRequest({ ...target, scope: { ...target.scope, account_ids: [location.accountId] } }, path, init);
+    const result = scopedResult(await fetchShardJson<Record<string, unknown>>(shard, path, { ...limits, ...request.init }));
     if (result.status >= 200 && result.status < 300 && result.data) return c.json(result.data, result.status as 200 | 202);
     if ([400, 403, 404, 409].includes(result.status) && result.data) return c.json(result.data, result.status as 400 | 403 | 404 | 409);
     return c.json({ error: "shard unavailable", degraded: [shard.id] }, 503);
@@ -431,26 +478,22 @@ const queryStringForShard = (
 };
 
 type FanOutOk<T> = { ok: true; shard_id: string; data: T };
-type FanOutFail = { ok: false; shard_id: string; error: string };
 
 const fanOutExtra = async <T>(
     c: Context<HonoCustomType>,
     map: ShardMap,
     path: string,
     rest: Record<string, string | undefined>,
+    limits: ShardFetchOptions,
 ): Promise<{ results: FanOutOk<T>[]; degraded: string[] }> => {
     const degraded: string[] = [];
     const results: FanOutOk<T>[] = [];
     rest = scopedRest(c, rest);
     if (skipRemoteForFilter(rest)) return { results, degraded };
     const owned = await listOwnedAccountIds(c);
-    const remote = await Promise.all(map.shards.map(async (shard) => {
-        const filter = shardAccountFilter(map, shard, rest, owned);
-        if (filter.skip) return { ok: true as const, shard_id: shard.id, data: null as T };
-        return fetchShardJson<T>(shard, `${path}${queryStringForShard(rest, null)}`, {
-            scope: scopeForShard(shard, map, owned, rest),
-        });
-    }));
+    const remote = await fanOutShardRequests<T>(scopedTargets(map, rest, owned).map(target => ({
+        shard: target.shard, path: `${path}${queryStringForShard(rest, null)}`, init: { scope: target.scope },
+    })), limits);
     for (const result of remote) {
         if (!result.ok) {
             degraded.push(result.shard_id);
@@ -471,11 +514,12 @@ export const federatedCount = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
 ): Promise<Response> => {
+    const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     const rest = c.req.query();
     const scoped = await localScopedWhere(c, map, rest);
     const localCount = await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${scoped.where}`)
         .bind(...scoped.params).first("count");
-    const { results, degraded } = await fanOutExtra<{ count?: number }>(c, map, "/shard/count", rest);
+    const { results, degraded } = await fanOutExtra<{ count?: number }>(c, map, "/shard/count", rest, limits);
     const count = mergeCounts([
         Number(localCount || 0),
         ...results.map((result) => result.data.count ?? 0),
@@ -487,6 +531,7 @@ export const federatedStats = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
 ): Promise<Response> => {
+    const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     const rest = c.req.query();
     const scoped = await localScopedWhere(c, map, rest);
     const local = await c.env.DB.prepare(
@@ -494,7 +539,7 @@ export const federatedStats = async (
                 COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread
          FROM emails WHERE ${scoped.where}`,
     ).bind(...scoped.params).first() as { count?: number | string; unread?: number | string } | null;
-    const { results, degraded } = await fanOutExtra<{ count?: number; unread?: number }>(c, map, "/shard/stats", rest);
+    const { results, degraded } = await fanOutExtra<{ count?: number; unread?: number }>(c, map, "/shard/stats", rest, limits);
     let count = Number(local?.count || 0);
     let unread = Number(local?.unread || 0);
     for (const result of results) {
@@ -516,6 +561,7 @@ export const federatedVerifCodes = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
 ): Promise<Response> => {
+    const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     const q = c.req.query();
     const addr = typeof q.addr === "string" ? q.addr.trim() : "";
     const scoped = await localScopedWhere(c, map, { ...q, addr: undefined });
@@ -548,7 +594,7 @@ export const federatedVerifCodes = async (
         };
     }).filter((row) => row.code);
 
-    const { results, degraded } = await fanOutExtra<{ results?: VerifRow[] }>(c, map, "/shard/verifcodes", q);
+    const { results, degraded } = await fanOutExtra<{ results?: VerifRow[] }>(c, map, "/shard/verifcodes", q, limits);
     const merged: VerifRow[] = [...localOut];
     for (const result of results) merged.push(...(result.data.results || []));
     merged.sort((a, b) => Number(b.received_at || 0) - Number(a.received_at || 0));
@@ -569,6 +615,7 @@ export const federatedMeta = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
 ): Promise<Response> => {
+    const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     const scoped = await localScopedWhere(c, map, {});
     const [sourceRes, accountRes, toAddrRes] = await Promise.all([
         c.env.DB.prepare(`SELECT DISTINCT source FROM emails WHERE ${scoped.where} AND source IS NOT NULL LIMIT 50`).bind(...scoped.params).all<{ source: string }>(),
@@ -579,7 +626,7 @@ export const federatedMeta = async (
         sources?: string[];
         accounts?: string[];
         to_addrs?: string[];
-    }>(c, map, "/shard/meta", {});
+    }>(c, map, "/shard/meta", {}, limits);
     return c.json(withDegraded({
         sources: mergeStringSets([
             (sourceRes.results || []).map((row) => row.source),
@@ -600,13 +647,14 @@ export const federatedFolders = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
 ): Promise<Response> => {
+    const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     const localRes = await listFolders(c);
     const local = await localRes.json() as { results?: Array<{ account_id?: string }>; error?: string };
     if (localRes.status !== 200) return localRes;
     const remoteIds = new Set(remoteAccountIds(map));
     const localRows = (local.results || []).filter((row) => !row.account_id || !remoteIds.has(row.account_id));
     const rest = c.req.query();
-    const { results, degraded } = await fanOutExtra<{ results?: unknown[] }>(c, map, "/shard/folders", rest);
+    const { results, degraded } = await fanOutExtra<{ results?: unknown[] }>(c, map, "/shard/folders", rest, limits);
     const merged = [...localRows];
     for (const result of results) merged.push(...((result.data.results || []) as typeof localRows));
     return c.json(withDegraded({ results: merged }, degraded));
@@ -661,16 +709,13 @@ export const purgeShardAccounts = async (
 ): Promise<boolean> => {
     const grouped = groupAccountsByShard(map, accountIds);
     if (grouped.size === 0) return true;
-    const tasks: Promise<FanOutOk<{ ok?: boolean; account_ids?: unknown; deleted?: unknown }> | FanOutFail>[] = [];
+    const requests: ShardRequest[] = [];
     for (const [shardId, ids] of grouped) {
         const shard = shardById(map, shardId);
         if (!shard) return false;
-        tasks.push(fetchShardJson(shard, "/shard/accounts/purge", {
-            method: "POST",
-            body: { account_ids: ids },
-        }));
+        requests.push({ shard, path: "/shard/accounts/purge", init: { method: "POST", body: { account_ids: ids } } });
     }
-    const results = await Promise.all(tasks);
+    const results = await fanOutShardRequests<{ ok?: boolean; account_ids?: unknown; deleted?: unknown }>(requests, { maxBodyBytes: SHARD_LIST_MAX_BYTES });
     return results.every((result) => {
         if (!result.ok || !result.data || result.data.ok !== true) return false;
         const ids = Array.isArray(result.data.account_ids)

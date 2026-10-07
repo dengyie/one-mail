@@ -26,8 +26,11 @@ import { attachD1Quota, flushD1Quota, isShardMode, maybeFlushD1Quota } from './c
 import { serializeError } from './core/error_serialization.ts';
 import { PasskeyChallengeDurableObject } from './user_api/passkey_challenge_do.ts';
 import { D1QuotaCoordinatorDurableObject } from './core/d1_quota_coordinator_do.ts';
+import { FleetRegistryDurableObject } from './fleet/registry_do.ts';
+import fleetApi from './fleet/routes.ts';
+import { deployedFleetMode } from './fleet/mode.ts';
 
-export { PasskeyChallengeDurableObject, D1QuotaCoordinatorDurableObject };
+export { PasskeyChallengeDurableObject, D1QuotaCoordinatorDurableObject, FleetRegistryDurableObject };
 
 const API_PATHS = [
 	"/api/",
@@ -410,6 +413,15 @@ const scheduleQuotaFlush = (env: Bindings, ctx: ExecutionContext): void => {
 
 export default {
 	async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
+		try { deployedFleetMode(env); }
+		catch {
+			return Response.json({ ok: false, error_code: "MODE_DISABLED", retryable: false, request_id: crypto.randomUUID() }, { status: 503 });
+		}
+		// Service credentials are independent of browser and email API credentials.
+		// Handle this before ASSETS and global browser-password middleware.
+		if (!isShardMode(env) && new URL(request.url).pathname.startsWith('/internal/fleet/')) {
+			return fleetApi.fetch(request, env, ctx);
+		}
 		const instrumented = withQuotaEnv(env);
 		try {
 			if (isShardMode(instrumented)) {
@@ -435,6 +447,11 @@ export default {
 		}
 	},
 	async email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
+		try { deployedFleetMode(env); }
+		catch {
+			message.setReject("unsupported fleet mode; data routing is unavailable");
+			return;
+		}
 		if (isShardMode(env)) {
 			message.setReject("shard worker does not accept Email Routing");
 			return;
@@ -447,6 +464,7 @@ export default {
 		}
 	},
 	async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+		deployedFleetMode(env);
 		const instrumented = withQuotaEnv(env);
 		try {
 			return await scheduled(event, instrumented, ctx);

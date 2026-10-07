@@ -14,7 +14,7 @@
 
 export const D1_ROWS_READ_LIMIT = 5_000_000;
 export const D1_ROWS_WRITTEN_LIMIT = 100_000;
-export const D1_QUOTA_FLUSH_INTERVAL_MS = 120_000;
+export const D1_QUOTA_FLUSH_INTERVAL_MS = 300_000;
 export const D1_QUOTA_ATTEMPT_INTERVAL_MS = 30_000;
 export const D1_QUOTA_KV_PREFIX = "one-mail:d1quota:";
 export const D1_QUOTA_COORDINATOR_PATH = "/quota/delta";
@@ -47,6 +47,9 @@ export type D1QuotaView = {
     flushed_at: number | null;
     flush_count: number;
     aggregation_mode: "durable_object" | "best_effort_kv" | "unavailable";
+    // D1 meta cannot cover account-wide management/other-project queries.
+    confidence: "partial" | "stale";
+    accounting_issues: string[];
 };
 
 export type QuotaClock = { now(): number };
@@ -60,6 +63,8 @@ let lastSuccessfulWriteAt: number | null = null;
 let flushInFlight: Promise<D1QuotaSnapshot> | null = null;
 const coordinatorDeltaByDate = new Map<string, { id: string; delta: QuotaDelta }>();
 let clock: QuotaClock = defaultClock;
+const accountingIssues = new Set<string>();
+const missingSnapshots = new Set<string>();
 
 type QuotaCoordinatorNamespace = {
     getByName(name: string): { fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> };
@@ -77,6 +82,7 @@ export class QuotaTelemetryError extends Error {
     readonly shard_id: string;
     readonly utc_date: string;
     readonly key: string;
+    readonly status?: number;
 
     constructor(
         operation: "get" | "put" | "parse" | "coordinator",
@@ -84,6 +90,7 @@ export class QuotaTelemetryError extends Error {
         utc_date: string,
         key: string,
         cause: unknown,
+        status?: number,
     ) {
         super(`D1 quota telemetry ${operation} failed for ${shard_id}/${utc_date} (${key})`, { cause });
         this.name = "QuotaTelemetryError";
@@ -91,13 +98,24 @@ export class QuotaTelemetryError extends Error {
         this.shard_id = shard_id;
         this.utc_date = utc_date;
         this.key = key;
+        this.status = status;
     }
 }
 
-const toNonNegInt = (value: unknown): number => {
-    const n = Number(value);
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    return Math.floor(n);
+const isSafeCounter = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+const checkedSum = (left: number, right: number): number => {
+    if (!isSafeCounter(left) || !isSafeCounter(right) || !Number.isSafeInteger(left + right)) {
+        throw new RangeError("D1 quota counter is invalid or exceeds safe integer range");
+    }
+    return left + right;
+};
+
+const metaCounter = (value: unknown): number => {
+    if (isSafeCounter(value)) return value;
+    accountingIssues.add("INVALID_META");
+    return 0;
 };
 
 export const utcDateOf = (ms: number): string =>
@@ -109,16 +127,18 @@ export const d1QuotaKvKey = (utcDate: string): string =>
 export const metaDelta = (
     meta: { rows_read?: number; rows_written?: number } | null | undefined,
 ): QuotaDelta => ({
-    rows_read: toNonNegInt(meta?.rows_read),
-    rows_written: toNonNegInt(meta?.rows_written),
+    rows_read: metaCounter(meta?.rows_read),
+    rows_written: metaCounter(meta?.rows_written),
 });
 
 const resultDelta = (result: { meta?: { rows_read?: number; rows_written?: number } } | null | undefined): QuotaDelta =>
     metaDelta(result?.meta);
 
 export const addQuotaDelta = (target: QuotaDelta, extra: QuotaDelta): QuotaDelta => {
-    target.rows_read += extra.rows_read;
-    target.rows_written += extra.rows_written;
+    const reads = checkedSum(target.rows_read, extra.rows_read);
+    const writes = checkedSum(target.rows_written, extra.rows_written);
+    target.rows_read = reads;
+    target.rows_written = writes;
     return target;
 };
 
@@ -136,6 +156,8 @@ export const resetD1QuotaStateForTests = (nextClock: QuotaClock = defaultClock):
     lastSuccessfulWriteAt = null;
     flushInFlight = null;
     coordinatorDeltaByDate.clear();
+    accountingIssues.clear();
+    missingSnapshots.clear();
     clock = nextClock;
 };
 
@@ -151,7 +173,14 @@ export const recordD1Quota = (delta: QuotaDelta): void => {
         pending = { rows_read: 0, rows_written: 0 };
         pendingByDate.set(utcDate, pending);
     }
-    addQuotaDelta(pending, delta);
+    try {
+        addQuotaDelta(pending, delta);
+    } catch (cause) {
+        if (!(cause instanceof RangeError)) throw cause;
+        // The D1 operation has already succeeded. Mark its incomplete telemetry
+        // instead of turning a committed business write into an apparent failure.
+        accountingIssues.add("COUNTER_OVERFLOW");
+    }
 };
 
 const emptySnapshot = (shardId: string, utcDate: string): D1QuotaSnapshot => ({
@@ -165,7 +194,10 @@ const emptySnapshot = (shardId: string, utcDate: string): D1QuotaSnapshot => ({
 });
 
 const parseSnapshot = (raw: string | null, shardId: string, utcDate: string): D1QuotaSnapshot => {
-    if (raw === null) return emptySnapshot(shardId, utcDate);
+    if (raw === null) {
+        missingSnapshots.add(utcDate);
+        return emptySnapshot(shardId, utcDate);
+    }
     try {
         const parsed = JSON.parse(raw) as Partial<D1QuotaSnapshot> | null;
         const isCounter = (value: unknown): value is number =>
@@ -175,6 +207,7 @@ const parseSnapshot = (raw: string | null, shardId: string, utcDate: string): D1
             || !isCounter(parsed.flushed_at) || !isCounter(parsed.flush_count)) {
             throw new TypeError("Invalid D1 quota snapshot schema or shard/date identity");
         }
+        missingSnapshots.delete(utcDate);
         return parsed as D1QuotaSnapshot;
     } catch (cause) {
         throw new QuotaTelemetryError("parse", shardId, utcDate, d1QuotaKvKey(utcDate), cause);
@@ -352,13 +385,24 @@ const coordinatorSnapshot = async (
     }
     if (!response.ok) {
         const cause = new Error(`coordinator returned HTTP ${response.status}`);
+        let expired = false;
+        if (response.status === 410) {
+            try {
+                const payload = await response.json() as { error_code?: string } | null;
+                expired = payload?.error_code === "QUOTA_DELTA_EXPIRED";
+            } catch (parseCause) {
+                throw new QuotaTelemetryError("coordinator", shardId, utcDate, `${D1_QUOTA_COORDINATOR_PATH}/${shardId}`, parseCause);
+            }
+        }
+        throw new QuotaTelemetryError("coordinator", shardId, utcDate, `${D1_QUOTA_COORDINATOR_PATH}/${shardId}`, cause, expired ? 410 : undefined);
+    }
+    try {
+        const payload = await response.json() as { snapshot?: D1QuotaSnapshot } | null;
+        if (!payload?.snapshot) throw new TypeError("missing coordinator snapshot");
+        return parseSnapshot(JSON.stringify(payload.snapshot), shardId, utcDate);
+    } catch (cause) {
         throw new QuotaTelemetryError("coordinator", shardId, utcDate, `${D1_QUOTA_COORDINATOR_PATH}/${shardId}`, cause);
     }
-    const payload = await response.json() as { snapshot?: D1QuotaSnapshot };
-    if (!payload.snapshot) {
-        throw new QuotaTelemetryError("coordinator", shardId, utcDate, `${D1_QUOTA_COORDINATOR_PATH}/${shardId}`, new TypeError("missing coordinator snapshot"));
-    }
-    return payload.snapshot;
 };
 
 const readCoordinatorSnapshot = async (
@@ -373,9 +417,11 @@ const readCoordinatorSnapshot = async (
             `https://quota-coordinator${D1_QUOTA_COORDINATOR_PATH}?utc_date=${encodeURIComponent(utcDate)}&shard_id=${encodeURIComponent(shardId)}`,
         );
         if (!response.ok) throw new Error(`coordinator returned HTTP ${response.status}`);
-        const payload = await response.json() as { snapshot?: D1QuotaSnapshot };
+        const payload = await response.json() as { snapshot?: D1QuotaSnapshot; available?: boolean };
         if (!payload.snapshot) throw new TypeError("missing coordinator snapshot");
-        return rememberSnapshot(parseSnapshot(JSON.stringify(payload.snapshot), shardId, utcDate));
+        const snapshot = rememberSnapshot(parseSnapshot(JSON.stringify(payload.snapshot), shardId, utcDate));
+        if (payload.available === false) missingSnapshots.add(utcDate);
+        return snapshot;
     } catch (cause) {
         throw new QuotaTelemetryError("coordinator", shardId, utcDate, `${D1_QUOTA_COORDINATOR_PATH}/${shardId}`, cause);
     }
@@ -391,7 +437,20 @@ const commitCoordinatedFlush = async (env: Bindings, utcDate: string): Promise<D
         batch = { id: `${utcDate}:${crypto.randomUUID()}`, delta: { ...pending } };
         coordinatorDeltaByDate.set(utcDate, batch);
     }
-    const result = await coordinatorSnapshot(env, utcDate, batch.delta, batch.id);
+    let result: D1QuotaSnapshot;
+    try {
+        result = await coordinatorSnapshot(env, utcDate, batch.delta, batch.id);
+    } catch (cause) {
+        if (cause instanceof QuotaTelemetryError && cause.status === 410) {
+            // This day can never be accepted after server-side marker cleanup.
+            // Report the loss and release the expired head, so the next attempt
+            // can deliver current-day deltas instead of retrying forever.
+            accountingIssues.add("EXPIRED_DELTA");
+            pendingByDate.delete(utcDate);
+            coordinatorDeltaByDate.delete(utcDate);
+        }
+        throw cause;
+    }
     pending.rows_read -= batch.delta.rows_read;
     pending.rows_written -= batch.delta.rows_written;
     if (pending.rows_read === 0 && pending.rows_written === 0) pendingByDate.delete(utcDate);
@@ -429,10 +488,10 @@ const commitFlush = async (env: Bindings): Promise<D1QuotaSnapshot> => {
         v: 1,
         shard_id: shardId,
         utc_date: utcDate,
-        rows_read: current.rows_read + delta.rows_read,
-        rows_written: current.rows_written + delta.rows_written,
+        rows_read: checkedSum(current.rows_read, delta.rows_read),
+        rows_written: checkedSum(current.rows_written, delta.rows_written),
         flushed_at: now,
-        flush_count: current.flush_count + 1,
+        flush_count: checkedSum(current.flush_count, 1),
     };
     const key = d1QuotaKvKey(utcDate);
     try {
@@ -462,8 +521,13 @@ export const viewD1Quota = async (env: Bindings): Promise<D1QuotaView> => {
         aggregation_mode = "best_effort_kv";
     }
     const pending = pendingByDate.get(utcDate) ?? { rows_read: 0, rows_written: 0 };
-    const rows_read = stored.rows_read + pending.rows_read;
-    const rows_written = stored.rows_written + pending.rows_written;
+    const rows_read = checkedSum(stored.rows_read, pending.rows_read);
+    const rows_written = checkedSum(stored.rows_written, pending.rows_written);
+    const issues = new Set(accountingIssues);
+    if (aggregation_mode === "unavailable") issues.add("UNAVAILABLE");
+    if (missingSnapshots.has(utcDate)) issues.add("MISSING_SNAPSHOT");
+    const stale = stored.flushed_at > 0 && (clock.now() - stored.flushed_at > 900_000 || stored.flushed_at > clock.now());
+    if (stale) issues.add("STALE_SNAPSHOT");
     return {
         shard_id: shardId,
         utc_date: utcDate,
@@ -477,5 +541,7 @@ export const viewD1Quota = async (env: Bindings): Promise<D1QuotaView> => {
         flushed_at: stored.flushed_at > 0 ? stored.flushed_at : null,
         flush_count: stored.flush_count,
         aggregation_mode,
+        confidence: stale ? "stale" : "partial",
+        accounting_issues: [...issues],
     };
 };

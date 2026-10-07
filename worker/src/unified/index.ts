@@ -28,7 +28,6 @@ import {
     federatedMeta,
     federatedFolders,
     fanOutGet,
-    fanOutApply,
     locateRemoteEmailOwner,
     applyToShard,
     hasRemoteShards,
@@ -256,7 +255,7 @@ const applyIfExists = async (
     if (owner.duplicate) return c.json({ error: "duplicate email owners" }, 409);
     if (owner.degraded.length) return c.json({ error: "shard unavailable", degraded: owner.degraded }, 503);
     if (owner.rejected?.data) return c.json(owner.rejected.data, owner.rejected.status as 400 | 403 | 409);
-    if (owner.shard) return applyToShard(c, map, owner.shard, shardPath, { method, body });
+    if (owner.shard) return applyToShard(c, map, owner.shard, shardPath, { method, body }, owner);
     if (!owner.primary && !owner.degraded.length) {
         return c.json({ error: "not found" }, 404);
     }
