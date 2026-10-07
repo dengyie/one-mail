@@ -42,14 +42,9 @@ api.get('/user_api/mail_service_quota', mail_service_quota.getMailServiceQuotaSt
 
 // user external mail accounts（自助接入外部邮箱归集）
 api.get('/user_api/mail_accounts', mail_accounts.list);
-api.post('/user_api/mail_accounts', async (c) => {
-    const body = await c.req.raw.clone().json().catch(() => null);
-    if (!validateMailAccountCreateTarget(body)) {
-        const msgs = i18n.getMessagesbyContext(c);
-        return c.text(msgs.InvalidInputMsg, 400);
-    }
-    return mail_accounts.create(c);
-});
+api.post('/user_api/mail_accounts', mail_accounts.create);
+api.post('/user_api/mail_accounts/discover', mail_accounts.discover);
+api.post('/user_api/mail_accounts/smart-connect', mail_accounts.smartConnect);
 api.delete('/user_api/mail_accounts/:id', mail_accounts.remove);
 api.post('/user_api/mail_accounts/:id/toggle', mail_accounts.toggle);
 api.post('/user_api/mail_accounts/:id/test-connection', mail_accounts.testConnection);

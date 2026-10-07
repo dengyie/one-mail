@@ -5,6 +5,8 @@ type MailTargetPolicyInput = {
     port: number;
     pop3Host: string | null;
     pop3Port: number | null;
+    smtpHost?: string | null;
+    smtpPort?: number | null;
 };
 
 type PresetTarget = {
@@ -128,6 +130,7 @@ export const validateMailTargetPolicy = (input: MailTargetPolicyInput): boolean 
     if (input.source === "imap_custom") {
         if (!isSafeCustomMailHost(input.host)) return false;
         if (input.pop3Host && !isSafeCustomMailHost(input.pop3Host)) return false;
+        if (input.smtpHost && !isSafeCustomMailHost(input.smtpHost)) return false;
         return true;
     }
 
@@ -138,6 +141,7 @@ export const validateMailTargetPolicy = (input: MailTargetPolicyInput): boolean 
     }
     if (input.pop3Host && normalizeHost(input.pop3Host) !== preset.pop3Host) return false;
     if (input.pop3Port != null && input.pop3Port !== preset.pop3Port) return false;
+    if (input.smtpHost && !isSafeCustomMailHost(input.smtpHost)) return false;
     return true;
 };
 
@@ -164,6 +168,14 @@ export const validateMailAccountCreateTarget = (value: unknown): boolean => {
         return false;
     }
 
+    const requestedSmtpHost = body.smtp_host == null
+        ? null
+        : typeof body.smtp_host === "string" ? body.smtp_host.trim() : undefined;
+    const requestedSmtpPort = parseOptionalPort(body.smtp_port);
+    if (requestedSmtpHost === undefined || requestedSmtpPort === undefined) {
+        return false;
+    }
+
     const host = (typeof body.host === "string" ? body.host.trim() : "")
         || (protocol === "pop3" ? requestedPop3Host || "" : "");
     const port = requestedPort ?? (protocol === "pop3" ? requestedPop3Port : null);
@@ -178,5 +190,7 @@ export const validateMailAccountCreateTarget = (value: unknown): boolean => {
         port,
         pop3Host,
         pop3Port,
+        smtpHost: requestedSmtpHost,
+        smtpPort: requestedSmtpPort,
     });
 };

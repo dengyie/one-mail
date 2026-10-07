@@ -12,7 +12,7 @@ import socket
 from typing import Iterable
 
 from .config import AccountConfig
-from .proxy_client import is_overseas_imap_host, is_overseas_smtp_host
+from .proxy_client import is_overseas_imap_host, is_overseas_smtp_host, should_use_proxy
 
 
 class UnsafeMailTargetError(ValueError):
@@ -75,7 +75,7 @@ def _resolved_ips(host: str, port: int) -> Iterable[ipaddress._BaseAddress]:
             yield ip
 
 
-def assert_public_mail_host(host: str, port: int) -> None:
+def assert_public_mail_host(host: str, port: int, proxy_policy: str = "auto") -> None:
     if not isinstance(host, str) or not host.strip():
         raise UnsafeMailTargetError("mail target host is missing")
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
@@ -94,7 +94,7 @@ def assert_public_mail_host(host: str, port: int) -> None:
     if _is_reserved_test_name(normalized):
         return
 
-    if is_overseas_imap_host(normalized) or is_overseas_smtp_host(normalized):
+    if should_use_proxy(normalized, proxy_policy):
         return
 
     for ip in _resolved_ips(normalized, port):
@@ -104,13 +104,16 @@ def assert_public_mail_host(host: str, port: int) -> None:
 
 def assert_public_user_account(account: AccountConfig) -> None:
     """Validate every network destination a user account may connect to."""
-    assert_public_mail_host(account.host, account.port)
+    policy = getattr(account, "proxy_policy", "auto")
+    assert_public_mail_host(account.host, account.port, policy)
 
     if account.protocol in {"auto", "pop3"}:
         pop3_host = account.resolve_pop3_host()
         pop3_port = account.resolve_pop3_port()
         if (pop3_host.rstrip(".").lower(), pop3_port) != (account.host.rstrip(".").lower(), account.port):
-            assert_public_mail_host(pop3_host, pop3_port)
+            assert_public_mail_host(pop3_host, pop3_port, policy)
 
-    if getattr(account, "can_send", False) and getattr(account, "smtp_host", None) and getattr(account, "smtp_port", None):
-        assert_public_mail_host(account.smtp_host, account.smtp_port)
+    if getattr(account, "can_send", False):
+        smtp_h, smtp_p, _ = account.resolve_smtp_endpoint()
+        if smtp_h and smtp_p:
+            assert_public_mail_host(smtp_h, smtp_p, policy)

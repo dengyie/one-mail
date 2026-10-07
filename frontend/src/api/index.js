@@ -472,6 +472,8 @@ export const api = {
             };
         },
         create: (body) => siteClient.post('/user_api/mail_accounts', { body: normalizeMailAccountBody(body) }),
+        discover: (email) => siteClient.post('/user_api/mail_accounts/discover', { body: { email } }),
+        smartConnect: (body) => siteClient.post('/user_api/mail_accounts/smart-connect', { body }),
         remove: (id) => siteClient.delete(`/user_api/mail_accounts/${encodeURIComponent(id)}`),
         toggle: (id) => siteClient.post(`/user_api/mail_accounts/${encodeURIComponent(id)}/toggle`),
         // 管理员发送开关（x-admin-auth）：仅管理员可把外部账号置为可发（can_send）。

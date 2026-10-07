@@ -24,6 +24,7 @@ from .proxy_client import (
     create_socks5_socket,
     OVERSEAS_SMTP_HOSTS,
     is_overseas_smtp_host,
+    should_use_proxy,
 )
 from .sync import default_client_factory
 
@@ -74,26 +75,12 @@ class ReconcileError(RuntimeError):
 
 
 def _resolve_smtp_endpoint(account: AccountConfig) -> tuple[str, int, bool]:
-    """Return (host, port, use_ssl) for the account's SMTP send path.
-
-    Explicit smtp_host / smtp_port on the account override any per-source default.
-    Port 465 universally defaults to SSL, while 587 / 25 default to STARTTLS.
-    """
-    source = str(account.source or "").strip().lower()
-    defaults = SMTP_DEFAULTS.get(source, ("", 0, False))
-    host = account.smtp_host or defaults[0]
-    port = account.smtp_port or defaults[1]
-    if port == 465:
-        use_ssl = True
-    elif port in (587, 25):
-        use_ssl = False
-    else:
-        use_ssl = bool(defaults[2])
-    return host, port, use_ssl
+    """Return (host, port, use_ssl) for the account's SMTP send path."""
+    return account.resolve_smtp_endpoint()
 
 
-def _use_proxy(host: str) -> bool:
-    return is_overseas_smtp_host(host)
+def _use_proxy(host: str, proxy_policy: str = "auto") -> bool:
+    return should_use_proxy(host, proxy_policy)
 
 
 class _ProxySMTP_SSL(smtplib.SMTP_SSL):
@@ -117,16 +104,16 @@ class _ProxySMTP(smtplib.SMTP):
         return create_socks5_socket(self.proxy_host, self.proxy_port, host, port, timeout)
 
 
-def _connect_smtp_ssl(host: str, port: int, timeout: float) -> smtplib.SMTP_SSL:
+def _connect_smtp_ssl(host: str, port: int, timeout: float, proxy_policy: str = "auto") -> smtplib.SMTP_SSL:
     """Create an SMTP_SSL connection, optionally via SOCKS5 for overseas hosts."""
-    if _use_proxy(host):
+    if _use_proxy(host, proxy_policy):
         return _ProxySMTP_SSL(host, port, timeout=timeout)
     return smtplib.SMTP_SSL(host, port, timeout=timeout)
 
 
-def _connect_smtp_starttls(host: str, port: int, timeout: float) -> smtplib.SMTP:
+def _connect_smtp_starttls(host: str, port: int, timeout: float, proxy_policy: str = "auto") -> smtplib.SMTP:
     """Create a plain SMTP connection, then upgrade to STARTTLS. Proxy-aware."""
-    if _use_proxy(host):
+    if _use_proxy(host, proxy_policy):
         client: smtplib.SMTP = _ProxySMTP(host, port, timeout=timeout)
     else:
         client = smtplib.SMTP(host, port, timeout=timeout)
@@ -144,11 +131,11 @@ def _connect_smtp_starttls(host: str, port: int, timeout: float) -> smtplib.SMTP
     return client
 
 
-def connect_smtp(host: str, port: int, use_ssl: bool, timeout: float = 30.0) -> smtplib.SMTP:
+def connect_smtp(host: str, port: int, use_ssl: bool, timeout: float = 30.0, proxy_policy: str = "auto") -> smtplib.SMTP:
     """Connect to the SMTP server with the correct transport (SSL or STARTTLS)."""
     if use_ssl:
-        return _connect_smtp_ssl(host, port, timeout)
-    return _connect_smtp_starttls(host, port, timeout)
+        return _connect_smtp_ssl(host, port, timeout, proxy_policy=proxy_policy)
+    return _connect_smtp_starttls(host, port, timeout, proxy_policy=proxy_policy)
 
 
 def build_outbound_mime(payload: dict) -> EmailMessage:
@@ -189,8 +176,9 @@ def send_smtp_message(account: AccountConfig, payload: dict) -> str | None:
     msg = build_outbound_mime(payload)
     provider_id: str | None = None
     client = None
+    policy = getattr(account, "proxy_policy", "auto")
     try:
-        client = connect_smtp(host, port, use_ssl)
+        client = connect_smtp(host, port, use_ssl, proxy_policy=policy)
         client.login(account.username, account.password)
         failures = client.send_message(msg, account.username, payload.get("to_addr") or "")
         if failures:

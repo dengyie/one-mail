@@ -159,6 +159,10 @@ CREATE TABLE IF NOT EXISTS user_mail_accounts (
     pop3_use_stls INTEGER DEFAULT 0,
     enabled INTEGER DEFAULT 1,
     can_send INTEGER NOT NULL DEFAULT 0,
+    smtp_host TEXT,
+    smtp_port INTEGER,
+    smtp_ssl INTEGER DEFAULT 1,
+    proxy_policy TEXT DEFAULT 'auto',
     last_sync_at INTEGER,
     last_error TEXT,
     created_at INTEGER
@@ -304,6 +308,26 @@ async function ensurePop3Columns(db: D1Database): Promise<string[]> {
     }
     await db.exec(`UPDATE user_mail_accounts SET use_ssl = 1 WHERE use_ssl IS NULL`);
     await db.exec(`UPDATE user_mail_accounts SET pop3_use_stls = 0 WHERE pop3_use_stls IS NULL`);
+
+    // 增量支持外部邮箱 SMTP 发信字段与动态海外代理策略
+    const outboundProxyColumns: Array<[string, string]> = [
+        ['smtp_host', 'TEXT'],
+        ['smtp_port', 'INTEGER'],
+        ['smtp_ssl', 'INTEGER DEFAULT 1'],
+        ['proxy_policy', "TEXT DEFAULT 'auto'"],
+    ];
+    for (const [name, definition] of outboundProxyColumns) {
+        if (columns.has(name)) continue;
+        try {
+            await db.exec(`ALTER TABLE user_mail_accounts ADD COLUMN ${name} ${definition}`);
+            changes.push(name);
+            columns.add(name);
+        } catch (error) {
+            if (!String(error).toLowerCase().includes('duplicate column')) throw error;
+            columns.add(name);
+        }
+    }
+
     return changes;
 }
 

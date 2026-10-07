@@ -90,6 +90,8 @@ class AccountConfig:
     can_send: bool = False        # 凭据从「可读」升级为「可发」的显式开关，默认关闭
     smtp_host: str = ""           # 发信 SMTP 主机（空则按 source 推导默认值）
     smtp_port: int = 0            # 发信 SMTP 端口（0 = 按 source 推导默认值）
+    smtp_ssl: bool | None = None  # None 表示根据端口或服务商默认推导
+    proxy_policy: str = "auto"    # auto | always | never（海外代理出站策略）
 
     def __post_init__(self):
         # Keep protocol semantics identical for local config and Worker payloads.
@@ -112,10 +114,64 @@ class AccountConfig:
             raise ValueError("smtp_host must be a string")
         if not isinstance(self.smtp_port, int) or isinstance(self.smtp_port, bool) or self.smtp_port < 0 or self.smtp_port > 65535:
             raise ValueError("smtp_port must be an integer between 0 and 65535")
+        if self.smtp_ssl is not None and not isinstance(self.smtp_ssl, bool):
+            raise ValueError("smtp_ssl must be a boolean or null")
+        if not isinstance(self.proxy_policy, str):
+            raise ValueError("proxy_policy must be a string")
+        self.proxy_policy = self.proxy_policy.strip().lower()
+        if self.proxy_policy not in {"auto", "always", "never"}:
+            raise ValueError(f"unsupported proxy_policy: {self.proxy_policy!r}")
         # STLS starts plaintext and upgrades it; it cannot be combined with
         # POP3S, including the inherited use_ssl=True default.
         if self.pop3_use_stls and self.resolve_pop3_use_ssl():
             raise ValueError("pop3_ssl/use_ssl and pop3_use_stls are contradictory")
+
+    def resolve_smtp_endpoint(self) -> tuple[str, int, bool]:
+        """Return (host, port, use_ssl) for the account's SMTP send path.
+
+        Explicit smtp_host / smtp_port on the account override any per-source default.
+        For imap_custom, if smtp_host is omitted, automatically derive from host
+        (imap.xxx -> smtp.xxx, or retain mail.xxx).
+        Port 465 universally defaults to SSL, while 587 / 25 default to STARTTLS.
+        """
+        source = str(self.source or "").strip().lower()
+        defaults = {
+            "imap_qq": ("smtp.qq.com", 465, True),
+            "imap_163": ("smtp.163.com", 465, True),
+            "imap_gmail": ("smtp.gmail.com", 587, False),
+            "imap_outlook": ("smtp-mail.outlook.com", 587, False),
+        }.get(source, ("", 0, False))
+
+        explicit_host = str(self.smtp_host or "").strip()
+        if explicit_host:
+            host = explicit_host
+        elif source in ("imap_qq", "imap_163", "imap_gmail", "imap_outlook"):
+            host = defaults[0]
+        elif source == "imap_custom" and self.host:
+            h_lower = self.host.lower()
+            host = ("smtp." + self.host[5:]) if h_lower.startswith("imap.") else self.host
+        else:
+            host = ""
+
+        port = self.smtp_port or (defaults[1] if source in ("imap_qq", "imap_163", "imap_gmail", "imap_outlook") else 0)
+        if not port:
+            if self.smtp_ssl is False:
+                port = 587
+            else:
+                port = 465 if host else 0
+
+        if self.smtp_ssl is not None:
+            use_ssl = bool(self.smtp_ssl)
+        elif port == 465:
+            use_ssl = True
+        elif port in (587, 25):
+            use_ssl = False
+        elif source in ("imap_qq", "imap_163", "imap_gmail", "imap_outlook"):
+            use_ssl = bool(defaults[2])
+        else:
+            use_ssl = True if port == 465 else False
+
+        return host, port, use_ssl
 
     def resolve_pop3_host(self) -> str:
         """POP3 主机推导：host 以 imap. 开头换成 pop.，否则原样。"""
