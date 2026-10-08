@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- test: |Worker| Freeze the clock and assert exact retention cutoffs in job-pruning tests, removing CI failures caused by elapsed milliseconds between wall-clock reads.
+
 - fix: |Worker/Aggregator| Return HTTP 503, `D1_DAILY_READ_LIMIT`/`D1_DAILY_WRITE_LIMIT`, and the UTC reset time for authoritative daily D1 exhaustion. Stop retries within the failed upload batch, persist per-account pauses without advancing sync watermarks, and resume when due. Cover IDLE, Graph, polling, and status reporting while continuing healthy destinations.
 
 - fix: |D1| Avoid immediately rewriting provider metadata after new email inserts; update replays only for actual changes. Coalesce folder heartbeats to five minutes and filter unchanged rows before INSERT to avoid advancing AUTOINCREMENT. Preflight missing email indexes with a bounded maintenance estimate before primary admin migrations, returning 409 above budget. Both deployment and admin migrations skip uninferable NULL-to-NULL provider updates. The guard is a conservative maintenance check, not an authoritative account balance or capacity guarantee.
