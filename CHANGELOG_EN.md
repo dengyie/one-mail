@@ -8,6 +8,12 @@
 
 ## v1.11.0(main)
 
+- test: |Worker| Freeze the clock and assert exact retention cutoffs in job-pruning tests, removing CI failures caused by elapsed milliseconds between wall-clock reads.
+
+- fix: |Worker/Aggregator| Return HTTP 503, `D1_DAILY_READ_LIMIT`/`D1_DAILY_WRITE_LIMIT`, and the UTC reset time for authoritative daily D1 exhaustion. Stop retries within the failed upload batch, persist per-account pauses without advancing sync watermarks, and resume when due. Cover IDLE, Graph, polling, and status reporting while continuing healthy destinations.
+
+- fix: |D1| Avoid immediately rewriting provider metadata after new email inserts; update replays only for actual changes. Coalesce folder heartbeats to five minutes and filter unchanged rows before INSERT to avoid advancing AUTOINCREMENT. Preflight missing email indexes with a bounded maintenance estimate before primary admin migrations, returning 409 above budget. Both deployment and admin migrations skip uninferable NULL-to-NULL provider updates. The guard is a conservative maintenance check, not an authoritative account balance or capacity guarantee.
+
 - perf: |Worker/Frontend| Make email totals explicitly opt-in so a single unindexed `COUNT(*)` can no longer exhaust the D1 free tier. `with_count` must now be `1`/`true`; anything else (absent, `0`, malformed) skips the count, and a total that was not computed is returned as `null` rather than `0` so clients can tell "not computed" from "genuinely empty". Paged requests (`cursor`/`offset>0`) never recompute even when opted in, and also return `null` — they previously returned `0`, which reads as "empty mailbox". The single-database and federated paths disagreed on this; both are now `null`. The inbox stops asking for totals on background polls, so only foreground loads (mount, manual refresh, filter change, page change) recount. `insertEmails` memoizes the per-email lifecycle lookup by account, removing a per-batch N+1 (a 15-email batch from one account issued 15 queries, now 1). Terminal `mail_mutation_jobs`/`outbound_mail_jobs` rows are pruned on the existing bounded six-hour retention window, so table growth stops compounding scan cost.
 
 - fix: |Aggregator| Back off mutation and outbound queues independently: timeouts, 5xx responses, and incomplete batches retry after 60→120→240→300 seconds; three confirmed empty claims use a 60-second interval and success resets failure backoff. Remove global scheduling counters and measure deadlines from completion so slow polls cannot starve queues.

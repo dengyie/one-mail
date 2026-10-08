@@ -12,6 +12,7 @@ from .graph_source import sync_graph
 from .mutation_jobs import process_mutation_jobs
 from .outbound_jobs import process_outbound_jobs, OutboundBatchError
 from .remote_accounts import fetch_user_accounts, report_sync_status
+from .uploader import quota_retry_at
 from .idle_worker import ensure_idle_workers
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .egress_guard import install_egress_guard
@@ -91,7 +92,7 @@ def get_merged_accounts(config, state):
             assert_public_user_account(ua)
         except UnsafeMailTargetError as exc:
             log.warning("reject unsafe user mail target account=%s host=%r: %s", ua.id, ua.host, exc)
-            report_sync_status(config.worker_base_url, config.admin_token, ua.id, NETWORK_POLICY_ERROR)
+            report_sync_status(config.worker_base_url, config.admin_token, ua.id, NETWORK_POLICY_ERROR, state=state)
             continue
 
         key = collision_key(ua)
@@ -119,21 +120,11 @@ def run_once(config_path: str) -> dict:
                    % (fail_count, skip_until_ts))
             results[account.id] = {"error": msg}
             log.warning("sync %s %s", account.id, msg)
-            if is_user:
-                report_sync_status(config.worker_base_url, config.admin_token,
-                                   account.id, msg)
             continue
         try:
-            if account.source == "graph_outlook":
-                results[account.id] = sync_graph(account, config, state)
-                r = results[account.id]
-                log.info("synced %s: protocol=%s synced=%d dropped=%d",
-                         account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
-                state.record_success(account.id)
-                if is_user:
-                    report_sync_status(config.worker_base_url, config.admin_token, account.id, None)
-                continue
-            factory = oauth_client_factory(account, config) if account.oauth is not None else default_client_factory
+            factory = default_client_factory
+            if account.source != "graph_outlook" and account.oauth is not None:
+                factory = oauth_client_factory(account, config)
         except (KeyError, AttributeError, TypeError):
             provider = normalize_provider(
                 account.oauth.get("provider")
@@ -146,26 +137,32 @@ def run_once(config_path: str) -> dict:
             state.record_failure(account.id)
             if is_user:
                 report_sync_status(config.worker_base_url, config.admin_token,
-                                   account.id, f"provider unsupported: {provider}")
+                                   account.id, f"provider unsupported: {provider}", state=state)
             continue
         try:
-            results[account.id] = sync_account(factory, config, account, state)
+            results[account.id] = (sync_graph(account, config, state) if account.source == "graph_outlook"
+                                   else sync_account(factory, config, account, state))
             r = results[account.id]
             log.info("synced %s: protocol=%s synced=%d dropped=%d",
                      account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
             state.record_success(account.id)
             if is_user:
-                report_sync_status(config.worker_base_url, config.admin_token, account.id, None)
+                report_sync_status(config.worker_base_url, config.admin_token, account.id, None, state=state)
         except Exception as e:
             results[account.id] = {"error": str(e)}
-            if is_rate_limit_error(e):
+            retry_at = quota_retry_at(e)
+            if retry_at is not None:
+                now = time.time()
+                state.record_rate_limit_backoff(account.id, backoff_sec=max(1, retry_at - now), now=now)
+                log.warning("sync %s database quota exhausted; paused until UTC epoch %.0f", account.id, retry_at)
+            elif is_rate_limit_error(e):
                 log.warning("sync %s rate limited by server: %s (backing off 1800s)", account.id, e)
                 state.record_rate_limit_backoff(account.id, backoff_sec=1800)
             else:
                 log.error("sync %s failed: %s", account.id, e)
                 state.record_failure(account.id)
-            if is_user:
-                report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e))
+            if is_user and retry_at is None:
+                report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e), state=state)
             time.sleep(min(1 + random.random(), 3))
     return results
 
@@ -224,18 +221,23 @@ def _poll_pass(config, state, now: float | None = None) -> None:
                          account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
             state.record_success(account.id)
             if is_user:
-                report_sync_status(config.worker_base_url, config.admin_token, account.id, None)
+                report_sync_status(config.worker_base_url, config.admin_token, account.id, None, state=state)
             _ACCOUNT_LAST_POLL[account.id] = now_ts
         except Exception as e:
-            if is_rate_limit_error(e):
+            retry_at = quota_retry_at(e)
+            if retry_at is not None:
+                now = time.time()
+                state.record_rate_limit_backoff(account.id, backoff_sec=max(1, retry_at - now), now=now)
+                log.warning("poll sync %s database quota exhausted; paused until UTC epoch %.0f", account.id, retry_at)
+            elif is_rate_limit_error(e):
                 log.warning("poll sync %s rate limited by server: %s (backing off 1800s)", account.id, e)
                 state.record_rate_limit_backoff(account.id, backoff_sec=1800)
             else:
                 log.warning("poll sync %s error: %s", account.id, e)
                 state.record_failure(account.id)
             _ACCOUNT_LAST_POLL[account.id] = now_ts
-            if is_user:
-                report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e))
+            if is_user and retry_at is None:
+                report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e), state=state)
 
 
 _QUEUE_IDLE_BACKOFF_SECONDS = 60

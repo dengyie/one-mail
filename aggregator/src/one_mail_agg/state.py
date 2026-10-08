@@ -178,7 +178,7 @@ class SyncState:
             return float(skip_until)
 
     def record_rate_limit_backoff(self, account_id: str,
-                                  backoff_sec: int = 1800,
+                                  backoff_sec: float = 1800,
                                   now: float | None = None) -> float:
         """针对服务端显式频控/流量超限错误（如网易 163 登录太频繁、POP 流量超限等），立即进入长退避。"""
         now = float(now) if now is not None else time.time()

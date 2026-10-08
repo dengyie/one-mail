@@ -18,9 +18,10 @@ function fakeDb({ changes = 0 } = {}) {
 }
 
 const day = 24 * 60 * 60 * 1000;
+const now = Date.parse('2026-10-08T12:00:00Z');
 
-test("prunes both job tables with a cutoff derived from the retention window", async () => {
-    const before = Date.now();
+test("prunes both job tables with a cutoff derived from the retention window", async t => {
+    t.mock.method(Date, 'now', () => now);
     const db = fakeDb({ changes: 7 });
     const result = await pruneTerminalJobs({ DB: db }, 30, 500);
     assert.deepEqual(result, { mutation: 7, outbound: 7 });
@@ -30,7 +31,7 @@ test("prunes both job tables with a cutoff derived from the retention window", a
         assert.match(call.sql, /COALESCE\(completed_at, updated_at\) < \?/);
         assert.equal(call.params[1], 500, "batch limit must be passed as a bound parameter");
         const cutoff = call.params[0];
-        assert.ok(cutoff <= before - 30 * day && cutoff > before - 31 * day);
+        assert.equal(cutoff, now - 30 * day);
     }
 });
 
@@ -54,7 +55,8 @@ test("deletes are bounded by a rowid subquery so one cron tick cannot sweep the 
     }
 });
 
-test("out-of-range arguments fall back to the documented defaults", async () => {
+test("out-of-range arguments fall back to the documented defaults", async t => {
+    t.mock.method(Date, 'now', () => now);
     const db = fakeDb();
     await pruneTerminalJobs({ DB: db }, 0, 0);
     assert.equal(db.calls[0].params[1], 500, "invalid batch limit falls back to the default");
@@ -62,6 +64,6 @@ test("out-of-range arguments fall back to the documented defaults", async () => 
     const db2 = fakeDb();
     await pruneTerminalJobs({ DB: db2 }, -5, 999999);
     const cutoff = db2.calls[0].params[0];
-    assert.ok(cutoff <= Date.now() - 30 * day && cutoff > Date.now() - 31 * day);
+    assert.equal(cutoff, now - 30 * day);
     assert.equal(db2.calls[0].params[1], 5000, "batch limit is clamped, not trusted");
 });

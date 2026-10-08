@@ -34,7 +34,7 @@ UPDATE emails
        WHEN imap_uid IS NOT NULL THEN 'imap'
        ELSE provider
    END
- WHERE provider IS NULL;
+ WHERE provider IS NULL AND (source = 'cf_routing' OR imap_uid IS NOT NULL);
 
 UPDATE emails
    SET source_folder = 'INBOX', sync_version = 1

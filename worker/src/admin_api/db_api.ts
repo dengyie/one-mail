@@ -4,8 +4,8 @@ import { CONSTANTS } from "../constants";
 import { getSettingStrict, saveSetting } from "../core/settings.ts";
 import { ensureTableColumns } from "../core/db_schema.ts";
 import { ensureSendMailLimitReservationSchema } from "../mails_api/send_mail_limit_utils";
-import { ensureProviderIdentitySchema } from "../unified/schema";
-import { isShardMode } from "../core/d1_quota.ts";
+import { ensureProviderIdentitySchema, PROVIDER_IDENTITY_INDEX_STATEMENTS } from "../unified/schema";
+import { isShardMode, viewD1Quota } from "../core/d1_quota.ts";
 import { initializeShardSchema } from "../unified/shard_schema.ts";
 import { ensureAccountLifecycleTable } from "../unified/account_lifecycle_schema.ts";
 import { ensureOutboundSendSchema } from "../unified/outbound_schema.ts";
@@ -232,6 +232,62 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 `
 
+const UNIFIED_USAGE_INDEXES = [
+    ['idx_emails_order_received', 'emails(COALESCE(internal_date, received_at) DESC)'],
+    ['idx_emails_read_received', 'emails(is_read, received_at DESC)'],
+    ['idx_emails_star_received', 'emails(is_starred, received_at DESC)'],
+    ['idx_emails_to_order_received', 'emails(to_addr, COALESCE(internal_date, received_at) DESC)'],
+    ['idx_emails_to_read_received', 'emails(to_addr, is_read, received_at DESC)'],
+    ['idx_emails_to_star_received', 'emails(to_addr, is_starred, received_at DESC)'],
+] as const;
+const UNIFIED_USAGE_INDEX_STATEMENTS = UNIFIED_USAGE_INDEXES.map(([name, expression]) =>
+    'CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + expression);
+const EMAIL_MIGRATION_INDEXES = new Set([
+    ...DB_INIT_QUERIES.split(';'), ...UNIFIED_USAGE_INDEX_STATEMENTS, ...PROVIDER_IDENTITY_INDEX_STATEMENTS,
+].flatMap(sql => {
+    const match = sql.match(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+([a-z_]+)\s+ON\s+emails\s*\(/i);
+    return match ? [match[1]] : [];
+}));
+
+// Maintenance must leave room for ingestion. This is a conservative guard for
+// bulk email-index creation, not an authoritative account-wide quota ledger.
+const MIGRATION_WRITE_CEILING = 70_000;
+
+async function checkIndexWriteBudget(c: Context<HonoCustomType>): Promise<Response | null> {
+    const { results } = await c.env.DB.prepare(
+        `SELECT type, name FROM sqlite_schema WHERE tbl_name = 'emails'
+         AND type IN ('table', 'index') LIMIT 128`,
+    ).all<{ type: string; name: string }>();
+    if (!results.some(row => row.type === 'table')) return null;
+    const existing = new Set(results.map(row => row.name));
+    const pending = [...EMAIL_MIGRATION_INDEXES].filter(name => !existing.has(name));
+    if (!pending.length) return null;
+
+    const quota = await viewD1Quota(c.env);
+    const available = Math.max(0, MIGRATION_WRITE_CEILING - quota.rows_written);
+    // Count only far enough to prove that the index build exceeds the budget.
+    // Budget every sampled row for every index, including partial indexes.
+    // This conservative model is not an exact D1 billed-row count.
+    const limit = Math.max(1, Math.floor(available / pending.length) - 1);
+    const row = await c.env.DB.prepare(
+        'SELECT COUNT(*) AS count FROM (SELECT 1 FROM emails LIMIT ?)',
+    ).bind(limit).first<{ count: number }>();
+    if (!row || !Number.isSafeInteger(row.count) || row.count < 0) {
+        throw new Error('Invalid email count during migration preflight');
+    }
+    const estimated = (row.count + 2) * pending.length;
+    if (estimated <= available) return null;
+    return c.json({
+        error: 'Email index repair exceeds the remaining maintenance write budget. Build the pending indexes in budgeted maintenance steps, then retry migration.',
+        code: 'D1_MIGRATION_WRITE_BUDGET',
+        pending_indexes: pending,
+        index_write_estimate: estimated,
+        estimate_capped: row.count === limit,
+        available_write_rows: available,
+        quota_confidence: quota.confidence,
+    }, 409);
+}
+
 // Keep the set of application tables tied to the initialization contract. The
 // metadata query has a fixed bound and never reads mail or account rows.
 const DB_APPLICATION_TABLES = Array.from(
@@ -322,16 +378,7 @@ async function ensurePop3Columns(db: D1Database): Promise<string[]> {
 
 async function ensureUnifiedColumns(db: D1Database): Promise<string[]> {
     const changes = await ensureTableColumns(db, 'emails', [['is_starred', 'INTEGER DEFAULT 0']]);
-    const indexes = [
-        ['idx_emails_order_received', 'emails(COALESCE(internal_date, received_at) DESC)'],
-        ['idx_emails_read_received', 'emails(is_read, received_at DESC)'],
-        ['idx_emails_star_received', 'emails(is_starred, received_at DESC)'],
-        ['idx_emails_to_order_received', 'emails(to_addr, COALESCE(internal_date, received_at) DESC)'],
-        ['idx_emails_to_read_received', 'emails(to_addr, is_read, received_at DESC)'],
-        ['idx_emails_to_star_received', 'emails(to_addr, is_starred, received_at DESC)'],
-    ] as const;
-    await db.batch(indexes.map(([name, expression]) =>
-        db.prepare('CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + expression)));
+    await db.batch(UNIFIED_USAGE_INDEX_STATEMENTS.map(sql => db.prepare(sql)));
     return changes.map(name => `emails.${name}`);
 }
 
@@ -349,6 +396,8 @@ export default {
             return c.json({ message: "Shard database initialized" });
         }
         const { current_db_version: version } = await readDatabaseStatus(c);
+        const budgetError = await checkIndexWriteBudget(c);
+        if (budgetError) return budgetError;
         // CREATE IF NOT EXISTS is safe for both a fresh and an existing D1.
         await c.env.DB.exec(initQuery());
         // CREATE TABLE does not add columns to an old table, so repair the
@@ -375,6 +424,8 @@ export default {
             return c.json({ success: true, message: "Shard database migrated" });
         }
         const { current_db_version: version } = await readDatabaseStatus(c);
+        const budgetError = await checkIndexWriteBudget(c);
+        if (budgetError) return budgetError;
 
         // Repair the actual schema even when the version marker is absent.
         // Column-dependent indexes are created by their repair after the column.
