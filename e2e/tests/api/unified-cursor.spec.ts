@@ -80,12 +80,13 @@ test('unified inbox cursor pagination is stable across concurrent inserts', asyn
   );
   expect(secondRes.ok()).toBe(true);
   const second = await secondRes.json() as {
-    count: number;
+    // Counted, but a later cursor page never recomputes: null, not 0.
+    count: number | null;
     results: Array<{ id: string; subject: string }>;
     next_cursor: string | null;
     has_more: boolean;
   };
-  expect(second.count).toBe(0);
+  expect(second.count).toBeNull();
   expect(second.results.map((row) => row.subject)).toEqual(['cursor-3', 'cursor-2']);
   expect(second.has_more).toBe(true);
   expect(second.next_cursor).toBeTruthy();
@@ -97,12 +98,12 @@ test('unified inbox cursor pagination is stable across concurrent inserts', asyn
   );
   expect(thirdRes.ok()).toBe(true);
   const third = await thirdRes.json() as {
-    count: number;
+    count: number | null;
     results: Array<{ subject: string }>;
     next_cursor: string | null;
     has_more: boolean;
   };
-  expect(third.count).toBe(0);
+  expect(third.count).toBeNull();
   expect(third.results.map((row) => row.subject)).toEqual(['cursor-1']);
   expect(third.has_more).toBe(false);
   expect(third.next_cursor).toBeNull();

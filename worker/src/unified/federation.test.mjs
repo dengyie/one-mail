@@ -408,7 +408,8 @@ test("main+shard SQLite topology merges lists/cursors/counts/codes and excludes 
             assert.equal(second.has_more, false);
             const offset = await (await t.request("emails?limit=2&offset=1&with_count=1")).json();
             assert.deepEqual(offset.results.map(row => row.id), ["migrated", "local"]);
-            assert.equal(offset.count, 0);
+            // 翻了页即使 opt-in 也不重算总数：null（没算），不是 0（看着像空邮箱）。
+            assert.equal(offset.count, null);
             assert.deepEqual(await (await t.request("count")).json(), { count: 5 });
             assert.deepEqual(await (await t.request("stats")).json(), { count: 5, unread: 5 });
             const codes = await (await t.request("verifcodes?addr=mine%40test&fresh=10")).json();
@@ -589,7 +590,7 @@ test("main+shard SQLite remote failures preserve local success and expose degrad
     } finally { t.close(); }
 });
 
-test("no count requested means null on every page; counted paged requests keep zero", async () => {
+test("no count requested means null on every page; counted requests only count the first page", async () => {
     await withFetch(async () => Response.json({ results: [], count: null }), async () => {
         // 未 opt-in：任何分页形态都不得回一个看起来像「已算出 0」的值。
         for (const offset of [0, 1, undefined]) {
@@ -600,10 +601,19 @@ test("no count requested means null on every page; counted paged requests keep z
             context(), map, { rest: {}, limit: 1, cursor: encodeEmailCursor(1, "x"), withCount: false });
         assert.equal((await paged.json()).count, null);
 
-        // opt-in 后仍然只在首页计数，翻页不回退成 null。
-        for (const offset of [1, undefined]) {
-            const response = await federation.federatedListEmails(context(), map, { rest: {}, limit: 1, offset, withCount: true });
+        // opt-in 后只在首页计数。翻页即使 opt-in 也不重算，回 null 而非 0 ——
+        // 0 会被读成「邮箱空了」，与「没算」是两回事。单库路径语义相同。
+        // 首页有两种形态：offset=0 的 legacy 分页，以及不传 offset 的游标首页。
+        for (const firstPage of [{ offset: 0 }, { offset: undefined }]) {
+            const response = await federation.federatedListEmails(
+                context(), map, { rest: {}, limit: 1, ...firstPage, withCount: true });
             assert.equal((await response.json()).count, 0);
+        }
+        // 翻页形态：offset>0 与带 cursor。
+        for (const paged of [{ offset: 1 }, { cursor: encodeEmailCursor(1, "x") }]) {
+            const response = await federation.federatedListEmails(
+                context(), map, { rest: {}, limit: 1, ...paged, withCount: true });
+            assert.equal((await response.json()).count, null);
         }
     });
 });
