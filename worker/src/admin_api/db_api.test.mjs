@@ -18,6 +18,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
 } });
 const { default: api } = await import("./db_api.ts");
 const { CONSTANTS } = await import("../constants.ts");
+const { ensureTableColumns } = await import("../core/db_schema.ts");
 hooks.deregister();
 
 function fixture(t, schema = "") {
@@ -26,10 +27,12 @@ function fixture(t, schema = "") {
     sqlite.exec(schema);
     const calls = [];
     const db = {
+        requests: 0,
         before() {},
         prepare(sql) {
             let args = [];
-            const execute = (method) => {
+            const execute = (method, countRequest = true) => {
+                if (countRequest) db.requests++;
                 calls.push(sql);
                 db.before(sql);
                 return sqlite.prepare(sql)[method](...args);
@@ -39,9 +42,22 @@ function fixture(t, schema = "") {
                 async first(column) { const row = execute("get"); return (column ? row?.[column] : row) ?? null; },
                 async all() { return { success: true, results: execute("all") }; },
                 async run() { return { success: true, meta: execute("run") }; },
+                runInBatch() { return { success: true, meta: execute("run", false) }; },
             };
         },
-        async exec(sql) { calls.push(sql); db.before(sql); sqlite.exec(sql); return { count: 1, duration: 0 }; },
+        async exec(sql) { db.requests++; calls.push(sql); db.before(sql); sqlite.exec(sql); return { count: 1, duration: 0 }; },
+        async batch(statements) {
+            db.requests++;
+            sqlite.exec('BEGIN');
+            try {
+                const results = statements.map(statement => statement.runInBatch());
+                sqlite.exec('COMMIT');
+                return results;
+            } catch (error) {
+                sqlite.exec('ROLLBACK');
+                throw error;
+            }
+        },
     };
     const c = { env: { DB: db }, json: value => Response.json(value) };
     return { sqlite, db, c, calls };
@@ -148,3 +164,45 @@ test("a failed schema repair never publishes the current version", async t => {
     await assert.rejects(api.migrate(c), cause);
     assert.equal(sqlite.prepare("SELECT value FROM settings WHERE key = ?").get(CONSTANTS.DB_VERSION_KEY), undefined);
 });
+
+for (const method of ["initialize", "migrate"]) {
+    for (const state of ['fresh', 'existing', 'existing-cold', 'legacy']) {
+        test(`${method} stays within the free-plan D1 request budget (${state})`, async t => {
+            const { c, db } = fixture(t, state === 'legacy' ? legacySchema : '');
+            if (state.startsWith('existing')) await api.initialize(c);
+            // A new binding identity models a cold Worker with no schemaReady cache.
+            if (state === 'existing-cold') c.env.DB = { ...db };
+            db.requests = 0;
+            await api[method](c);
+            t.diagnostic(`${db.requests} D1 requests`);
+            assert.ok(db.requests <= 45, `${db.requests} D1 requests leave no room under the 50-request free-plan limit`);
+        });
+    }
+}
+
+test("column batches roll back completely on failure and can be replayed without losing mail", async t => {
+    const { c, db, sqlite } = fixture(t, legacySchema);
+    const cause = new Error('D1 batch failed');
+    db.before = sql => { if (/ALTER TABLE address ADD COLUMN source_meta/.test(sql)) throw cause; };
+    await assert.rejects(api.migrate(c), cause);
+    assert.ok(!sqlite.prepare('PRAGMA table_info(address)').all().some(row => row.name === 'password'));
+    assert.equal(sqlite.prepare('SELECT value FROM settings WHERE key = ?').get(CONSTANTS.DB_VERSION_KEY), undefined);
+    db.before = () => {};
+    await api.migrate(c);
+    assert.equal(sqlite.prepare('SELECT raw FROM raw_mails WHERE id = 1').get().raw, 'original body');
+});
+
+for (const complete of [false, true]) {
+    test(`a racing column migration is accepted only when all columns exist (${complete})`, async () => {
+        const cause = new Error('duplicate column name: password');
+        let reads = 0;
+        const db = {
+            prepare: () => ({ all: async () => ({ results: reads++ ? (complete ? [{ name: 'password' }, { name: 'source_meta' }] : [{ name: 'password' }]) : [] }) }),
+            batch: async () => { throw cause; },
+        };
+        const action = ensureTableColumns(db, 'address', [['password', 'TEXT'], ['source_meta', 'TEXT']]);
+        if (complete) assert.deepEqual(await action, []);
+        else await assert.rejects(action, cause);
+        assert.equal(reads, 2);
+    });
+}

@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import type { DatabaseStatus } from "@one-mail/shared";
 import { CONSTANTS } from "../constants";
 import { getSettingStrict, saveSetting } from "../core/settings.ts";
+import { ensureTableColumns } from "../core/db_schema.ts";
 import { ensureSendMailLimitReservationSchema } from "../mails_api/send_mail_limit_utils";
 import { ensureProviderIdentitySchema } from "../unified/schema";
 import { isShardMode } from "../core/d1_quota.ts";
@@ -261,35 +262,23 @@ async function readDatabaseStatus(c: Context<HonoCustomType>): Promise<DatabaseS
     };
 }
 
-async function ensureColumn(db: D1Database, table: string, name: string, definition: string): Promise<boolean> {
-    const tableInfo = await db.prepare(`PRAGMA table_info(${table})`).all();
-    if ((tableInfo.results ?? []).some((column: any) => column.name === name)) return false;
-    try {
-        await db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
-        return true;
-    } catch (error) {
-        if (!String(error).toLowerCase().includes('duplicate column')) throw error;
-        return false;
-    }
-}
-
 async function ensureLegacyColumns(db: D1Database): Promise<void> {
     // Version settings can be absent after an interrupted/old deployment. Use
     // the actual table shape rather than assuming the version is authoritative.
-    await ensureColumn(db, 'address', 'password', 'TEXT');
-    await ensureColumn(db, 'address', 'source_meta', 'TEXT');
-    await ensureColumn(db, 'raw_mails', 'metadata', 'TEXT');
-    await ensureColumn(db, 'raw_mails', 'raw_blob', 'BLOB');
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_address_source_meta ON address(source_meta)`);
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id)`);
+    await ensureTableColumns(db, 'address', [['password', 'TEXT'], ['source_meta', 'TEXT']]);
+    await ensureTableColumns(db, 'raw_mails', [['metadata', 'TEXT'], ['raw_blob', 'BLOB']]);
+    await db.batch([
+        db.prepare(`CREATE INDEX IF NOT EXISTS idx_address_source_meta ON address(source_meta)`),
+        db.prepare(`CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id)`),
+    ]);
 }
 
 async function ensureSendboxSourceSchema(db: D1Database): Promise<void> {
-    await ensureColumn(db, 'sendbox', 'source', 'TEXT');
-    await ensureColumn(db, 'sendbox', 'channel', 'TEXT');
-    await ensureColumn(db, 'sendbox', 'provider_message_id', 'TEXT');
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_sendbox_source ON sendbox(source)`);
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_sendbox_address_source ON sendbox(address, source)`);
+    await ensureTableColumns(db, 'sendbox', [['source', 'TEXT'], ['channel', 'TEXT'], ['provider_message_id', 'TEXT']]);
+    await db.batch([
+        db.prepare(`CREATE INDEX IF NOT EXISTS idx_sendbox_source ON sendbox(source)`),
+        db.prepare(`CREATE INDEX IF NOT EXISTS idx_sendbox_address_source ON sendbox(address, source)`),
+    ]);
 }
 
 async function ensurePasskeySchema(db: D1Database): Promise<void> {
@@ -313,61 +302,26 @@ async function ensurePasskeySchema(db: D1Database): Promise<void> {
 }
 
 async function ensurePop3Columns(db: D1Database): Promise<string[]> {
-    const tableInfo = await db.prepare(`PRAGMA table_info(user_mail_accounts)`).all();
-    const columns = new Set((tableInfo.results ?? []).map((column: any) => column.name));
-    const changes: string[] = [];
-    const pop3Columns: Array<[string, string]> = [
+    const changes = await ensureTableColumns(db, 'user_mail_accounts', [
         ['use_ssl', 'INTEGER DEFAULT 1'],
         ['pop3_host', 'TEXT'],
         ['pop3_port', 'INTEGER'],
         ['pop3_ssl', 'INTEGER'],
         ['pop3_use_stls', 'INTEGER DEFAULT 0'],
-    ];
-    for (const [name, definition] of pop3Columns) {
-        if (columns.has(name)) continue;
-        try {
-            await db.exec(`ALTER TABLE user_mail_accounts ADD COLUMN ${name} ${definition}`);
-            changes.push(name);
-            columns.add(name);
-        } catch (error) {
-            // D1 serializes writes, but two admin requests may have read the
-            // same schema. A duplicate-column error means the other request
-            // completed this exact step; other failures must be surfaced.
-            if (!String(error).toLowerCase().includes('duplicate column')) throw error;
-            columns.add(name);
-        }
-    }
-    await db.exec(`UPDATE user_mail_accounts SET use_ssl = 1 WHERE use_ssl IS NULL`);
-    await db.exec(`UPDATE user_mail_accounts SET pop3_use_stls = 0 WHERE pop3_use_stls IS NULL`);
-
-    // 增量支持外部邮箱 SMTP 发信字段与动态海外代理策略
-    const outboundProxyColumns: Array<[string, string]> = [
         ['smtp_host', 'TEXT'],
         ['smtp_port', 'INTEGER'],
         ['smtp_ssl', 'INTEGER DEFAULT 1'],
         ['proxy_policy', "TEXT DEFAULT 'auto'"],
-    ];
-    for (const [name, definition] of outboundProxyColumns) {
-        if (columns.has(name)) continue;
-        try {
-            await db.exec(`ALTER TABLE user_mail_accounts ADD COLUMN ${name} ${definition}`);
-            changes.push(name);
-            columns.add(name);
-        } catch (error) {
-            if (!String(error).toLowerCase().includes('duplicate column')) throw error;
-            columns.add(name);
-        }
-    }
-
+    ]);
+    await db.batch([
+        db.prepare(`UPDATE user_mail_accounts SET use_ssl = 1 WHERE use_ssl IS NULL`),
+        db.prepare(`UPDATE user_mail_accounts SET pop3_use_stls = 0 WHERE pop3_use_stls IS NULL`),
+    ]);
     return changes;
 }
 
 async function ensureUnifiedColumns(db: D1Database): Promise<string[]> {
-    const changes: string[] = [];
-    await db.exec(`CREATE TABLE IF NOT EXISTS scheduled_locks (name TEXT PRIMARY KEY, owner TEXT NOT NULL, locked_until INTEGER NOT NULL)`);
-    if (await ensureColumn(db, 'emails', 'is_starred', 'INTEGER DEFAULT 0')) {
-        changes.push('emails.is_starred');
-    }
+    const changes = await ensureTableColumns(db, 'emails', [['is_starred', 'INTEGER DEFAULT 0']]);
     const indexes = [
         ['idx_emails_order_received', 'emails(COALESCE(internal_date, received_at) DESC)'],
         ['idx_emails_read_received', 'emails(is_read, received_at DESC)'],
@@ -376,10 +330,9 @@ async function ensureUnifiedColumns(db: D1Database): Promise<string[]> {
         ['idx_emails_to_read_received', 'emails(to_addr, is_read, received_at DESC)'],
         ['idx_emails_to_star_received', 'emails(to_addr, is_starred, received_at DESC)'],
     ] as const;
-    for (const [name, expression] of indexes) {
-        await db.exec('CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + expression);
-    }
-    return changes;
+    await db.batch(indexes.map(([name, expression]) =>
+        db.prepare('CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + expression)));
+    return changes.map(name => `emails.${name}`);
 }
 
 function initQuery() {
