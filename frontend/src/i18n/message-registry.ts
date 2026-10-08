@@ -2742,6 +2742,22 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "views.admin.DatabaseManager": {
+    "retry": {
+      "en": "Retry status check",
+      "zh": "重新检查状态"
+    },
+    "loading": {
+      "en": "Checking database status…",
+      "zh": "正在检查数据库状态…"
+    },
+    "invalidStatus": {
+      "en": "The database status response is invalid. Please check again.",
+      "zh": "数据库状态响应无效，请重新检查。"
+    },
+    "statusNotCurrent": {
+      "en": "The database still requires a schema update. Check its status before retrying the update.",
+      "zh": "数据库仍需要更新结构，请先重新检查状态，再决定是否重试升级。"
+    },
     "code_db_version": {
       "en": "Code Needed DB Version",
       "zh": "需要的数据库版本"

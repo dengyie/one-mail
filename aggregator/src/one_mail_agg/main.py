@@ -2,8 +2,9 @@ import sys
 import time
 import logging
 import random
+from dataclasses import dataclass
 
-from .config import load_config
+from .config import Config, load_config
 from .state import SyncState
 from .sync import sync_account, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
@@ -237,39 +238,41 @@ def _poll_pass(config, state, now: float | None = None) -> None:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e))
 
 
-# 队列长期为空时，每 5 秒一次的 claim 只会打满 Worker 往返（线上空队列也要
-# 0.7–3 秒）。连续确认空队列后把间隔退到 60 秒；领到任务立即恢复。
-_MUTATION_IDLE_BACKOFF_SECONDS = 60
-_MUTATION_IDLE_CONFIRMATIONS = 3
-_mutation_idle_interval = 0.0
-_mutation_empty_claims = 0
+_QUEUE_IDLE_BACKOFF_SECONDS = 60
+_QUEUE_IDLE_CONFIRMATIONS = 3
+_QUEUE_ERROR_BACKOFF_SECONDS = 60
+_QUEUE_ERROR_BACKOFF_CAP_SECONDS = 300
 
 
-def mutation_claim_interval(base_interval: float, claimed: int | None) -> float:
-    """空队列连续确认后拉长 claim 间隔；领到任务或请求失败时回到基础间隔。
+@dataclass(frozen=True, slots=True)
+class ClaimSchedule:
+    """一个队列的调度快照；时间由调用方传入，计数和退避均有界。"""
 
-    claimed 为 None 表示本次 claim 没有拿到可信结果（超时、5xx），不能据此
-    判断队列为空，所以不进入退避。
-    """
-    global _mutation_idle_interval, _mutation_empty_claims
-    if claimed or claimed is None:
-        # 领到任务，或这次请求失败：都不能当成「队列空」，立刻回到基础间隔。
-        _mutation_empty_claims = 0
-        _mutation_idle_interval = 0.0
-        return base_interval
-    _mutation_empty_claims += 1
-    if _mutation_empty_claims >= _MUTATION_IDLE_CONFIRMATIONS:
-        _mutation_idle_interval = max(base_interval, _MUTATION_IDLE_BACKOFF_SECONDS)
-        return _mutation_idle_interval
-    return base_interval
+    next_at: float = 0.0
+    empty_claims: int = 0
+    error_delay: float = 0.0
+
+    def after_claim(self, base_interval: float, claimed: int | None,
+                    *, completed_at: float) -> "ClaimSchedule":
+        if claimed is None:
+            delay = max(base_interval, min(_QUEUE_ERROR_BACKOFF_CAP_SECONDS,
+                        max(_QUEUE_ERROR_BACKOFF_SECONDS, self.error_delay * 2)))
+            return ClaimSchedule(completed_at + delay, error_delay=delay)
+        if claimed:
+            return ClaimSchedule(completed_at + base_interval)
+        empty_claims = min(self.empty_claims + 1, _QUEUE_IDLE_CONFIRMATIONS)
+        delay = base_interval
+        if empty_claims >= _QUEUE_IDLE_CONFIRMATIONS:
+            delay = max(base_interval, _QUEUE_IDLE_BACKOFF_SECONDS)
+        return ClaimSchedule(completed_at + delay, empty_claims=empty_claims)
 
 
-def _drain_mutation_jobs(config) -> int | None:
+def _drain_mutation_jobs(config: Config) -> int | None:
     """排空 provider mutation 队列（已读/星标/移动的回写）。
 
     与同步同进程、不并发：mutation 需要为账号兑换 refresh_token，与同步并发兑换
     会让其中一份拿到的 RT 立刻失效。单进程 tick 串行天然只有一个写者。
-    返回本批领到的任务数；请求失败时返回 None，调用方据此保持 5 秒重试。
+    返回本批领到的任务数；请求失败时返回 None，调用方据此做有上限的指数退避。
     """
     try:
         result = process_mutation_jobs(config)
@@ -284,16 +287,18 @@ def _drain_mutation_jobs(config) -> int | None:
     return claimed
 
 
-def _drain_outbound_jobs(config) -> int | None:
+def _drain_outbound_jobs(config: Config) -> int | None:
     """排空外部账号的出站发送队列。
 
-    与 mutation 共享同一个 tick 窗口，复用同一 redemption_lock；虽然发送频率远低于
-    读/星标/移动，但排空窗口统一避免拆成两个独立调度循环。
+    与 mutation 在同一个循环内串行执行，复用同一 redemption_lock；领取失败或
+    批次未完整处理时返回 None，不能把部分结果当成可信的空队列或成功。
     """
+    incomplete = False
     try:
         result = process_outbound_jobs(config)
     except OutboundBatchError as e:
         result = e.result
+        incomplete = True
         log.error("outbound batch error: %s", e)
     except Exception as e:
         log.error("outbound claim error: %s", e)
@@ -303,7 +308,7 @@ def _drain_outbound_jobs(config) -> int | None:
         log.info("outbound batch claimed=%d succeeded=%d retried=%d failed=%d unsupported=%d",
                  claimed, result.get("succeeded", 0), result.get("retried", 0),
                  result.get("failed", 0), result.get("unsupported", 0))
-    return claimed
+    return None if incomplete else claimed
 
 
 def run_daemon(config_path: str, poll_interval: int = 60,
@@ -313,34 +318,39 @@ def run_daemon(config_path: str, poll_interval: int = 60,
     1. 为支持的 IMAP 账号拉起常驻 IDLE 监听线程，秒级实时接收新邮件推送；
     2. 每 mutation_interval（默认 5s）一个 tick：到点跑一轮完整增量拉取
        （按各账号独立周期兜底 POP3 / 163 IMAP / graph / 新增用户账号，防频繁频控与流量超限），
-       其余 tick 排空 provider mutation 队列（已读 / 星标 / 移动回写）。
+       其余 tick 串行排空到期的 mutation 与 outbound 队列，各自独立退避。
 
     每个 tick 重新读 config.json：IDLE 线程轮换出的新 refresh_token 已原子写回
     该文件，用旧快照兑换会直接把账号打失效。
     """
     log.info("Starting one-mail-agg in continuous daemon mode (poll_interval=%ds, mutation_interval=%ds)",
              poll_interval, mutation_interval)
-    global _mutation_idle_interval, _mutation_empty_claims
-    _mutation_idle_interval = 0.0
-    _mutation_empty_claims = 0
     state = SyncState(load_config(config_path).state_path)
     next_poll_at = 0.0
-    next_mutation_at = 0.0
+    mutation_schedule = ClaimSchedule()
+    outbound_schedule = ClaimSchedule()
 
     while True:
         tick_started = time.monotonic()
+        poll_due = tick_started >= next_poll_at
         try:
             config = load_config(config_path)
-            if tick_started >= next_poll_at:
-                next_poll_at = tick_started + poll_interval
+            if poll_due:
                 _poll_pass(config, state, now=tick_started)
-            elif tick_started >= next_mutation_at:
+            if not poll_due and time.monotonic() >= mutation_schedule.next_at:
                 claimed = _drain_mutation_jobs(config)
-                _drain_outbound_jobs(config)
-                claim_every = mutation_claim_interval(mutation_interval, claimed)
-                next_mutation_at = tick_started + claim_every
+                mutation_schedule = mutation_schedule.after_claim(
+                    mutation_interval, claimed, completed_at=time.monotonic())
+            if not poll_due and time.monotonic() >= outbound_schedule.next_at:
+                claimed = _drain_outbound_jobs(config)
+                outbound_schedule = outbound_schedule.after_claim(
+                    mutation_interval, claimed, completed_at=time.monotonic())
         except Exception as e:
             log.error("daemon iteration error: %s", e)
+        finally:
+            if poll_due:
+                # 从完成时算间隔；慢轮询不能让后续所有 tick 都再次进入轮询。
+                next_poll_at = time.monotonic() + poll_interval
 
         # 轮询循环仍按基础间隔醒来，保证 60s 兜底拉取不被退避拖住。
         # 空队列只是跳过 claim，不拉长整个 tick。

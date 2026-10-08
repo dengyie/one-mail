@@ -1,4 +1,5 @@
 import { ensureMailMutationSchema } from "./mutation_schema";
+import { ensureTableColumns } from "../core/db_schema.ts";
 
 const PROVIDER_IDENTITY_COLUMNS: Array<[string, string]> = [
     ["provider", "TEXT"],
@@ -18,26 +19,6 @@ const runStatement = async (db: D1Database, sql: string): Promise<void> => {
     await db.prepare(sql).run();
 };
 
-async function ensureColumn(
-    db: D1Database,
-    table: string,
-    name: string,
-    definition: string,
-): Promise<boolean> {
-    const tableInfo = await db.prepare(`PRAGMA table_info(${table})`).all();
-    if ((tableInfo.results ?? []).some((column: any) => column.name === name)) return false;
-    try {
-        await runStatement(db, `ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
-        return true;
-    } catch (error) {
-        // Two admin migration requests can race after reading the same shape.
-        // Duplicate-column means the peer completed this exact repair; all
-        // other errors remain fail-closed.
-        if (!String(error).toLowerCase().includes("duplicate column")) throw error;
-        return false;
-    }
-}
-
 /**
  * Bring both fresh and legacy D1 databases to the provider identity schema.
  *
@@ -46,25 +27,15 @@ async function ensureColumn(
  * indexes exist when they do not.
  */
 export async function ensureProviderIdentitySchema(db: D1Database): Promise<string[]> {
-    const changes: string[] = [];
-
-    for (const [name, definition] of PROVIDER_IDENTITY_COLUMNS) {
-        if (await ensureColumn(db, "emails", name, definition)) {
-            changes.push(`emails.${name}`);
-        }
-    }
+    const columns = await ensureTableColumns(db, 'emails', PROVIDER_IDENTITY_COLUMNS);
+    const changes = columns.map(name => `emails.${name}`);
 
     // D1 exec() is a script API and treats newlines as statement separators.
-    // Every statement in this shape-repair helper is a single prepared query so
-    // multiline CASE/DDL formatting cannot be split into incomplete SQL.
-    await runStatement(
-        db,
+    // Keep multiline SQL prepared; batch independent repairs in one D1 request.
+    const backfills = [
         `UPDATE emails
             SET source_key = imap_uid
           WHERE source_key IS NULL AND imap_uid IS NOT NULL`,
-    );
-    await runStatement(
-        db,
         `UPDATE emails
             SET provider = CASE
                 WHEN source = 'cf_routing' THEN 'native'
@@ -74,13 +45,11 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
                 ELSE provider
             END
           WHERE provider IS NULL`,
-    );
-    await runStatement(
-        db,
         `UPDATE emails
             SET source_folder = 'INBOX', sync_version = COALESCE(sync_version, 1)
           WHERE source = 'cf_routing' AND source_folder IS NULL`,
-    );
+    ];
+    await db.batch(backfills.map(sql => db.prepare(sql)));
 
     const folderTable = await db.prepare(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mail_account_folders'`,
@@ -140,20 +109,19 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
         `CREATE INDEX IF NOT EXISTS idx_mail_account_folders_account_type
             ON mail_account_folders(mail_account_id, folder_type, canonical_name)`,
     ];
-    for (const sql of indexStatements) await runStatement(db, sql);
+    await db.batch(indexStatements.map(sql => db.prepare(sql)));
 
     // Mutation jobs are part of the same unified-mail schema lifecycle. Keep
     // admin initialize/migrate shape-driven even if the deploy migration was
     // skipped in a custom installation.
     await ensureMailMutationSchema(db);
-    await runStatement(db, `CREATE TABLE IF NOT EXISTS attachment_gc (
+    await db.batch([db.prepare(`CREATE TABLE IF NOT EXISTS attachment_gc (
         r2_key TEXT PRIMARY KEY,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-    )`);
-    await runStatement(db, `CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key)`);
+    )`), db.prepare(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key)`)]);
 
     return changes;
 }

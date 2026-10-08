@@ -140,5 +140,8 @@ if [ -n "${WORKER_URL_SEND_MAIL_DOMAIN:-}" ]; then
   echo "    Send-mail-domain database initialized"
 fi
 
+echo "==> Checking Mailpit event helper"
+node --experimental-strip-types --test fixtures/test-helpers.test.mjs
+
 echo "==> Running Playwright tests"
 exec npx playwright test "$@"
