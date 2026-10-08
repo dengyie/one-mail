@@ -5,6 +5,7 @@ import { getJsonSettingStrict } from './utils';
 import { CleanupSettings } from './models';
 import { executeCustomSqlCleanup } from './admin_api/cleanup_api';
 import { cleanupReadEmails, purgeOldEmailBodies } from './unified/retention';
+import { pruneTerminalJobs } from './unified/job_pruning';
 import { reconcileSendMailLimitReservations, countUnknownSendMailReservations } from './mails_api/send_mail_limit_utils';
 import { isShardMode, resolveShardId } from './core/d1_quota.ts';
 
@@ -107,6 +108,18 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
         console.log("one-mail body retention purge:", JSON.stringify(p));
         const r = await cleanupReadEmails(env, 90, RETENTION_BATCH_LIMIT, RETENTION_MAX_BATCHES);
         console.log("one-mail retention cleanup:", JSON.stringify(r));
+
+        // Terminal job rows used to accumulate forever. Same bounded six-hour
+        // window as the mail retention above, so a cron tick can never turn into
+        // an unbounded delete pass.
+        try {
+            const pruned = await pruneTerminalJobs(env);
+            if (pruned.mutation > 0 || pruned.outbound > 0) {
+                console.log("one-mail terminal job pruning:", JSON.stringify(pruned));
+            }
+        } catch (error) {
+            console.error("one-mail terminal job pruning failed", error);
+        }
 
         // Legacy cleanup is intentionally in the same bounded six-hour window;
         // otherwise auto_cleanup would bypass the retention quota guard.

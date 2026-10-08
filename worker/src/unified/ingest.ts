@@ -289,9 +289,19 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
     let inserted = 0, skipped = 0;
     if (emails.length === 0) return { inserted, skipped };
     const activeEmails: Record<string, unknown>[] = [];
+    // 一个批次通常整批来自同一个账号，逐封查 lifecycle 就是逐封查一次 D1
+    // （聚合器 chunk_size=15，即每次 ingest 白跑 14 次查询）。按 account_id
+    // 记忆化后典型情况只查一次；缓存 Promise 本身，同账号并发查询也只发一次。
+    const lifecycleLookups = new Map<string, ReturnType<typeof lifecycleState>>();
     for (const email of emails) {
         const accountId = nullableText(email.account_id);
-        if (!accountId || (await lifecycleState(c.env.DB, accountId)) == null) activeEmails.push(email);
+        if (!accountId) { activeEmails.push(email); continue; }
+        let lookup = lifecycleLookups.get(accountId);
+        if (!lookup) {
+            lookup = lifecycleState(c.env.DB, accountId);
+            lifecycleLookups.set(accountId, lookup);
+        }
+        if ((await lookup) == null) activeEmails.push(email);
         else skipped++;
     }
     emails = activeEmails;

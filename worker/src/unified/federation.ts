@@ -277,11 +277,14 @@ export const federatedListEmails = async (
     // from only the healthy owners, and never let a cursor cross an unavailable
     // owner boundary: the caller must retry this exact page after recovery.
     const incomplete = degraded.length > 0;
-    const count = incomplete
-        ? null
-        : input.offset !== undefined
-            ? (input.offset === 0 ? (input.withCount ? (mergeCounts(counts) ?? 0) : null) : 0)
-            : (input.cursor ? 0 : (input.withCount ? (mergeCounts(counts) ?? 0) : 0));
+    // 没要总数就一律 null，让客户端能区分「没算」和「真的是 0」。
+    // 翻了页（cursor / offset>0）即使要总数也不会重算，沿用 0，与单库路径一致。
+    const pageCount = (): number | null => {
+        if (!input.withCount) return null;
+        const paged = Boolean(input.cursor) || (input.offset !== undefined && input.offset > 0);
+        return paged ? 0 : mergeCounts(counts) ?? 0;
+    };
+    const count = incomplete ? null : pageCount();
 
     const body: Record<string, unknown> = { results: page, count, incomplete, unavailable_mailbox_ids: unavailable };
     if (input.offset === undefined) {

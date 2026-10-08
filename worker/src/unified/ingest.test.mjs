@@ -261,3 +261,69 @@ test("folder catalog rejects malformed provider or uidvalidity", async () => {
     /invalid folder catalog entry/,
   );
 });
+
+/**
+ * Regression: the lifecycle gate used to be awaited once per email, so a batch
+ * of 15 from one account issued 15 identical D1 queries (the aggregator's
+ * chunk_size is 15). It is a correctness gate, so the memo must not change the
+ * verdict — only how many times we ask.
+ */
+function lifecycleHarness(lifecycleRow) {
+  const lifecycleQueries = [];
+  const fakeEnv = {
+    DB: {
+      prepare(sql) {
+        if (/FROM mail_account_lifecycle/.test(sql)) {
+          return {
+            bind(...params) {
+              lifecycleQueries.push(params[0]);
+              return { first: async () => lifecycleRow };
+            },
+          };
+        }
+        return { bind: () => ({ sql }) };
+      },
+      async batch(stmts) {
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    },
+  };
+  return { fakeEnv, lifecycleQueries };
+}
+
+const batchOf = (accountId, count) =>
+  Array.from({ length: count }, (_, i) => ({
+    source: "imap_qq",
+    account_id: accountId,
+    from_addr: "a@b.com",
+    to_addr: `me+${i}@qq.com`,
+  }));
+
+test("insertEmails looks up account lifecycle once per account, not once per email", async () => {
+  const { insertEmails } = await import("./ingest.ts");
+  const { fakeEnv, lifecycleQueries } = lifecycleHarness(null);
+  const res = await insertEmails({ env: fakeEnv }, batchOf("qq", 15));
+  assert.equal(res.inserted, 15);
+  assert.deepEqual(lifecycleQueries, ["qq"]);
+});
+
+test("lifecycle memoisation still skips every email of a deleting account", async () => {
+  const { insertEmails } = await import("./ingest.ts");
+  const { fakeEnv, lifecycleQueries } = lifecycleHarness({
+    account_id: "qq",
+    user_id: 1,
+    username: "u",
+    state: "deleting",
+  });
+  const res = await insertEmails({ env: fakeEnv }, batchOf("qq", 15));
+  assert.equal(res.inserted, 0);
+  assert.equal(res.skipped, 15);
+  assert.deepEqual(lifecycleQueries, ["qq"], "one lookup, one verdict for the whole batch");
+});
+
+test("distinct accounts in one batch each get their own lifecycle lookup", async () => {
+  const { insertEmails } = await import("./ingest.ts");
+  const { fakeEnv, lifecycleQueries } = lifecycleHarness(null);
+  await insertEmails({ env: fakeEnv }, [...batchOf("qq", 3), ...batchOf("gmail", 2)]);
+  assert.deepEqual(lifecycleQueries.sort(), ["gmail", "qq"]);
+});

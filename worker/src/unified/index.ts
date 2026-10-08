@@ -18,6 +18,7 @@ import { claimLegacyMutationJobs } from "./mutation_claim_legacy.ts";
 import { listFolders } from "./folders.ts";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess } from "./api_keys";
+import { wantsEmailCount } from "../core/count_opt_in.ts";
 import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
 import { cursorPredicate, decodeEmailCursor, encodeEmailCursor } from "./cursor";
 import {
@@ -122,8 +123,9 @@ type UnifiedListRow = {
 
 export const listEmails = async (c: Context<HonoCustomType>) => {
     const { limit, offset, cursor, with_count, ...rest } = c.req.query();
-    // with_count=0 供轮询探测使用：跳过 COUNT(*)，避免每次刷新都全量扫描过滤集。
-    const withCount = with_count !== "0";
+    // COUNT(*) 走不了索引，必须整表读；D1 按 rows_read 计费，2026-10-08 就是它把
+    // 免费档打爆的。所以总数改为显式 opt-in：不传 / 传 0 都不计数。
+    const withCount = wantsEmailCount(with_count);
     const requestedLimit = typeof limit === "string" ? parseInt(limit, 10) : Number(limit);
     const maxPageSize = await getUnifiedPageQuota(c);
     if (Number.isFinite(requestedLimit) && requestedLimit > maxPageSize) {
@@ -206,10 +208,10 @@ export const listEmails = async (c: Context<HonoCustomType>) => {
         nextCursor = encodeEmailCursor(sortKey, last.id);
     }
 
-    // Preserve the old first-page count behavior so clients can show totals,
-    // but never repeat the full COUNT scan for later cursor pages.
+    // 总数只在首页且显式 opt-in 时才算；其余情况返回 null，让客户端能区分
+    // 「没算」和「真的是 0」，而不是把两者都伪装成 0。
     const count = decodedCursor
-        ? 0
+        ? null
         : withCount
             ? await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${where}`)
                 .bind(...params).first<number>("count")
@@ -217,7 +219,7 @@ export const listEmails = async (c: Context<HonoCustomType>) => {
 
     return c.json({
         results: page,
-        count: count ?? 0,
+        count: count ?? null,
         next_cursor: nextCursor,
         has_more: hasMore,
     });

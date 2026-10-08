@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { isShardMode, resolveShardId, viewD1Quota } from "../core/d1_quota.ts";
+import { wantsEmailCount } from "../core/count_opt_in.ts";
 import { authorizeShardRequest, parseShardScope, shardScopeAllowsRow } from "./shard_auth.ts";
 import { resolveScopedEmailFilter } from "./auth_scope.ts";
 import { canAccess } from "./api_keys.ts";
@@ -149,7 +150,8 @@ shard.post("/shard/emails", async (c) => {
     });
     const where = `(${owned.where}) AND (${filters.where})`;
     const params = [...owned.params, ...filters.params];
-    const withCount = body.with_count !== 0 && body.with_count !== "0";
+    // 与网关 /api/unified/emails 同一套 opt-in 语义：分片侧同样不得默认全表 COUNT。
+    const withCount = wantsEmailCount(body.with_count);
     const limit = body.limit;
     if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0 || limit > 600) {
         return c.json({ error: "invalid limit" }, 400);

@@ -33,6 +33,22 @@ describe('unified inbox quiet auto refresh contract', () => {
     document.dispatchEvent(new Event('visibilitychange')); await flush()
     expect(ctx.api.unified.listEmails).toHaveBeenCalledTimes(5)
   })
+  it('never asks for the total on background reloads, only on the foreground load', async () => {
+    visible(); await mount(UnifiedInbox)
+    // 首屏是前台加载：page 1 显式要总数。
+    expect(ctx.api.unified.listEmails.mock.calls[0][0]).toMatchObject({ with_count: 1 })
+
+    // 探测到新邮件后触发的是后台重载，必须不再跑全表 COUNT(*)。
+    ctx.api.unified.listEmails.mockResolvedValue({ results: [email('mail-c')], count: 9 })
+    document.dispatchEvent(new Event('visibilitychange')); await flush()
+
+    const backgroundReloads = ctx.api.unified.listEmails.mock.calls
+      .map(call => call[0])
+      .filter(params => params && params.limit !== 1)
+      .slice(1)
+    expect(backgroundReloads.length).toBeGreaterThan(0)
+    for (const params of backgroundReloads) expect(params).toMatchObject({ with_count: 0 })
+  })
   it('retains mail on refresh failure and retries the same new-mail boundary', async () => {
     visible(); const { host } = await mount(UnifiedInbox)
     ctx.api.unified.listEmails.mockResolvedValueOnce({ results: [email('new-mail')] }).mockRejectedValueOnce(new Error('offline'))

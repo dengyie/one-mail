@@ -17,7 +17,8 @@ describe('send history auto-refresh and provider id contracts', () => {
   })
 
   it('probes newest sendbox id with with_count=0 before quiet reload', () => {
-    expect(pane).toContain("params.set('with_count', '0')")
+    // 服务端总数已改为显式 opt-in，所以两种路径都必须显式带参，不能依赖默认值。
+    expect(pane).toContain("params.set('with_count', withCount ? '1' : '0')")
     expect(pane).toContain('withCount: false')
     expect(pane).toContain('probeNewestKey')
     expect(pane).toContain('if (newestKey !== newestSeenKey)')
