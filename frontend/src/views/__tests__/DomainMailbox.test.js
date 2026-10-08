@@ -47,6 +47,18 @@ describe('DomainMailbox view contract and performance optimizations', () => {
     expect(view).toContain('scheduleRefreshAll()')
   })
 
+  // 本页不展示总数，服务端默认的 with_count=1 会让每次 10s 轮询都跑一次全表
+  // COUNT，是 D1 免费档 rows_read 的主要消耗方之一。
+  it('opts out of the server-side COUNT so polling does not rescan the whole mailbox', () => {
+    const listParamsBlock = view.slice(
+      view.indexOf('const listParams = computed(() => ({'),
+      view.indexOf('const listSignature = computed('),
+    )
+    expect(listParamsBlock).toContain('with_count: 0')
+    expect(view).not.toContain('res.count')
+    expect(view).not.toContain('.count ||')
+  })
+
   it('coalesces concurrent and initial-mount refresh triggers via microtask scheduling', () => {
     expect(view).toContain('let refreshScheduled = false')
     expect(view).toContain('const scheduleRefreshAll = ({ background = false } = {}) => {')

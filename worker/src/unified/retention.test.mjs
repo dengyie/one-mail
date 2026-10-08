@@ -108,3 +108,71 @@ test("retention drains a durable GC row even when no email is newly eligible", a
   assert.deepEqual(deleted, ["attachment-retry"]);
   assert.ok(calls.some(call => /SELECT r2_key FROM attachment_gc/.test(call.sql)));
 });
+
+/**
+ * The attachment reference check is one full `emails` scan per invocation, so it
+ * must be issued once per drain batch rather than once per GC row — otherwise a
+ * full GC batch alone burns 100 table scans of rows_read.
+ */
+function gcDb({ gcKeys, referencedKeys }) {
+  const calls = [];
+  const deletedGc = [];
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...params) {
+          calls.push({ sql, params });
+          return {
+            all: async () => {
+              if (/FROM attachment_gc/.test(sql)) {
+                return { results: gcKeys.map(r2_key => ({ r2_key })) };
+              }
+              if (/json_each/.test(sql)) {
+                return { results: referencedKeys.map(r2_key => ({ r2_key })) };
+              }
+              return { results: [] };
+            },
+            first: async () => null,
+            run: async () => {
+              if (/DELETE FROM attachment_gc/.test(sql)) deletedGc.push(params[0]);
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+    batch: async () => [],
+  };
+  return { db, calls, deletedGc };
+}
+
+test("attachment GC checks email references once per batch, not once per row", async () => {
+  const gcKeys = Array.from({ length: 120 }, (_, i) => `attachment-${i}`);
+  const { db, calls } = gcDb({ gcKeys, referencedKeys: [] });
+  const deleted = [];
+  await cleanupReadEmails(
+    { DB: db, ATTACHMENTS: { delete: async key => deleted.push(key) } },
+    90, 1, 1,
+  );
+  const referenceScans = calls.filter(call => /json_each/.test(call.sql));
+  assert.equal(referenceScans.length, 3, "120 keys should chunk into 50 + 50 + 20");
+  // Every reference scan carries a whole chunk of keys, never a single key.
+  assert.ok(referenceScans.every(call => call.params.length > 1));
+  assert.equal(deleted.length, gcKeys.length);
+});
+
+test("attachment GC keeps R2 objects that a batched scan still finds referenced", async () => {
+  const { db, deletedGc } = gcDb({
+    gcKeys: ["a-1", "a-2", "a-3"],
+    referencedKeys: ["a-2"],
+  });
+  const deleted = [];
+  await cleanupReadEmails(
+    { DB: db, ATTACHMENTS: { delete: async key => deleted.push(key) } },
+    90, 1, 1,
+  );
+  assert.deepEqual(deleted, ["a-1", "a-3"]);
+  // Every GC row is retired either way: a live object makes the request stale,
+  // a deleted object has nothing left to clean up.
+  assert.deepEqual(deletedGc, ["a-1", "a-2", "a-3"]);
+});
