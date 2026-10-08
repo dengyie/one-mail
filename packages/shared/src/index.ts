@@ -26,6 +26,14 @@ export interface AddressJwtPayload {
   exp?: number;
 }
 
+/** Database status is unknown on read failure; only successful reads return this DTO. */
+export interface DatabaseStatus {
+  need_initialization: boolean;
+  need_migration: boolean;
+  current_db_version: string | null;
+  code_db_version: string;
+}
+
 /** 前端 API 路径前缀（createApiClient 的 JSDoc 标注用；运行时不引用） */
 export type ApiPath =
   | "/api"

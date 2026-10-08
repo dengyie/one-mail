@@ -4,7 +4,7 @@ import { Context } from "hono";
  * settings 表读写唯一实现（架构重构 P5，灭 T3）。
  * 仅引 hono、零相对 import。utils.ts 原实现改为 re-export 本模块；
  * quota.ts 以显式 .ts 扩展名相对 import 复用。
- * 行为与 utils.ts 原实现等价（含 DB 错→null 的 fail-soft）。
+ * getSetting 保留旧调用方的 fail-soft；状态/迁移等关键边界使用严格读取。
  */
 
 export const getSetting = async (
@@ -19,6 +19,20 @@ export const getSetting = async (
   } catch (error) {
     console.error(`GetSetting: Failed to get ${key}`, error);
     return null;
+  }
+};
+
+/** Distinguish a missing value from a failed read at state-changing boundaries. */
+export const getSettingStrict = async (
+  c: Context<HonoCustomType>,
+  key: string,
+): Promise<string | null> => {
+  try {
+    return await c.env.DB.prepare(
+      `SELECT value FROM settings WHERE key = ?`,
+    ).bind(key).first<string>("value");
+  } catch (cause) {
+    throw new Error(`Failed to read setting ${key}`, { cause });
   }
 };
 
@@ -59,14 +73,7 @@ export const getJsonSettingStrict = async <T = unknown>(
   c: Context<HonoCustomType>,
   key: string,
 ): Promise<T | null> => {
-  let value: string | null;
-  try {
-    value = await c.env.DB.prepare(
-      `SELECT value FROM settings WHERE key = ?`,
-    ).bind(key).first<string>("value");
-  } catch (cause) {
-    throw new Error(`Failed to read setting ${key}`, { cause });
-  }
+  const value = await getSettingStrict(c, key);
   if (value == null || value === "") return null;
   try {
     return JSON.parse(value) as T;

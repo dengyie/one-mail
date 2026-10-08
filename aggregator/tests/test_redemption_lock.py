@@ -291,7 +291,8 @@ def _daemon_harness(tmp_path, monkeypatch, *, clock, poll_interval, mutation_int
     drains = []
     monkeypatch.setattr(main_mod, "ensure_idle_workers",
                         lambda cfg, st, accs: polls.append(("idle", len(list(accs)))))
-    monkeypatch.setattr(main_mod, "_drain_mutation_jobs", lambda cfg: drains.append(1))
+    monkeypatch.setattr(main_mod, "_drain_mutation_jobs", lambda cfg: drains.append(1) or 1)
+    monkeypatch.setattr(main_mod, "_drain_outbound_jobs", lambda cfg: 1)
 
     with pytest.raises(_StopDaemon):
         main_mod.run_daemon("whatever.json", poll_interval=poll_interval,
@@ -374,19 +375,20 @@ def test_poll_pass_skips_accounts_owned_by_live_idle_worker(tmp_path, monkeypatc
 
 
 def test_mutation_claim_backs_off_after_consecutive_empty_results():
-    """连续 3 次确认空队列后再拉长到 60 秒；领到任务或失败立刻回到 5 秒。"""
-    main_mod._mutation_empty_claims = 0
-    main_mod._mutation_idle_interval = 0.0
-    try:
-        assert [main_mod.mutation_claim_interval(5, 0) for _ in range(3)] == [5, 5, 60]
-        assert main_mod.mutation_claim_interval(5, 0) == 60
-        assert main_mod.mutation_claim_interval(5, 2) == 5
-        assert main_mod.mutation_claim_interval(5, 0) == 5
-        assert main_mod.mutation_claim_interval(5, None) == 5
-        assert main_mod._mutation_empty_claims == 0
-    finally:
-        main_mod._mutation_empty_claims = 0
-        main_mod._mutation_idle_interval = 0.0
+    """连续 3 次确认空队列后退到 60 秒；失败打断空队列确认，成功恢复。"""
+    schedule = main_mod.ClaimSchedule()
+    for expected in [5, 5, 60, 60]:
+        schedule = schedule.after_claim(5, 0, completed_at=0)
+        assert schedule.next_at == expected
+    schedule = schedule.after_claim(5, 2, completed_at=0)
+    assert schedule.next_at == 5
+    schedule = schedule.after_claim(5, 0, completed_at=0)
+    assert schedule.next_at == 5
+    schedule = schedule.after_claim(5, None, completed_at=0)
+    assert schedule.next_at == 60
+    assert schedule.empty_claims == 0
+    schedule = schedule.after_claim(5, 0, completed_at=0)
+    assert schedule.next_at == 5
 
 
 def test_run_daemon_skips_empty_mutation_claims_until_backoff_ends(tmp_path, monkeypatch):
@@ -410,6 +412,7 @@ def test_run_daemon_skips_empty_mutation_claims_until_backoff_ends(tmp_path, mon
     monkeypatch.setattr(main_mod, "ensure_idle_workers",
                         lambda cfg, st, accs: polls.append(clock.now))
     monkeypatch.setattr(main_mod, "_drain_mutation_jobs", _drain)
+    monkeypatch.setattr(main_mod, "_drain_outbound_jobs", lambda cfg: 0)
 
     with pytest.raises(_StopDaemon):
         main_mod.run_daemon("whatever.json", poll_interval=60, mutation_interval=5)

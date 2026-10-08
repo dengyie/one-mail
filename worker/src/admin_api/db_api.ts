@@ -1,6 +1,7 @@
-import { Context } from "hono";
+import type { Context } from "hono";
+import type { DatabaseStatus } from "@one-mail/shared";
 import { CONSTANTS } from "../constants";
-import utils from "../utils";
+import { getSettingStrict, saveSetting } from "../core/settings.ts";
 import { ensureSendMailLimitReservationSchema } from "../mails_api/send_mail_limit_utils";
 import { ensureProviderIdentitySchema } from "../unified/schema";
 import { isShardMode } from "../core/d1_quota.ts";
@@ -40,8 +41,6 @@ CREATE INDEX IF NOT EXISTS idx_address_name ON address(name);
 CREATE INDEX IF NOT EXISTS idx_address_created_at ON address(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_address_updated_at ON address(updated_at);
-
-CREATE INDEX IF NOT EXISTS idx_address_source_meta ON address(source_meta);
 
 CREATE TABLE IF NOT EXISTS auto_reply_mails (
     id INTEGER PRIMARY KEY,
@@ -232,6 +231,36 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 `
 
+// Keep the set of application tables tied to the initialization contract. The
+// metadata query has a fixed bound and never reads mail or account rows.
+const DB_APPLICATION_TABLES = Array.from(
+    DB_INIT_QUERIES.matchAll(/CREATE TABLE IF NOT EXISTS ([a-z_]+)/g),
+    ([, name]) => name,
+);
+const DB_TABLE_STATUS_QUERY = `SELECT name FROM sqlite_schema
+    WHERE type = 'table' AND name IN (${DB_APPLICATION_TABLES.map(() => '?').join(',')})
+    LIMIT ${DB_APPLICATION_TABLES.length}`;
+
+async function readDatabaseStatus(c: Context<HonoCustomType>): Promise<DatabaseStatus> {
+    let tables: Set<string>;
+    try {
+        const { results } = await c.env.DB.prepare(DB_TABLE_STATUS_QUERY)
+            .bind(...DB_APPLICATION_TABLES).all<{ name: string }>();
+        tables = new Set(results.map(row => row.name));
+    } catch (cause) {
+        throw new Error("Failed to inspect database schema", { cause });
+    }
+    const version = tables.has('settings')
+        ? await getSettingStrict(c, CONSTANTS.DB_VERSION_KEY) || null
+        : null;
+    return {
+        need_initialization: tables.size === 0,
+        need_migration: tables.size > 0 && version !== CONSTANTS.DB_VERSION,
+        current_db_version: version,
+        code_db_version: CONSTANTS.DB_VERSION,
+    };
+}
+
 async function ensureColumn(db: D1Database, table: string, name: string, definition: string): Promise<boolean> {
     const tableInfo = await db.prepare(`PRAGMA table_info(${table})`).all();
     if ((tableInfo.results ?? []).some((column: any) => column.name === name)) return false;
@@ -366,6 +395,7 @@ export default {
             await initializeShardSchema(c.env.DB);
             return c.json({ message: "Shard database initialized" });
         }
+        const { current_db_version: version } = await readDatabaseStatus(c);
         // CREATE IF NOT EXISTS is safe for both a fresh and an existing D1.
         await c.env.DB.exec(initQuery());
         // CREATE TABLE does not add columns to an old table, so repair the
@@ -380,11 +410,10 @@ export default {
         await ensureSendMailLimitReservationSchema(c.env.DB);
         await ensureOutboundSendSchema(c.env.DB);
 
-        const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
         if (version) {
             return c.json({ message: "Database already initialized" });
         }
-        await utils.saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
+        await saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
         return c.json({ message: "Database initialized" });
     },
     migrate: async (c: Context<HonoCustomType>) => {
@@ -392,64 +421,10 @@ export default {
             await initializeShardSchema(c.env.DB);
             return c.json({ success: true, message: "Shard database migrated" });
         }
-        const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
+        const { current_db_version: version } = await readDatabaseStatus(c);
 
-        if (version && version <= "v0.0.2") {
-            // migration to v0.0.3: add password column
-            const tableInfo = await c.env.DB.prepare(
-                `PRAGMA table_info(address)`
-            ).all();
-            const hasPassword = tableInfo.results?.some(
-                (col: any) => col.name === 'password'
-            );
-            if (!hasPassword) {
-                await c.env.DB.exec(`ALTER TABLE address ADD COLUMN password TEXT;`);
-            }
-        }
-        if (version && version <= "v0.0.3") {
-            // migration to v0.0.4: add metadata column
-            const tableInfo = await c.env.DB.prepare(
-                `PRAGMA table_info(raw_mails)`
-            ).all();
-            const hasMetadata = tableInfo.results?.some(
-                (col: any) => col.name === 'metadata'
-            );
-            if (!hasMetadata) {
-                await c.env.DB.exec(`ALTER TABLE raw_mails ADD COLUMN metadata TEXT;`);
-            }
-        }
-        if (version && version <= "v0.0.4") {
-            // migration to v0.0.5: add source_meta column
-            const tableInfo = await c.env.DB.prepare(
-                `PRAGMA table_info(address)`
-            ).all();
-            const hasSourceMeta = tableInfo.results?.some(
-                (col: any) => col.name === 'source_meta'
-            );
-            if (!hasSourceMeta) {
-                await c.env.DB.exec(`ALTER TABLE address ADD COLUMN source_meta TEXT;`);
-                await c.env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_address_source_meta ON address(source_meta);`);
-            }
-        }
-        if (version && version <= "v0.0.5") {
-            // migration to v0.0.6: add message_id index on raw_mails
-            await c.env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id);`);
-        }
-        if (version && version <= "v0.0.6") {
-            // migration to v0.0.7: add raw_blob column for gzip compressed email storage
-            const tableInfo = await c.env.DB.prepare(
-                `PRAGMA table_info(raw_mails)`
-            ).all();
-            const hasRawBlob = tableInfo.results?.some(
-                (col: any) => col.name === 'raw_blob'
-            );
-            if (!hasRawBlob) {
-                await c.env.DB.exec(`ALTER TABLE raw_mails ADD COLUMN raw_blob BLOB;`);
-            }
-        }
-        // Finish legacy migrations before exposing the current schema. The
-        // init DDL creates missing tables, while these checks repair columns on
-        // tables that already existed (CREATE IF NOT EXISTS cannot).
+        // Repair the actual schema even when the version marker is absent.
+        // Column-dependent indexes are created by their repair after the column.
         await c.env.DB.exec(initQuery());
         await ensureLegacyColumns(c.env.DB);
         await ensureSendboxSourceSchema(c.env.DB);
@@ -467,7 +442,7 @@ export default {
             providerIdentityChanges.length > 0 ||
             outboundChanges.length > 0
         ) {
-            await utils.saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
+            await saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
             return c.json({
                 success: true,
                 message: "Database migrated"
@@ -487,12 +462,6 @@ export default {
                 code_db_version: CONSTANTS.DB_VERSION,
             });
         }
-        const version = await utils.getSetting(c, CONSTANTS.DB_VERSION_KEY);
-        return c.json({
-            need_initialization: !version,
-            need_migration: version && version != CONSTANTS.DB_VERSION,
-            current_db_version: version,
-            code_db_version: CONSTANTS.DB_VERSION
-        });
+        return c.json(await readDatabaseStatus(c));
     },
 }
