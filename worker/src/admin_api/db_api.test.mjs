@@ -59,7 +59,7 @@ function fixture(t, schema = "") {
             }
         },
     };
-    const c = { env: { DB: db }, json: value => Response.json(value) };
+    const c = { env: { DB: db }, json: (value, status = 200) => Response.json(value, { status }) };
     return { sqlite, db, c, calls };
 }
 
@@ -204,5 +204,73 @@ for (const complete of [false, true]) {
         if (complete) assert.deepEqual(await action, []);
         else await assert.rejects(action, cause);
         assert.equal(reads, 2);
+    });
+}
+
+const legacyUsageIndexes = [
+    'idx_emails_order_received', 'idx_emails_read_received', 'idx_emails_star_received',
+    'idx_emails_to_order_received', 'idx_emails_to_read_received', 'idx_emails_to_star_received',
+];
+
+for (const method of ['initialize', 'migrate']) {
+    test(`${method} rejects an oversized index repair before any database mutation`, async t => {
+        const { c, sqlite, calls } = fixture(t);
+        await api.initialize(c);
+        sqlite.exec(`WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<25000)
+            INSERT INTO emails(id, source, from_addr, to_addr, received_at, provider)
+            SELECT 'mail-' || n, 'cf_routing', 'sender@example.test', 'receiver@example.test', n, 'native' FROM seq`);
+        for (const name of legacyUsageIndexes) sqlite.exec(`DROP INDEX ${name}`);
+        sqlite.prepare('DELETE FROM settings WHERE key = ?').run(CONSTANTS.DB_VERSION_KEY);
+        calls.length = 0;
+
+        const response = await api[method](c);
+        assert.equal(response.status, 409);
+        const body = await response.json();
+        assert.equal(body.code, 'D1_MIGRATION_WRITE_BUDGET');
+        assert.deepEqual(new Set(body.pending_indexes), new Set(legacyUsageIndexes));
+        assert.ok(body.index_write_estimate > body.available_write_rows);
+        assert.equal(body.estimate_capped, true);
+        assert.ok(calls.every(sql => !/\b(?:CREATE|ALTER|INSERT|UPDATE|DELETE|DROP)\b/i.test(sql)));
+        assert.equal(sqlite.prepare('SELECT count(*) AS n FROM emails').get().n, 25000);
+        assert.equal(sqlite.prepare('SELECT value FROM settings WHERE key = ?').get(CONSTANTS.DB_VERSION_KEY), undefined);
+    });
+}
+
+test('migration does not rewrite provider=NULL rows that cannot be inferred', async t => {
+    const { c, sqlite } = fixture(t);
+    await api.initialize(c);
+    sqlite.exec(`INSERT INTO emails(id,source,from_addr,to_addr,received_at)
+        VALUES('opaque','external_import','sender@example.test','receiver@example.test',1)`);
+    const before = sqlite.prepare('SELECT total_changes() AS n').get().n;
+    await api.migrate(c);
+    assert.equal(sqlite.prepare('SELECT total_changes() AS n').get().n, before);
+    assert.equal(sqlite.prepare("SELECT provider FROM emails WHERE id='opaque'").get().provider, null);
+});
+
+for (const method of ['initialize', 'migrate']) {
+    test(`${method} permits small index repairs and avoids counting already indexed tables`, async t => {
+        const { c, sqlite, calls } = fixture(t);
+        await api.initialize(c);
+        sqlite.exec(`INSERT INTO emails(id, source, from_addr, to_addr, received_at, provider)
+            VALUES ('retained', 'cf_routing', 'from@example.test', 'to@example.test', 1, 'native')`);
+        for (const name of legacyUsageIndexes) sqlite.exec(`DROP INDEX ${name}`);
+        assert.equal((await api[method](c)).status, 200);
+        const indexes = new Set(sqlite.prepare("SELECT name FROM sqlite_schema WHERE type='index'").all().map(row => row.name));
+        assert.ok(legacyUsageIndexes.every(name => indexes.has(name)));
+        assert.equal(sqlite.prepare('SELECT count(*) AS n FROM emails').get().n, 1);
+        calls.length = 0;
+        assert.equal((await api[method](c)).status, 200);
+        assert.ok(calls.every(sql => !/SELECT COUNT\(\*\) AS count FROM \(SELECT 1 FROM emails/.test(sql)));
+    });
+
+    test(`${method} performs no DDL when the bounded index preflight read fails`, async t => {
+        const { c, sqlite, db, calls } = fixture(t);
+        await api.initialize(c);
+        sqlite.exec('DROP INDEX idx_emails_order_received');
+        calls.length = 0;
+        const cause = new Error('D1 read failed during index preflight');
+        db.before = sql => { if (/SELECT COUNT\(\*\) AS count/.test(sql)) throw cause; };
+        await assert.rejects(api[method](c), cause);
+        assert.ok(calls.every(sql => !/\b(?:CREATE|ALTER|INSERT|UPDATE|DELETE|DROP)\b/i.test(sql)));
     });
 }

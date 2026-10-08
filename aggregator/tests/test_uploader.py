@@ -61,11 +61,50 @@ def test_upload_folders_retries_on_transient_failure():
     assert len(responses.calls) == 2
 
 
+@pytest.mark.parametrize("kind,upload", [("emails", upload_emails), ("folders", upload_folders)])
+@responses.activate
+def test_daily_d1_quota_is_not_retried_inside_the_same_batch(monkeypatch, kind, upload):
+    from datetime import datetime, timezone
+    monkeypatch.setattr("one_mail_agg.uploader.time.sleep", lambda _: None)
+    now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr("one_mail_agg.uploader.time.time", lambda: now)
+    responses.add(responses.POST, "https://w.example/admin/unified/ingest", status=503,
+                  json={"code": "D1_DAILY_WRITE_LIMIT", "retry_at": "2026-10-09T00:00:00.000Z",
+                        "error": "Database daily write quota exhausted"},
+                  headers={"Retry-After": "43200"})
+    with pytest.raises(UploadBatchError) as caught:
+        upload(cfg(), [{"id": "retained", "account_id": "a"}], max_retries=5)
+    assert len(responses.calls) == 1
+    assert caught.value.result == ({"inserted": 0, "skipped": 0} if kind == "emails" else {"folders_upserted": 0})
+
+
 def _sharded_config():
     return Config("https://w.example", "tok", [], shards=[
         {"id": "s1", "base_url": "https://s1.example", "token": "1" * 32, "accounts": ["a"]},
         {"id": "s2", "base_url": "https://s2.example", "token": "2" * 32, "accounts": ["b"]},
     ])
+
+
+@pytest.mark.parametrize("kind,upload,counter", [("emails", upload_emails, "inserted"), ("folders", upload_folders, "folders_upserted")])
+@responses.activate
+def test_quota_failure_stops_its_destination_but_still_uploads_to_healthy_shards(monkeypatch, kind, upload, counter):
+    from datetime import datetime, timezone
+    from one_mail_agg.uploader import quota_retry_at
+    now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr("one_mail_agg.uploader.time.time", lambda: now)
+    responses.add(responses.POST, "https://s1.example/shard/ingest", status=503,
+                  json={"code": "D1_DAILY_WRITE_LIMIT", "retry_at": "2026-10-09T00:00:00.000Z"})
+    for url in ["https://s2.example/shard/ingest", "https://w.example/admin/unified/ingest"]:
+        responses.add(responses.POST, url, json={counter: 1})
+
+    with pytest.raises(UploadBatchError) as caught:
+        upload(_sharded_config(), [{"account_id": "a"}, {"account_id": "a"},
+                                   {"account_id": "b"}, {"account_id": "unknown"}], chunk_size=1)
+
+    assert len(responses.calls) == 3
+    assert caught.value.result[counter] == 2
+    assert quota_retry_at(caught.value) == now + 43200
+    assert len(caught.value.failures) == 1
 
 
 @responses.activate

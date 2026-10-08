@@ -8,7 +8,7 @@ from urllib.parse import quote
 import requests
 
 from .config import AccountConfig, Config
-from .uploader import upload_folders
+from .uploader import quota_retry_at, upload_folders
 
 log = logging.getLogger("one-mail-agg")
 
@@ -154,6 +154,8 @@ def maybe_sync_imap_folder_catalog(
             upload_folders(config, rows)
         return len(rows)
     except Exception as error:
+        if quota_retry_at(error) is not None:
+            raise
         log.warning("imap folder discovery account=%s failed: %s", account.id, error)
         return 0
 
@@ -183,5 +185,7 @@ def maybe_sync_graph_folder_catalog(
             upload_folders(config, rows)
         return len(rows)
     except Exception as error:
+        if quota_retry_at(error) is not None:
+            raise
         log.warning("graph folder discovery account=%s failed: %s", account.id, error)
         return 0

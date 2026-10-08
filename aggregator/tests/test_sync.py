@@ -744,7 +744,7 @@ def test_run_once_unknown_oauth_provider_only_affects_that_account(tmp_path, mon
                         or {"synced": 0, "dropped": 0, "protocol": "imap"})
     status = []
     monkeypatch.setattr(main_mod, "report_sync_status",
-                        lambda base, token, aid, err: status.append((aid, err)))
+                        lambda base, token, aid, err, *, state: status.append((aid, err)))
 
     res = main_mod.run_once("whatever.json")
 

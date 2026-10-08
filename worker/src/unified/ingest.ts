@@ -90,6 +90,10 @@ const VALID_FOLDER_TYPES = new Set<FolderType>([
     "inbox", "sent", "drafts", "archive", "trash", "spam", "custom",
 ]);
 
+// Catalog discovery runs every five minutes. Preserve immediate metadata/error
+// changes while coalescing the heartbeat repeated by each email in the folder.
+const FOLDER_HEARTBEAT_MS = 300_000;
+
 const folderType = (folder: string): FolderType => {
     const normalized = folder.trim().toLowerCase();
     if (normalized === "inbox") return "inbox";
@@ -182,7 +186,15 @@ const buildIdentityRefreshStatements = (
             has_attachments = COALESCE(?, has_attachments),
             sync_version = COALESCE(?, sync_version),
             updated_at = ?
-         WHERE account_id = ? AND provider = ? AND provider_message_id = ?`
+         WHERE account_id = ? AND provider = ? AND provider_message_id = ?
+           AND (source_folder IS NOT COALESCE(?1, source_folder)
+             OR source_folder_id IS NOT COALESCE(?2, source_folder_id)
+             OR provider_thread_id IS NOT COALESCE(?3, provider_thread_id)
+             OR message_id_header IS NOT COALESCE(?4, message_id_header)
+             OR in_reply_to IS NOT COALESCE(?5, in_reply_to)
+             OR references_json IS NOT COALESCE(?6, references_json)
+             OR has_attachments IS NOT COALESCE(?7, has_attachments)
+             OR sync_version IS NOT COALESCE(?8, sync_version))`
     ).bind(
         nullableText(e.source_folder),
         nullableText(e.source_folder_id),
@@ -204,6 +216,8 @@ const buildFolderStatement = (
     folder: FolderState,
     nowMs: number,
 ) => {
+    // Filter unchanged rows before INSERT: a no-op UPSERT alone still advances
+    // AUTOINCREMENT and writes sqlite_sequence. Identity indexes bound the probe.
     if (folder.providerFolderId) {
         // Stable provider identity is the conflict target. A rename updates the
         // same row instead of colliding on (or duplicating by) canonical_name.
@@ -211,7 +225,15 @@ const buildFolderStatement = (
             `INSERT INTO mail_account_folders (
                 mail_account_id, provider, provider_folder_id, canonical_name, display_name,
                 folder_type, uidvalidity, last_sync_at, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (
+                SELECT 1 FROM mail_account_folders
+                 WHERE mail_account_id = ?1 AND provider = ?2 AND provider_folder_id = ?3
+                   AND canonical_name IS ?4 AND display_name IS ?5
+                   AND (?6 = 'custom' OR folder_type IS ?6)
+                   AND (?7 IS NULL OR uidvalidity IS ?7)
+                   AND last_error IS NULL AND last_sync_at > ?8 - ${FOLDER_HEARTBEAT_MS}
+             )
              ON CONFLICT(mail_account_id, provider, provider_folder_id)
              WHERE provider_folder_id IS NOT NULL
              DO UPDATE SET
@@ -245,7 +267,15 @@ const buildFolderStatement = (
         `INSERT INTO mail_account_folders (
             mail_account_id, provider, provider_folder_id, canonical_name, display_name,
             folder_type, uidvalidity, last_sync_at, created_at, updated_at
-         ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+         ) SELECT ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (
+            SELECT 1 FROM mail_account_folders
+             WHERE mail_account_id = ?1 AND provider = ?2 AND provider_folder_id IS NULL
+               AND canonical_name = ?3 AND display_name IS ?4
+               AND (?5 = 'custom' OR folder_type IS ?5)
+               AND (?6 IS NULL OR uidvalidity IS ?6)
+               AND last_error IS NULL AND last_sync_at > ?7 - ${FOLDER_HEARTBEAT_MS}
+         )
          ON CONFLICT(mail_account_id, provider, canonical_name)
          WHERE provider_folder_id IS NULL
          DO UPDATE SET
@@ -312,20 +342,26 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
         const params = toEmailInsertParams(e, nullableText(e.id) ?? crypto.randomUUID(), nowMs);
         return c.env.DB.prepare(INSERT_EMAIL_SQL).bind(...(params as never[]));
     });
+    const replayedEmails: Record<string, unknown>[] = [];
 
     // Keep batches bounded. Partial chunk success is safe because every email
     // insert is idempotent; an HTTP retry will report it as skipped and continue.
     for (let start = 0; start < emailStatements.length; start += 100) {
         const results = await c.env.DB.batch(emailStatements.slice(start, start + 100));
-        for (const r of results) {
+        for (const [index, r] of results.entries()) {
             const changes = (r.meta as { changes?: number })?.changes ?? 0;
-            if (changes > 0) inserted++; else skipped++;
+            if (changes > 0) {
+                inserted++;
+                continue;
+            }
+            skipped++;
+            replayedEmails.push(emails[start + index]);
         }
     }
 
     // A provider-stable replay (notably a Graph message moved to another folder)
     // is not a new email, but its mutable provider metadata must follow the source.
-    const stateStatements = buildIdentityRefreshStatements(c, emails, nowMs);
+    const stateStatements = buildIdentityRefreshStatements(c, replayedEmails, nowMs);
 
     // Register folders observed in the same ingest operation. Provider folders
     // key by their stable ID; IMAP/POP3 fall back to canonical mailbox name.

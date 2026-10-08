@@ -9,10 +9,13 @@ AccountConfig，合并进每轮 sync。单账号 key 用 user_mail_accounts.id�
 管理员自有邮箱的归集。
 """
 import logging
+import time
 
 import requests
 
 from .config import AccountConfig
+from .d1_quota import database_quota_error
+from .state import SyncState
 
 log = logging.getLogger("one-mail-agg")
 
@@ -146,7 +149,7 @@ def fetch_user_accounts(worker_base_url: str, admin_token: str, *,
 
 
 def report_sync_status(worker_base_url: str, admin_token: str,
-                        account_id: str, error: str | None) -> None:
+                        account_id: str, error: str | None, *, state: SyncState | None = None) -> None:
     """回写单个用户邮箱的 sync 状态到 Worker（/admin/unified/mail_accounts/:id/status）。
 
     成功时 error=None（清空 last_error、刷新 last_sync_at）；失败时写 error 字符串。
@@ -157,6 +160,12 @@ def report_sync_status(worker_base_url: str, admin_token: str,
     headers = {"x-admin-auth": admin_token}
     try:
         r = requests.post(url, json={"error": error} if error else {}, headers=headers, timeout=10)
+        now = time.time()
+        quota = database_quota_error(r, now)
+        if quota is not None and state is not None:
+            state.record_rate_limit_backoff(account_id, backoff_sec=quota.retry_at - now, now=now)
+            log.warning("sync status account=%s: %s", account_id, quota)
+            return
         if r.status_code not in (200, 404):
             log.warning("report sync status for %s failed: HTTP %s %s",
                         account_id, r.status_code, r.text[:200])

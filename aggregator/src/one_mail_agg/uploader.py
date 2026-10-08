@@ -2,6 +2,7 @@ import time
 import requests
 
 from .config import Config, WorkerDestination
+from .d1_quota import DatabaseQuotaExceeded, database_quota_error
 
 
 class UploadBatchError(RuntimeError):
@@ -11,8 +12,17 @@ class UploadBatchError(RuntimeError):
                  failures: list[tuple[str, Exception]], result: dict):
         self.failures = tuple(failures)
         self.result = result
-        super().__init__(f"{kind} upload failed after {max_retries} attempts: " + "; ".join(
+        super().__init__(f"{kind} upload failed (up to {max_retries} attempts): " + "; ".join(
             f"{context}: {type(error).__name__}" for context, error in self.failures))
+
+
+def quota_retry_at(error: Exception) -> float | None:
+    if isinstance(error, DatabaseQuotaExceeded):
+        return error.retry_at
+    if isinstance(error, UploadBatchError):
+        deadlines = [cause.retry_at for _, cause in error.failures if isinstance(cause, DatabaseQuotaExceeded)]
+        return max(deadlines) if deadlines else None
+    return None
 
 
 def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
@@ -31,6 +41,7 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
             chunk = batch[i:i + chunk_size]
             delay = 1.0
             last = None
+            succeeded = False
             for attempt in range(max_retries):
                 try:
                     response = requests.post(destination.api_url("/ingest"),
@@ -45,6 +56,11 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
                                   {"folders_upserted": int(payload.get("folders_upserted", len(chunk)))})
                         for key, count in counts.items():
                             totals[key] += count
+                        succeeded = True
+                        break
+                    quota = database_quota_error(response, time.time())
+                    if quota is not None:
+                        last = quota
                         break
                     last = requests.HTTPError(f"HTTP {response.status_code}", response=response)
                 except Exception as error:
@@ -54,7 +70,7 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
                 if attempt < max_retries - 1:
                     time.sleep(delay)
                     delay = min(delay * 2, 30 if kind == "emails" else 10)
-            else:
+            if not succeeded:
                 failures.append((f"{destination.id}: {len(chunk)} {kind}", last))
                 # Retry this destination on the next sync; still service the other
                 # destinations in this mixed batch before surfacing the failure.

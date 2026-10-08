@@ -41,7 +41,7 @@ def test_idle_success_clears_fail_state_and_reports_success(tmp_path, monkeypatc
     monkeypatch.setattr(
         idle_mod,
         "report_sync_status",
-        lambda base, token, account_id, error: reports.append((base, token, account_id, error)),
+        lambda base, token, account_id, error, *, state: reports.append((base, token, account_id, error)),
     )
 
     worker = ImapIdleWorker(_config(tmp_path), account, state, client_factory=lambda _a: object())
@@ -78,7 +78,7 @@ def test_idle_error_status_reports_user_managed_accounts_only(tmp_path, monkeypa
     monkeypatch.setattr(
         idle_mod,
         "report_sync_status",
-        lambda base, token, account_id, error: reports.append((account_id, error)),
+        lambda base, token, account_id, error, *, state: reports.append((account_id, error)),
     )
 
     user_worker = ImapIdleWorker(

@@ -118,7 +118,16 @@ test("route errors return generic JSON without D1 details", async () => {
     f.db.prepare = () => { throw new Error("private DB diagnostic"); };
     const response = await f.request("/shard/emails/a");
     assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), { error: "shard request failed" });
+    assert.deepEqual(await response.json(), { error: "Internal server error" });
+    f.sqlite.close();
+});
+test("shard D1 daily exhaustion exposes the retry protocol instead of a generic 500", async () => {
+    const f = await fixture();
+    f.db.prepare = () => { throw new Error("D1_ERROR: Your account has exceeded D1's free tier daily row write limit."); };
+    const response = await f.request("/shard/emails/a");
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, "D1_DAILY_WRITE_LIMIT");
+    assert.ok(Number(response.headers.get('Retry-After')) > 0);
     f.sqlite.close();
 });
 test("archival ingest is exact and replay cannot overwrite live user state", async () => {

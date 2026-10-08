@@ -15,6 +15,39 @@ const PROVIDER_IDENTITY_COLUMNS: Array<[string, string]> = [
     ["sync_version", "INTEGER"],
 ];
 
+export const PROVIDER_IDENTITY_INDEX_STATEMENTS = [
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_source_key_uq
+        ON emails(source_key) WHERE source_key IS NOT NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_provider_message_uq
+        ON emails(account_id, provider, provider_message_id)
+        WHERE account_id IS NOT NULL
+          AND provider IS NOT NULL
+          AND provider_message_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_emails_order_cursor
+        ON emails(COALESCE(internal_date, received_at) DESC, id DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_emails_account_order_cursor
+        ON emails(account_id, COALESCE(internal_date, received_at) DESC, id DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_emails_to_order_cursor
+        ON emails(to_addr, COALESCE(internal_date, received_at) DESC, id DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_emails_account_folder_order_cursor
+        ON emails(account_id, source_folder, COALESCE(internal_date, received_at) DESC, id DESC)`,
+    // 与上面的 order_cursor 家族同形：source 单列索引无法提供 ORDER BY 有序性，
+    // 任何 source 过滤的列表查询都会退化成全表扫描 + 排序。
+    `CREATE INDEX IF NOT EXISTS idx_emails_source_order_cursor
+        ON emails(source, COALESCE(internal_date, received_at) DESC, id DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_emails_provider_thread
+        ON emails(account_id, provider_thread_id)
+        WHERE provider_thread_id IS NOT NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_provider_id_uq
+        ON mail_account_folders(mail_account_id, provider, provider_folder_id)
+        WHERE provider_folder_id IS NOT NULL`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_canonical_uq
+        ON mail_account_folders(mail_account_id, provider, canonical_name)
+        WHERE provider_folder_id IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_mail_account_folders_account_type
+        ON mail_account_folders(mail_account_id, folder_type, canonical_name)`,
+];
+
 const runStatement = async (db: D1Database, sql: string): Promise<void> => {
     await db.prepare(sql).run();
 };
@@ -44,7 +77,7 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
                 WHEN imap_uid IS NOT NULL THEN 'imap'
                 ELSE provider
             END
-          WHERE provider IS NULL`,
+          WHERE provider IS NULL AND (source = 'cf_routing' OR imap_uid IS NOT NULL)`,
         `UPDATE emails
             SET source_folder = 'INBOX', sync_version = COALESCE(sync_version, 1)
           WHERE source = 'cf_routing' AND source_folder IS NULL`,
@@ -77,39 +110,7 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
         updated_at INTEGER NOT NULL
     )`);
 
-    const indexStatements = [
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_source_key_uq
-            ON emails(source_key) WHERE source_key IS NOT NULL`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_provider_message_uq
-            ON emails(account_id, provider, provider_message_id)
-            WHERE account_id IS NOT NULL
-              AND provider IS NOT NULL
-              AND provider_message_id IS NOT NULL`,
-        `CREATE INDEX IF NOT EXISTS idx_emails_order_cursor
-            ON emails(COALESCE(internal_date, received_at) DESC, id DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_emails_account_order_cursor
-            ON emails(account_id, COALESCE(internal_date, received_at) DESC, id DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_emails_to_order_cursor
-            ON emails(to_addr, COALESCE(internal_date, received_at) DESC, id DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_emails_account_folder_order_cursor
-            ON emails(account_id, source_folder, COALESCE(internal_date, received_at) DESC, id DESC)`,
-        // 与上面的 order_cursor 家族同形：source 单列索引无法提供 ORDER BY 有序性，
-        // 任何 source 过滤的列表查询都会退化成全表扫描 + 排序。
-        `CREATE INDEX IF NOT EXISTS idx_emails_source_order_cursor
-            ON emails(source, COALESCE(internal_date, received_at) DESC, id DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_emails_provider_thread
-            ON emails(account_id, provider_thread_id)
-            WHERE provider_thread_id IS NOT NULL`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_provider_id_uq
-            ON mail_account_folders(mail_account_id, provider, provider_folder_id)
-            WHERE provider_folder_id IS NOT NULL`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_account_folders_canonical_uq
-            ON mail_account_folders(mail_account_id, provider, canonical_name)
-            WHERE provider_folder_id IS NULL`,
-        `CREATE INDEX IF NOT EXISTS idx_mail_account_folders_account_type
-            ON mail_account_folders(mail_account_id, folder_type, canonical_name)`,
-    ];
-    await db.batch(indexStatements.map(sql => db.prepare(sql)));
+    await db.batch(PROVIDER_IDENTITY_INDEX_STATEMENTS.map(sql => db.prepare(sql)));
 
     // Mutation jobs are part of the same unified-mail schema lifecycle. Keep
     // admin initialize/migrate shape-driven even if the deploy migration was

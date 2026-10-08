@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { handleApiError } from "../core/http_error.ts";
 import { isShardMode, resolveShardId, viewD1Quota } from "../core/d1_quota.ts";
 import { wantsEmailCount } from "../core/count_opt_in.ts";
 import { authorizeShardRequest, parseShardScope, shardScopeAllowsRow } from "./shard_auth.ts";
@@ -37,11 +38,7 @@ const readDto = async <T extends object>(c: Context<HonoCustomType>): Promise<T 
     } catch { return null; }
 };
 const shard = new Hono<HonoCustomType>();
-// Preserve the internal cause chain without returning D1 errors or secrets to callers.
-shard.onError((cause, c) => {
-    console.error(new Error("Shard request failed", { cause }));
-    return c.json({ error: "shard request failed" }, 500);
-});
+shard.onError(handleApiError);
 
 const accountWhere = (accountIds: string[] | null): { where: string; params: (string | number)[] } => {
     if (accountIds == null) return { where: "1=1", params: [] };

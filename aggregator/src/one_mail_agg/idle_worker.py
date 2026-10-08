@@ -10,6 +10,7 @@ from .state import SyncState
 from .sync import sync_imap, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .remote_accounts import report_sync_status
+from .uploader import quota_retry_at
 from .proxy_client import OVERSEAS_IMAP_HOSTS, is_overseas_imap_host
 
 log = logging.getLogger("one-mail-agg")
@@ -100,6 +101,8 @@ class ImapIdleWorker(threading.Thread):
         """Mirror daemon polling status semantics without ever affecting mail sync."""
         if not self.account.user_managed:
             return
+        if isinstance(error, Exception) and quota_retry_at(error) is not None:
+            return
         text = str(error) if error is not None else None
         try:
             report_sync_status(
@@ -107,6 +110,7 @@ class ImapIdleWorker(threading.Thread):
                 self.config.admin_token,
                 self.account.id,
                 text,
+                state=self.state,
             )
         except Exception as status_error:  # defensive: telemetry must never kill IDLE
             log.warning("Account %s IDLE status report failed: %s",
@@ -128,6 +132,8 @@ class ImapIdleWorker(threading.Thread):
         client: IMAPClient | None = None
 
         while not self.is_stopped():
+            if self.state.should_skip_account(self.account.id):
+                break
             client = None
             try:
                 client = self.client_factory(self.account)
@@ -148,12 +154,16 @@ class ImapIdleWorker(threading.Thread):
                     log.info("Account %s initial IDLE sync complete: synced=%d dropped=%d",
                              self.account.id, r.get("synced", 0), r.get("dropped", 0))
                 except Exception as sync_err:
+                    if quota_retry_at(sync_err) is not None:
+                        raise
                     self._report_status(sync_err)
                     log.warning("Account %s initial IDLE sync warning: %s",
                                 self.account.id, sync_err)
 
                 folder = self.account.folders[0] if self.account.folders else "INBOX"
                 while not self.is_stopped():
+                    if self.state.should_skip_account(self.account.id):
+                        break
                     client.select_folder(folder, readonly=True)
                     client.idle()
                     responses = client.idle_check(timeout=self.idle_refresh_seconds)
@@ -187,6 +197,16 @@ class ImapIdleWorker(threading.Thread):
                         client.logout()
                     except Exception:
                         pass
+                    client = None
+
+                retry_at = quota_retry_at(e)
+                if retry_at is not None:
+                    now = time.time()
+                    self.state.record_rate_limit_backoff(
+                        self.account.id, backoff_sec=max(1, retry_at - now), now=now)
+                    log.warning("Account %s database quota exhausted; sync paused until UTC epoch %.0f",
+                                self.account.id, retry_at)
+                    return
 
                 if consecutive_errors >= _IDLE_FAILURE_THRESHOLD:
                     _mark_idle_cooldown(self.account)
@@ -259,6 +279,11 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                     registry.pop(aid, None)
 
         for acc in accounts:
+            if state.should_skip_account(acc.id):
+                active = _active_idle_workers.get(acc.id)
+                if active is not None:
+                    active.stop()
+                continue
             if acc.source == "graph_outlook" or acc.protocol == "pop3":
                 continue
             # 自愈修复：若为 Gmail / QQ / Outlook / 海外邮箱且历史曾被误 pinned 到 POP3，立即解除 pin 恢复实时推送
