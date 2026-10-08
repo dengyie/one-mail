@@ -147,7 +147,8 @@ PR #96（`668a338`）发布后，UTC零点前正常列表因D1免费读配额耗
 - `worker/src/admin_api/db_api.ts`、`core/settings.ts`、`packages/shared/src/index.ts`：沿用四字段 `DatabaseStatus` DTO。仅无应用表时允许初始化；有表但无 marker 时提示迁移。元数据/版本读取失败保留异常链并返回 HTTP 错误，初始化/迁移在此时不执行 DDL。元数据表名从初始化契约生成，查询结果有固定上限；不读取邮件行。实际结构修复先补 `address.source_meta` 再创建其索引，删除已由结构检查覆盖的旧版本分支，所有修复成功后才写版本。
 - `worker/src/core/db_schema.ts`、`unified/schema.ts`：复用一次 PRAGMA 和列名 Set 判断缺列，按表原子批量补齐；索引、默认值和 provider 回填分组执行。结构判断为 O(C)，C 为静态迁移列数。并发补列冲突必须重新确认全部所需列存在；部分补齐仍报错。初始化/迁移原有 68–85 次 D1 绑定调用超过免费档单次 50 次上限；回归实测新库 39 次、已初始化热 Worker 32 次、冷 Worker 38 次、legacy 表 41 次，测试预算限定为 45 次，为鉴权等外围操作留余量。批处理减少绑定请求，不减少 SQL 扫描或索引写入计费；不能据此推断日配额容量。
 - `frontend/src/views/admin/DatabaseManager.vue`：单次执行保护、强类型响应校验、页面生命周期取消；POST 后必须读到当前版本才提示成功。失败时隐藏旧操作建议，提供仅 GET 的状态重试，避免重复提交。中英文操作说明同步到 `vitepress-docs/docs/{zh,en}/guide/ui/d1.md`。
+- `e2e/fixtures/test-helpers.ts`：Mailpit v1.29 的 [WebSocket 实现](https://github.com/axllent/mailpit/blob/v1.29.0/server/websockets/client.go)会将多个 JSON 事件用换行拼入一条消息。测试监听器此前整条解析且吞错，导致已投递邮件等待超时；现在逐行解析，解析/谓词错误保留 cause 并立即失败，连接未就绪时关闭或超时也会结束两个等待并清理连接。9 项确定性测试进入 Docker E2E 入口，不增加重试或延长超时。
 
-新增 69 项回归（队列 19、数据库状态/迁移 37、管理页 13）。原实现先复现重试过频、队列相互拖延、慢轮询饥饿、异常被吞、旧表缺列迁移失败、D1 调用预算超限，以及管理页重复提交/假成功；修复后本地全量 Worker **553**、前端 **314**、聚合器 **621**、数据库工具 **33**，共 **1521** 项通过。真实 SQLite 验证补列批次失败原子回滚、重放保留邮件及并发完整性检查。Shared build、Worker typecheck/lint/bundle、前端 typecheck/build 及管理页编译脚本类型检查通过。Docker 本机不可用，E2E 由 CI 独立验证，不能以这些单测替代线上验收。
+新增 78 项回归（队列 19、数据库状态/迁移 37、管理页 13、E2E 助手 9）。原实现先复现重试过频、队列相互拖延、慢轮询饥饿、异常被吞、旧表缺列迁移失败、D1 调用预算超限，以及管理页重复提交/假成功；修复后本地全量 Worker **553**、前端 **314**、聚合器 **621**、数据库工具 **33**、E2E 助手 **9**，共 **1530** 项通过。真实 SQLite 验证补列批次失败原子回滚、重放保留邮件及并发完整性检查；Mailpit 合并事件与连接生命周期测试先复现 8 项失败后全部通过。Shared build、Worker typecheck/lint/bundle、前端 typecheck/build 及管理页编译脚本类型检查通过。Docker 本机不可用，E2E 由 CI 独立验证，不能以这些单测替代线上验收。
 
 这些修复限制故障期间的请求放大，并修正状态判断；不表示外部网络超时根因消失、D1 长期配额足够或百人容量已验收。完整 schema 迁移仍是低频管理员动作，不是每次状态查询都运行的操作。线上部署与实际验证以发布记录为准。

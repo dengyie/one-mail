@@ -133,7 +133,8 @@ function mailpitWsUrl(): string {
  * Wait for a message matching `predicate` to arrive in Mailpit.
  *
  * Connects to Mailpit's WebSocket `/api/events` and listens for
- * `Type: "new"` events. When a matching message arrives, resolves
+ * `Type: "new"` events (Mailpit batches them as newline-delimited JSON).
+ * When a matching message arrives, resolves
  * immediately — no polling, no arbitrary sleeps.
  *
  * Returns `{ ready, message }`:
@@ -156,36 +157,45 @@ export function onMailpitMessage(
   const message = new Promise<any>((resolve, reject) => {
     let settled = false;
     const ws = new WebSocket(mailpitWsUrl());
-    const timer = setTimeout(() => {
-      ws.close();
-      if (!settled) { settled = true; reject(new Error('Mailpit message not received within timeout')); }
-    }, timeout);
+    const dispose = () => {
+      clearTimeout(timer);
+      if (ws.readyState === WebSocket.CONNECTING) ws.terminate();
+      else if (ws.readyState === WebSocket.OPEN) ws.close(1000);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      readyReject(error);
+      reject(error);
+      dispose();
+    };
+    const timer = setTimeout(() => fail(new Error('Mailpit message not received within timeout')), timeout);
 
-    ws.on('open', () => readyResolve());
+    ws.once('open', () => { if (!settled) readyResolve(); });
 
     ws.on('message', (data: WebSocket.Data) => {
+      if (settled) return;
       try {
-        const event = JSON.parse(data.toString());
-        if (event.Type === 'new' && predicate(event.Data)) {
-          clearTimeout(timer);
-          ws.close();
-          if (!settled) { settled = true; resolve(event.Data); }
+        for (const line of data.toString().split('\n')) {
+          const event = JSON.parse(line);
+          if (event.Type !== 'new' || !predicate(event.Data)) continue;
+          settled = true;
+          resolve(event.Data);
+          dispose();
+          return;
         }
-      } catch { /* ignore parse errors */ }
+      } catch (cause) {
+        fail(new Error('Failed to process Mailpit event', { cause }));
+      }
     });
 
-    ws.on('close', () => {
-      clearTimeout(timer);
-      if (!settled) { settled = true; reject(new Error('Mailpit WebSocket closed before matching message')); }
-    });
-
-    ws.on('error', (err: Error) => {
-      clearTimeout(timer);
-      readyReject(err);
-      if (!settled) { settled = true; reject(err); }
-    });
+    ws.once('close', () => fail(new Error('Mailpit WebSocket closed before matching message')));
+    ws.on('error', fail);
   });
 
+  // Callers await readiness before delivery. Observe early failures here while
+  // preserving rejection on both public promises, including connection errors.
+  void Promise.allSettled([ready, message]);
   return { ready, message };
 }
 
