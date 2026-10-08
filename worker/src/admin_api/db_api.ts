@@ -181,6 +181,8 @@ CREATE TABLE IF NOT EXISTS emails (
     imap_uid TEXT, updated_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
+CREATE INDEX IF NOT EXISTS idx_emails_source_order_cursor
+    ON emails(source, COALESCE(internal_date, received_at) DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);

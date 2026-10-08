@@ -124,6 +124,10 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
             ON emails(to_addr, COALESCE(internal_date, received_at) DESC, id DESC)`,
         `CREATE INDEX IF NOT EXISTS idx_emails_account_folder_order_cursor
             ON emails(account_id, source_folder, COALESCE(internal_date, received_at) DESC, id DESC)`,
+        // 与上面的 order_cursor 家族同形：source 单列索引无法提供 ORDER BY 有序性，
+        // 任何 source 过滤的列表查询都会退化成全表扫描 + 排序。
+        `CREATE INDEX IF NOT EXISTS idx_emails_source_order_cursor
+            ON emails(source, COALESCE(internal_date, received_at) DESC, id DESC)`,
         `CREATE INDEX IF NOT EXISTS idx_emails_provider_thread
             ON emails(account_id, provider_thread_id)
             WHERE provider_thread_id IS NOT NULL`,

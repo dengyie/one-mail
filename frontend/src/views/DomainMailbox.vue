@@ -161,6 +161,10 @@ let componentDisposed = false
 const listParams = computed(() => ({
     domain: domain.value,
     limit: PAGE_SIZE,
+    // 本页不展示总数（loadList 只取 results/next_cursor），而服务端默认 with_count=1
+    // 会每次都跑一次全表 COUNT。轮询默认 10s 一次，约 24.5k rows/次，是 D1 免费档
+    // rows_read 的主要消耗方之一。
+    with_count: 0,
     ...(addressOnly.value && fullAddress.value ? { to_addr: fullAddress.value } : {}),
     ...(statusFilter.value === 'unread' ? { unread: '1' } : {}),
     ...(statusFilter.value === 'starred' ? { starred: '1' } : {}),

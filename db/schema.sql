@@ -224,6 +224,8 @@ CREATE INDEX IF NOT EXISTS idx_emails_to_order_cursor
     ON emails(to_addr, COALESCE(internal_date, received_at) DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_account_folder_order_cursor
     ON emails(account_id, source_folder, COALESCE(internal_date, received_at) DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_source_order_cursor
+    ON emails(source, COALESCE(internal_date, received_at) DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_provider_thread
     ON emails(account_id, provider_thread_id) WHERE provider_thread_id IS NOT NULL;
 

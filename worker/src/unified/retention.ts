@@ -36,6 +36,35 @@ function attachmentKeys(attachmentsJson: string | null | undefined): string[] {
 }
 
 /**
+ * One full `emails` scan answers this for every key at once. Asking per key
+ * meant one scan per GC row (up to ATTACHMENT_GC_BATCH_LIMIT scans per drain),
+ * which on a large mailbox is enough rows_read to trip the free-tier quota on
+ * its own.
+ */
+const ATTACHMENT_REF_CHUNK = 50;
+
+async function findReferencedAttachmentKeys(
+    env: Bindings,
+    keys: string[],
+): Promise<Set<string>> {
+    const referenced = new Set<string>();
+    if (keys.length === 0) return referenced;
+    for (let offset = 0; offset < keys.length; offset += ATTACHMENT_REF_CHUNK) {
+        const chunk = keys.slice(offset, offset + ATTACHMENT_REF_CHUNK);
+        const placeholders = chunk.map(() => "?").join(", ");
+        const { results } = await env.DB.prepare(
+            `SELECT DISTINCT json_extract(json_each.value, '$.r2_key') AS r2_key
+             FROM emails, json_each(COALESCE(emails.attachments_json, '[]'))
+             WHERE json_extract(json_each.value, '$.r2_key') IN (${placeholders})`,
+        ).bind(...chunk).all<{ r2_key: string }>();
+        for (const row of results ?? []) {
+            if (typeof row?.r2_key === "string") referenced.add(row.r2_key);
+        }
+    }
+    return referenced;
+}
+
+/**
  * Delete only objects that have no remaining email reference. The GC row is
  * durable, so a transient R2 failure cannot make an already-committed DB
  * deletion lose its attachment permanently.
@@ -49,28 +78,33 @@ async function drainAttachmentGc(env: Bindings): Promise<void> {
          ORDER BY created_at ASC
          LIMIT ?`,
     ).bind(ATTACHMENT_GC_BATCH_LIMIT).all<AttachmentGcRow>();
+    const rows = results ?? [];
+    if (rows.length === 0) return;
 
-    for (const row of results ?? []) {
-        const stillReferenced = await env.DB.prepare(
-            `SELECT 1 FROM emails, json_each(COALESCE(emails.attachments_json, '[]'))
-             WHERE json_extract(json_each.value, '$.r2_key') = ? LIMIT 1`,
-        ).bind(row.r2_key).first();
-        if (stillReferenced) {
-            await env.DB.prepare(`DELETE FROM attachment_gc WHERE r2_key = ?`).bind(row.r2_key).run();
+    const keys = rows
+        .map((row) => row?.r2_key)
+        .filter((key): key is string => typeof key === "string" && key.length > 0);
+    const referenced = await findReferencedAttachmentKeys(env, keys);
+
+    for (const row of rows) {
+        const key = row?.r2_key;
+        if (typeof key !== "string" || key.length === 0) continue;
+        if (referenced.has(key)) {
+            await env.DB.prepare(`DELETE FROM attachment_gc WHERE r2_key = ?`).bind(key).run();
             continue;
         }
         try {
-            await bucket.delete(row.r2_key);
+            await bucket.delete(key);
         } catch (error) {
             await env.DB.prepare(
                 `UPDATE attachment_gc
                     SET attempts = attempts + 1, last_error = ?, updated_at = ?
                   WHERE r2_key = ?`,
-            ).bind(String(error).slice(0, 500), Date.now(), row.r2_key).run();
+            ).bind(String(error).slice(0, 500), Date.now(), key).run();
             console.error("r2 attachment cleanup failed; retaining GC row", error);
             continue;
         }
-        await env.DB.prepare(`DELETE FROM attachment_gc WHERE r2_key = ?`).bind(row.r2_key).run();
+        await env.DB.prepare(`DELETE FROM attachment_gc WHERE r2_key = ?`).bind(key).run();
     }
 }
 
