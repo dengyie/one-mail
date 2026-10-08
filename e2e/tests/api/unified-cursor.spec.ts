@@ -38,7 +38,7 @@ test('unified inbox cursor pagination is stable across concurrent inserts', asyn
   expect(await ingestRes.json()).toMatchObject({ inserted: 5, skipped: 0 });
 
   const firstRes = await request.get(
-    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2`,
+    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&with_count=1`,
     { headers: authHeaders },
   );
   expect(firstRes.ok()).toBe(true);
@@ -75,40 +75,41 @@ test('unified inbox cursor pagination is stable across concurrent inserts', asyn
   expect(concurrentRes.ok()).toBe(true);
 
   const secondRes = await request.get(
-    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&cursor=${encodeURIComponent(first.next_cursor!)}`,
+    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&with_count=1&cursor=${encodeURIComponent(first.next_cursor!)}`,
     { headers: authHeaders },
   );
   expect(secondRes.ok()).toBe(true);
   const second = await secondRes.json() as {
-    count: number;
+    // Counted, but a later cursor page never recomputes: null, not 0.
+    count: number | null;
     results: Array<{ id: string; subject: string }>;
     next_cursor: string | null;
     has_more: boolean;
   };
-  expect(second.count).toBe(0);
+  expect(second.count).toBeNull();
   expect(second.results.map((row) => row.subject)).toEqual(['cursor-3', 'cursor-2']);
   expect(second.has_more).toBe(true);
   expect(second.next_cursor).toBeTruthy();
   expect(new Set([...first.results, ...second.results].map((row) => row.id)).size).toBe(4);
 
   const thirdRes = await request.get(
-    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&cursor=${encodeURIComponent(second.next_cursor!)}`,
+    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&with_count=1&cursor=${encodeURIComponent(second.next_cursor!)}`,
     { headers: authHeaders },
   );
   expect(thirdRes.ok()).toBe(true);
   const third = await thirdRes.json() as {
-    count: number;
+    count: number | null;
     results: Array<{ subject: string }>;
     next_cursor: string | null;
     has_more: boolean;
   };
-  expect(third.count).toBe(0);
+  expect(third.count).toBeNull();
   expect(third.results.map((row) => row.subject)).toEqual(['cursor-1']);
   expect(third.has_more).toBe(false);
   expect(third.next_cursor).toBeNull();
 
   const legacyRes = await request.get(
-    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&offset=0`,
+    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&offset=0&with_count=1`,
     { headers: authHeaders },
   );
   expect(legacyRes.ok()).toBe(true);
@@ -120,6 +121,17 @@ test('unified inbox cursor pagination is stable across concurrent inserts', asyn
   expect(legacy.count).toBe(6);
   expect(legacy.results.map((row) => row.subject)).toEqual(['cursor-newer', 'cursor-5']);
   expect(legacy.next_cursor).toBeUndefined();
+
+  // Totals are opt-in: omitting with_count must skip the unindexed COUNT(*)
+  // and report null ("not computed") rather than a fake 0.
+  const uncountedRes = await request.get(
+    WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2`,
+    { headers: authHeaders },
+  );
+  expect(uncountedRes.ok()).toBe(true);
+  const uncounted = await uncountedRes.json() as { count: number | null; results: unknown[] };
+  expect(uncounted.count).toBeNull();
+  expect(uncounted.results).toHaveLength(2);
 
   const invalidRes = await request.get(
     WORKER_URL + `/api/unified/emails?account_id=${encodeURIComponent(accountId)}&limit=2&cursor=not-a-valid-cursor`,

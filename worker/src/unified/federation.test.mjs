@@ -6,6 +6,7 @@ import ts from "typescript";
 import { DatabaseSync } from "node:sqlite";
 import { Buffer } from "node:buffer";
 import { setImmediate } from "node:timers";
+import { encodeEmailCursor } from "./cursor.ts";
 
 // Exercise real routes without external auth/settings/providers. Extensionless
 // imports are resolved like the Worker bundler; only unrelated boundaries stub.
@@ -229,7 +230,13 @@ test("empty map preserves legacy count bodies and never calls a shard", async ()
         const offset = await app.request("https://gateway.invalid/api/unified/emails?limit=1&offset=0&with_count=0", { headers }, env);
         assert.equal(await offset.text(), '{"results":[],"count":null}');
         const cursor = await app.request("https://gateway.invalid/api/unified/emails?limit=1&with_count=0", { headers }, env);
-        assert.equal(await cursor.text(), '{"results":[],"count":0,"next_cursor":null,"has_more":false}');
+        assert.equal(await cursor.text(), '{"results":[],"count":null,"next_cursor":null,"has_more":false}');
+        // 显式 opt-in 才计数，并且数出来是 0（而不是因为没算才返回 null）。
+        const counted = await app.request("https://gateway.invalid/api/unified/emails?limit=1&with_count=1", { headers }, env);
+        assert.equal(await counted.text(), '{"results":[],"count":0,"next_cursor":null,"has_more":false}');
+        // 不带参数等同于不带 COUNT：整表 COUNT 是 10-08 打爆 D1 免费档的主因。
+        const defaulted = await app.request("https://gateway.invalid/api/unified/emails?limit=1", { headers }, env);
+        assert.equal(await defaulted.text(), '{"results":[],"count":null,"next_cursor":null,"has_more":false}');
         const missing = await app.request("https://gateway.invalid/api/unified/emails/missing", { headers }, env);
         assert.equal(missing.status, 404);
         assert.equal(await missing.text(), '{"error":"not found"}');
@@ -388,17 +395,21 @@ test("main+shard SQLite topology merges lists/cursors/counts/codes and excludes 
     const t = await topology();
     try {
         await withFetch(t.fetchRemote, async () => {
-            const first = await (await t.request("emails?limit=2")).json();
+            const first = await (await t.request("emails?limit=2&with_count=1")).json();
             assert.deepEqual(first.results.map(row => row.id), ["native", "migrated"]);
             assert.equal(first.count, 5);
             assert.equal(first.has_more, true);
+            // 省略 with_count 就是不要总数：整表 COUNT 是 10-08 打爆 D1 免费档的主因。
+            const uncounted = await (await t.request("emails?limit=2")).json();
+            assert.equal(uncounted.count, null);
             const second = await (await t.request(`emails?limit=10&cursor=${encodeURIComponent(first.next_cursor)}`)).json();
             assert.deepEqual(second.results.map(row => row.id), ["local", "remote-older", "source-denied"]);
-            assert.equal(second.count, 0);
+            assert.equal(second.count, null);
             assert.equal(second.has_more, false);
-            const offset = await (await t.request("emails?limit=2&offset=1")).json();
+            const offset = await (await t.request("emails?limit=2&offset=1&with_count=1")).json();
             assert.deepEqual(offset.results.map(row => row.id), ["migrated", "local"]);
-            assert.equal(offset.count, 0);
+            // 翻了页即使 opt-in 也不重算总数：null（没算），不是 0（看着像空邮箱）。
+            assert.equal(offset.count, null);
             assert.deepEqual(await (await t.request("count")).json(), { count: 5 });
             assert.deepEqual(await (await t.request("stats")).json(), { count: 5, unread: 5 });
             const codes = await (await t.request("verifcodes?addr=mine%40test&fresh=10")).json();
@@ -471,7 +482,7 @@ test("main+shard SQLite authorization rejects tenants, sources, readonly writes,
             assert.equal((await t.request(...mutationRequest("migrated", "move", "POST", { folder_id: 20 }))).status, 400);
             assert.equal((await t.request(...mutationRequest("migrated", "move", "POST", { folder_id: "bad" }))).status, 400);
             const keyRequest = (path, init = {}) => t.request(path, { ...init, headers: t.keyHeaders });
-            const list = await (await keyRequest("emails?limit=10")).json();
+            const list = await (await keyRequest("emails?limit=10&with_count=1")).json();
             assert.deepEqual(list.results.map(row => row.id), ["migrated", "remote-older"]);
             assert.equal(list.count, 2);
             assert.equal((await keyRequest("emails/migrated")).status, 200);
@@ -579,11 +590,30 @@ test("main+shard SQLite remote failures preserve local success and expose degrad
     } finally { t.close(); }
 });
 
-test("offset with_count=0 retains legacy null count, cursor keeps zero", async () => {
+test("no count requested means null on every page; counted requests only count the first page", async () => {
     await withFetch(async () => Response.json({ results: [], count: null }), async () => {
-        for (const [offset, expected] of [[0, null], [1, 0], [undefined, 0]]) {
+        // 未 opt-in：任何分页形态都不得回一个看起来像「已算出 0」的值。
+        for (const offset of [0, 1, undefined]) {
             const response = await federation.federatedListEmails(context(), map, { rest: {}, limit: 1, offset, withCount: false });
-            assert.equal((await response.json()).count, expected);
+            assert.equal((await response.json()).count, null);
+        }
+        const paged = await federation.federatedListEmails(
+            context(), map, { rest: {}, limit: 1, cursor: encodeEmailCursor(1, "x"), withCount: false });
+        assert.equal((await paged.json()).count, null);
+
+        // opt-in 后只在首页计数。翻页即使 opt-in 也不重算，回 null 而非 0 ——
+        // 0 会被读成「邮箱空了」，与「没算」是两回事。单库路径语义相同。
+        // 首页有两种形态：offset=0 的 legacy 分页，以及不传 offset 的游标首页。
+        for (const firstPage of [{ offset: 0 }, { offset: undefined }]) {
+            const response = await federation.federatedListEmails(
+                context(), map, { rest: {}, limit: 1, ...firstPage, withCount: true });
+            assert.equal((await response.json()).count, 0);
+        }
+        // 翻页形态：offset>0 与带 cursor。
+        for (const paged of [{ offset: 1 }, { cursor: encodeEmailCursor(1, "x") }]) {
+            const response = await federation.federatedListEmails(
+                context(), map, { rest: {}, limit: 1, ...paged, withCount: true });
+            assert.equal((await response.json()).count, null);
         }
     });
 });

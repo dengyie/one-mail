@@ -409,8 +409,12 @@ const loadList = async ({ background = false } = {}) => {
   if (background && backgroundListPending) return false
   const controller = beginRequest('list')
   const requestedPage = page.value
-  const requestedParams = listParams.value
-  const requestedKey = JSON.stringify(requestedParams)
+  const listParamsSnapshot = listParams.value
+  const requestedKey = JSON.stringify(listParamsSnapshot)
+  // 后台轮询不请求总数：COUNT(*) 走不了索引、要整表读，是 2026-10-08 打爆 D1
+  // 免费档 rows_read 的主因之一。前台刷新（挂载、手动、换筛选、翻页）才重算，
+  // 两次之间页面沿用上一次已知的总数。
+  const requestedParams = background ? { ...listParamsSnapshot, with_count: 0 } : listParamsSnapshot
 
   backgroundListPending = background
   loading.value = !background

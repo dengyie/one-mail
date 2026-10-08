@@ -79,7 +79,8 @@ const buildListParams = ({ limit, offset, withCount = true }) => {
   const params = new URLSearchParams()
   params.set('limit', String(limit))
   params.set('offset', String(offset))
-  if (!withCount) params.set('with_count', '0')
+  // 服务端总数改为显式 opt-in（不传就不算），这里必须显式带上，不能依赖默认值。
+  params.set('with_count', withCount ? '1' : '0')
   if (props.source) params.set('source', props.source)
   if (props.address) params.set('address', props.address)
   if (channelFilter.value) params.set('channel', channelFilter.value)
