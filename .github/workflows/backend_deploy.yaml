@@ -245,7 +245,7 @@ jobs:
             exit 1
           fi
           cd worker/
-          trap 'rm -f ../.d1-user-mail-accounts-schema.json ../.d1-can-send.sql' EXIT
+          trap 'rm -f ../.d1-user-mail-accounts-schema.json; rm -f ../.d1-outbound-columns.sql' EXIT
 
           # New outbound_mail_jobs table is created with CREATE IF NOT EXISTS
           # (idempotent; safe to replay against an already-initialized D1).
@@ -254,28 +254,29 @@ jobs:
             --yes \
             --file ../db/2026-10-05-outbound-mail-jobs.sql
 
-          # user_mail_accounts.can_send is a non-idempotent ALTER on an existing
-          # table. Render it only while the column is absent; every later deploy
-          # is a no-op here.
+          # The aggregator export reads SMTP/proxy columns even when sending is
+          # disabled. Repair each missing column before publishing the Worker.
           pnpm exec wrangler d1 execute DB \
             --remote \
             --command "PRAGMA table_info(user_mail_accounts)" \
             --json > ../.d1-user-mail-accounts-schema.json
 
-          python3 ../db/render_outbound_mail_migration.py \
-            --schema-json ../.d1-user-mail-accounts-schema.json \
-            --migration ../db/2026-10-05-user-mail-accounts-can-send.sql \
-            --output ../.d1-can-send.sql
+          for migration in \
+            ../db/2026-10-05-user-mail-accounts-can-send.sql \
+            ../db/2026-10-08-user-mail-accounts-smtp-proxy.sql; do
+            python3 ../db/render_outbound_mail_migration.py \
+              --schema-json ../.d1-user-mail-accounts-schema.json \
+              --migration "$migration" \
+              --output ../.d1-outbound-columns.sql
 
-          if [ -s ../.d1-can-send.sql ]; then
-            pnpm exec wrangler d1 execute DB \
-              --remote \
-              --yes \
-              --file ../.d1-can-send.sql
-            echo "Remote D1 user_mail_accounts.can_send column added"
-          else
-            echo "Remote D1 outbound mail schema is current"
-          fi
+            if [ -s ../.d1-outbound-columns.sql ]; then
+              pnpm exec wrangler d1 execute DB \
+                --remote \
+                --yes \
+                --file ../.d1-outbound-columns.sql
+            fi
+          done
+          echo "Remote D1 outbound mail columns verified"
 
       - name: Ensure remote D1 passkey challenge schema
         shell: bash

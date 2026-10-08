@@ -130,3 +130,11 @@ Worker build使用从模板生成的本地 `wrangler.toml`，是`--dry-run`。�
 随后在Cloudflare真实DO实例首次configure时复现503：Workers不支持`fetch`的`redirect: "error"`。注册表与分片客户端统一改为`manual`并显式拒绝3xx、取消响应流；服务边界保留传输错误异常链，避免诊断只剩503。新增`e2e/tests/api/fleet-registry.spec.ts`通过真实Worker/DO绑定验证configure、snapshot、plan和幂等重放，弥补Node模拟边界。
 
 本地完整门禁合计1445项通过。Cloudflare隔离实例18项检查通过，覆盖换库/换账户重新资格化、满额12账户连续替换、幂等重放、权限隔离与条件快照。发布范围是静态/observe基础能力，生产数据面继续使用静态路由；隔离实例未绑定生产D1，不向生产registry写入合成配置。完整动态分配与迁移仍须先完成第6节安全依赖及D7验收。实际部署版本与线上测试结果以发布记录为准。
+
+## 8. 发布后账号导出缺列修复
+
+PR #96（`668a338`）发布后，UTC零点前正常列表因D1免费读配额耗尽返回500；零点后列表恢复，但`/admin/unified/mail_accounts`仍失败。生产`PRAGMA table_info(user_mail_accounts)`确认已有`can_send`，却缺少`smtp_host`、`smtp_port`、`smtp_ssl`和`proxy_policy`。导出查询无条件投影这四列；仅更新Worker或重启聚合器不能修复。
+
+`db/2026-10-08-user-mail-accounts-smtp-proxy.sql`按现有`db/schema.sql`及管理员初始化器补齐四列。部署继续使用现有outbound迁移渲染器，改为逐列判断而非仅凭`can_send`跳过整份SQL；schema查询解析复用现有D1解析器。发布前自动执行新增迁移，不在请求热路径做DDL，不改账号凭据、发送权限或分片归属。复杂度为O(C)，C为受限的迁移列数。
+
+回归覆盖生产旧表、只完成部分DDL的重试、已有SMTP值与加密凭据保留、重复执行零变更、新表初始化边界以及错误输入拒绝。四项测试先失败后通过。这个修复解决账号导出的缺列错误；UTC日配额重置只恢复当前可用性，不等于长期配额容量问题已经根治。
