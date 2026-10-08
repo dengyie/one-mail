@@ -121,7 +121,7 @@ test('deleting a user removes imported mail before the username is rebound', asy
     const ingestBody = await ingestRes.json() as { inserted: number };
     expect(ingestBody.inserted).toBe(1);
 
-    const beforeRes = await request.get(WORKER_URL + '/api/unified/emails?limit=20&offset=0', {
+    const beforeRes = await request.get(WORKER_URL + '/api/unified/emails?limit=20&offset=0&with_count=1', {
       headers: { 'x-user-token': userA.jwt },
     });
     expect(beforeRes.ok()).toBe(true);
@@ -148,7 +148,7 @@ test('deleting a user removes imported mail before the username is rebound', asy
     userB = await createUser(request, 'lifecycle-b');
     await createExternalAccount(request, userB, username);
 
-    const afterRes = await request.get(WORKER_URL + '/api/unified/emails?limit=20&offset=0', {
+    const afterRes = await request.get(WORKER_URL + '/api/unified/emails?limit=20&offset=0&with_count=1', {
       headers: { 'x-user-token': userB.jwt },
     });
     expect(afterRes.ok()).toBe(true);
