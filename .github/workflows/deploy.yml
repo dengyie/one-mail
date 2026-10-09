@@ -64,6 +64,9 @@ jobs:
           pnpm --filter @one-mail/worker lint
           pnpm --filter @one-mail/worker build
 
+      - name: Frontend typecheck
+        run: pnpm --filter @one-mail/frontend typecheck
+
       - name: Run Frontend tests
         run: pnpm --filter @one-mail/frontend test
 

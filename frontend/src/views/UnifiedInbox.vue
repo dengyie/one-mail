@@ -35,7 +35,7 @@
             <n-alert v-if="degradedShards.length" type="warning" class="inbox-alert"><span>{{ t('list.incompleteResults') }} ({{ degradedShards.join(', ') }})</span><n-button text size="tiny" :loading="loading" @click="refreshList">{{ t('list.retryDegraded') }}</n-button></n-alert>
             <div v-if="optionsError" class="inbox-alert workspace-caption">{{ optionsError }} <n-button text size="tiny" @click="retryOptions">{{ w('retry') }}</n-button></div>
             <div v-if="loading && !emails.length" class="p-5 space-y-6" :aria-label="t('list.loading')" aria-busy="true"><div v-for="i in 5" :key="i" class="flex gap-4"><n-skeleton circle size="medium" /><div class="flex-1 space-y-3"><n-skeleton text :width="'35%'" /><n-skeleton text :width="'75%'" /><n-skeleton text :width="'50%'" /></div></div></div>
-            <WorkspaceEmpty v-else-if="listError && !emails.length" icon="circle-x" :title="w('retry')" :description="listError"><n-button @click="loadList">{{ w('retry') }}</n-button></WorkspaceEmpty>
+            <WorkspaceEmpty v-else-if="listError && !emails.length" icon="circle-x" :title="w('retry')" :description="listError"><n-button @click="loadList()">{{ w('retry') }}</n-button></WorkspaceEmpty>
             <WorkspaceEmpty v-else-if="!hasAccess" icon="lock" :title="w('privateSpace')" :description="w('guestHint')"><n-button type="primary" @click="router.push(getRouterPathWithLang('/user', locale))">{{ w('login') }}</n-button></WorkspaceEmpty>
             <WorkspaceEmpty v-else-if="!emails.length" :icon="filterActive ? 'search' : 'inbox'" :title="w(filterActive ? 'noResults' : 'noMail')" :description="w(filterActive ? 'noResultsDescription' : 'noMailDescription')"><n-button v-if="filterActive" @click="clearFilters">{{ w('clearFilters') }}</n-button><n-button v-else-if="isLoggedIn" @click="router.push(getRouterPathWithLang('/user/external-accounts', locale))">{{ w('manageAccounts') }}</n-button></WorkspaceEmpty>
             <div v-else class="inbox-rows" :aria-busy="loading">
@@ -404,7 +404,7 @@ let autoRefreshTimer = null
 let componentDisposed = false
 const autoRefresh = ref(true)
 
-const loadList = async ({ background = false } = {}) => {
+const loadList = async ({ background = false, withCount } = {}) => {
   if (componentDisposed || !componentActive || !hasAccess.value) return false
   if (background && backgroundListPending) return false
   const controller = beginRequest('list')
@@ -413,8 +413,11 @@ const loadList = async ({ background = false } = {}) => {
   const requestedKey = JSON.stringify(listParamsSnapshot)
   // 后台轮询不请求总数：COUNT(*) 走不了索引、要整表读，是 2026-10-08 打爆 D1
   // 免费档 rows_read 的主因之一。前台刷新（挂载、手动、换筛选、翻页）才重算，
-  // 两次之间页面沿用上一次已知的总数。
-  const requestedParams = background ? { ...listParamsSnapshot, with_count: 0 } : listParamsSnapshot
+  // 两次之间页面沿用上一次已知的总数；前台调用方也可以用 withCount: 0
+  // 显式跳过这一次重算（例如切页签回流）。
+  const requestedParams = background
+    ? { ...listParamsSnapshot, with_count: 0 }
+    : (withCount === undefined ? listParamsSnapshot : { ...listParamsSnapshot, with_count: withCount })
 
   backgroundListPending = background
   loading.value = !background
@@ -447,7 +450,11 @@ const loadList = async ({ background = false } = {}) => {
     if (requestedPage === 1 && typeof listRes.count === 'number') {
       count.value = listRes.count
     }
-    // 刷新探测基线（仅第一页代表全域最新一封）
+    // 刷新探测基线（仅第一页代表全域最新一封）。列表响应比探测请求新，所以它是
+    // 权威值，而且必须无条件写入：基线的定义就是「刚刚真正加载出来的第一页首行」，
+    // hasNew = (探测 key !== 基线) 只有在基线忠实反映已渲染内容时才成立。筛选会
+    // 改变首行（取消星标后新的首行更旧），这时后退是正确的；只有探测那一次写入
+    // 需要单调，因为它的采样严格早于列表响应，不能把基线往回拽。
     if (requestedPage === 1 && !incomplete) {
       newestSeenKey = emails.value.length ? emailSortKey(emails.value[0]) : ''
     }
@@ -600,8 +607,28 @@ const autoRefreshList = () => {
       if (!currentRequest('probe', controller)) return
       const hasNew = newestKey !== newestSeenKey || degradedShards.value.length > 0 || Boolean(listError.value)
       if (hasNew && !backgroundListPending) {
+        // 新邮件只可能出现在第一页：后台刷新会沿用当前页 cursor，停在第 2 页时
+        // 刷的是旧切片，这次到达会被静默吞掉。回到第一页再刷新，让用户看见。
+        // 真正必须的是 pageCursors 是普通 Map、非响应式，listParams 观测不到它，
+        // 只有 page.value 变化才能让失效的 cursor 走掉；page.value !== 1 只是
+        // 顺手的优化（第 1 页的 cursor 本来就是 undefined，没有失效的旧游标）。
+        // 条件里刻意不要求 newestSeenKey 非空：带上它的话，空基线 + 停在第 2 页
+        // 会跳过这次回第一页，后台重取就只会把旧的第 N 页切片再取一遍，基线随后
+        // 还会越过一个用户根本没看到的到达——那正是这个 bug 本身。多跳一次第一页
+        // 只是轻微打扰，静默吞信不是。
+        // 这里不调 cancelRequest('probe')：下面推进基线还要靠它保持有效。
+        const backToFirstPage = newestKey !== newestSeenKey && page.value !== 1
+        if (backToFirstPage) {
+          resetPagination()
+          // 同时清掉探测基线：这次重取要是失败，hasNew 依然为真，下一个 tick 会
+          // 自己重试。不需要为失败单独回滚——回滚得先分清「是我的请求失败」还是
+          // 「被别人抢走」，而这两种情况在 loadList 的返回值里分不开，硬判只会判错。
+          newestSeenKey = ''
+        }
         const loaded = await loadList({ background: true })
-        if (loaded && currentRequest('probe', controller)) newestSeenKey = newestKey
+        if (loaded && currentRequest('probe', controller) && newestKey > newestSeenKey) {
+          newestSeenKey = newestKey
+        }
       }
     } catch (error) {
       if (currentRequest('probe', controller)) {
@@ -1033,19 +1060,38 @@ watch(codesFresh, () => {
   }
 })
 
+// 路由 watcher 与 watch(activeTab) 可能为同一次导航各发一次请求。路由 watcher 的
+// 回调体是同步跑完的，watch(activeTab) 才会排到它后面，所以用这个标记让位。
+// 记的是页签名而不是布尔：过期的页签名只会在同名页签上生效，串不到别的页签去。
+// 它必定被消费：置位处紧跟着 activeTab 的真变化，那个 watch 一定排队触发；
+// 没置位时这里存的是空串，也匹配不上任何页签（每次触发都先无条件清掉）。
+let listLoadedByRouteWatcherForTab = ''
+
 watch(activeTab, (tab) => {
+  const listLoadedByRouteWatcher = listLoadedByRouteWatcherForTab === tab
+  listLoadedByRouteWatcherForTab = ''
   if ((route.query.tab || 'list') !== tab) router.replace({ query: { ...route.query, tab: tab === 'list' ? undefined : tab } })
   if (tab === 'codes') {
     loadCodes()
   } else if (tab === 'status') {
     loadStatus()
+  } else if (tab === 'list') {
+    // 停在其它页签期间 autoRefreshList 直接 return，既不刷新列表也不推进
+    // newestSeenKey，所以切回来要主动重取，否则新邮件要等下一个轮询 tick 才
+    // 出现（验证码页有独立轮询，于是「验证码已到、收件箱没新邮件」）。本来
+    // handleVisibilityChange 和那个 tick 也能兜底，只是要多等一整个周期。
+    // 同一次导航的路由 watcher 已经带着 COUNT(*) 取过一次了，别重复查询。
+    // 纯页签切换通常不改筛选，这里顺手关掉 COUNT(*)，把 rows_read 省下来。
+    if (!listLoadedByRouteWatcher) loadList({ withCount: 0 })
   }
 })
 
 // Sidebar and global search share the same bookmarkable inbox state.
 watch(() => [route.query.q, route.query.view, route.query.source, route.query.account, route.query.unread, route.query.starred, route.query.tab], (current, previous) => {
   const [search, view, source, account, unread, starred, tab] = current
-  activeTab.value = validTabs.includes(tab) ? tab : 'list'
+  const nextTab = validTabs.includes(tab) ? tab : 'list'
+  const tabChanged = activeTab.value !== nextTab
+  activeTab.value = nextTab
   if (current.slice(0, 6).some((value, index) => value !== previous[index])) {
     cancelRequest('probe')
     newestSeenKey = ''
@@ -1055,6 +1101,9 @@ watch(() => [route.query.q, route.query.view, route.query.source, route.query.ac
     unreadOnly.value = view === 'unread' || unread === '1'
     starOnly.value = view === 'starred' || starred === '1'
     resetPagination()
+    // 同时换了页签时 watch(activeTab) 也会排到后面再取一次；这里照常发起（本次
+    // 导航要重算总数），并用标记让它那边让位，避免同一次导航发两次请求。
+    listLoadedByRouteWatcherForTab = tabChanged ? nextTab : ''
     loadList()
   }
 })
