@@ -302,11 +302,15 @@ app.use('/admin/*', async (c, next) => {
 		} catch { /* verify 抛错 -> null */ }
 	}
 
+	const [adminAuthValid, adminFailCount] = await Promise.all([
+		checkIsAdmin(c),
+		getAdminFailCount(c),
+	]);
 	const decision = await decideAdminAuth({
 		hasAdminAuth,
 		hasAccessToken,
-		adminAuthValid: await checkIsAdmin(c),
-		adminFailCount: await getAdminFailCount(c),
+		adminAuthValid,
+		adminFailCount,
 		adminUserRole: c.env.ADMIN_USER_ROLE,
 		disableAdminPasswordCheck: getBooleanValue(c.env.DISABLE_ADMIN_PASSWORD_CHECK),
 		accessTokenPayload,
@@ -315,7 +319,7 @@ app.use('/admin/*', async (c, next) => {
 	if (decision.relay) {
 		// 命中（头通道有效 -> 清零本窗口失败计数，H3 防误伤后自动恢复）
 		if (hasAdminAuth) {
-			await clearAdminFailures(c);
+			await clearAdminFailures(c, adminFailCount);
 		}
 		await next();
 		return;
