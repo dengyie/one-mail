@@ -3679,14 +3679,6 @@ export const MESSAGE_REGISTRY = {
     "list.countUnknown": { "en": "Total unavailable", "zh": "总数暂不可用" },
     "list.incompleteResults": { "en": "Some mail sources are unavailable. Results may be incomplete.", "zh": "部分邮件来源暂时不可用，结果可能不完整。" },
     "list.retryDegraded": { "en": "Retry this page", "zh": "重试当前页" },
-    "autoRefresh": {
-      "en": "Auto refresh",
-      "zh": "自动刷新"
-    },
-    "autoRefreshInterval": {
-      "en": "Auto refresh (5s)",
-      "zh": "自动刷新 (5s)"
-    },
     "title": {
       "en": "Unified Inbox",
       "zh": "统一收件箱"

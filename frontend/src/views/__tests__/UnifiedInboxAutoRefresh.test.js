@@ -67,6 +67,39 @@ describe('unified inbox quiet auto refresh contract', () => {
     await vi.advanceTimersByTimeAsync(60000)
     expect(ctx.api.unified.listEmails).not.toHaveBeenCalled()
   })
+  it('returns to the first page before a background reload so a page 2 poll still shows the arrival', async () => {
+    vi.useFakeTimers(); visible()
+    // 同一个 mock 同时服务探测（limit: 1）和列表（limit: 20），按 cursor 分页。
+    const arrival = email('mail-new', 'Freshly arrived mail')
+    let newest = email('mail-top', 'Newest known mail')
+    ctx.api.unified.listEmails.mockImplementation(async params => {
+      if (params.limit === 1) return { results: [newest], count: null }
+      if (params.cursor === 'cursor-1') return { results: [email('mail-21', 'Second page tail')], count: null, next_cursor: null, has_more: false }
+      return { results: [newest, email('mail-20', 'Second newest mail')], count: null, next_cursor: 'cursor-1', has_more: true }
+    })
+    const { host } = await mount(UnifiedInbox)
+
+    // 停在第 2 页：precondition，后台重载会沿用这一页的 cursor。
+    host.querySelector('button[aria-label="Next page"]').click(); await flush()
+    expect(ctx.api.unified.listEmails.mock.calls.at(-1)[0].cursor).toBe('cursor-1')
+
+    // 新邮件到达，探测开始返回新的首行。
+    newest = arrival
+    await vi.advanceTimersByTimeAsync(30000); await flush()
+
+    // 回归契约：后台重载之前必须先 resetPagination()，把用户带回第一页。
+    // 少了这一行，后台重载会带着 cursor-1 继续取第 2 页的旧切片，新邮件刷不出来，
+    // 而 newestSeenKey 仍然按探测 key 推进 —— 下一个 tick 就判定「无变化」，
+    // 这次到达被静默吞掉：没有报错、没有重试、基线也不会退回。
+    const lastListCall = ctx.api.unified.listEmails.mock.calls
+      .map(call => call[0])
+      .filter(params => params && params.limit !== 1)
+      .at(-1)
+    expect(lastListCall.cursor).toBeUndefined()
+    // 用户真的看见了新邮件，而不只是浪费了一次请求。
+    expect(host.textContent).toContain('Freshly arrived mail')
+  })
+
   it('pauses network reads while the document is hidden', async () => {
     vi.useFakeTimers(); await mount(UnifiedInbox)
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
