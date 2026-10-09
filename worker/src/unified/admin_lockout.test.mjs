@@ -20,9 +20,11 @@ const makeCtx = (mockKV) => ({
 class MemoryKV {
   constructor() {
     this.map = new Map();
+    this.getCalls = 0;
     this.deleteCalls = 0;
   }
   async get(key) {
+    this.getCalls++;
     return this.map.has(key) ? this.map.get(key) : null;
   }
   async put(key, value, opts) {
@@ -56,6 +58,32 @@ test("clearAdminFailures skips delete when no failure recorded (quota guard)", a
   // 再次清理（已无失败）→ 不再 delete
   await clearAdminFailures(c);
   assert.equal(kv.deleteCalls, 1);
+});
+
+test("known empty admin-failure count avoids a duplicate KV lookup", async () => {
+  const kv = new MemoryKV();
+  const c = makeCtx(kv);
+
+  const failCount = await getAdminFailCount(c);
+  await clearAdminFailures(c, failCount);
+
+  assert.equal(failCount, 0);
+  assert.equal(kv.getCalls, 1);
+  assert.equal(kv.deleteCalls, 0);
+});
+
+test("known positive admin-failure count is rechecked before deleting", async () => {
+  const kv = new MemoryKV();
+  const c = makeCtx(kv);
+  await recordAdminFailure(c);
+
+  const failCount = await getAdminFailCount(c);
+  await clearAdminFailures(c, failCount);
+
+  assert.equal(failCount, 1);
+  assert.equal(kv.getCalls, 3);
+  assert.equal(kv.deleteCalls, 1);
+  assert.equal(await getAdminFailCount(c), 0);
 });
 
 test("9 failures → not locked, 10th → locked", async () => {

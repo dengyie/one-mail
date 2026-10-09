@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker/Aggregator| Reuse the admin lockout count already read during authorization: the common zero-failure success path skips a duplicate serial KV read on each admin API request. When failures exist, re-read before deleting to preserve concurrency safety and KV delete-budget protection.
+
 - test: |Worker| Freeze the clock and assert exact retention cutoffs in job-pruning tests, removing CI failures caused by elapsed milliseconds between wall-clock reads.
 
 - fix: |Worker/Aggregator| Return HTTP 503, `D1_DAILY_READ_LIMIT`/`D1_DAILY_WRITE_LIMIT`, and the UTC reset time for authoritative daily D1 exhaustion. Stop retries within the failed upload batch, persist per-account pauses without advancing sync watermarks, and resume when due. Cover IDLE, Graph, polling, and status reporting while continuing healthy destinations.

@@ -50,8 +50,14 @@ export const recordAdminFailure = async (c: Context): Promise<number> => {
     }
 };
 
-export const clearAdminFailures = async (c: Context): Promise<void> => {
+export const clearAdminFailures = async (
+    c: Context,
+    knownFailureCount?: number,
+): Promise<void> => {
     if (!c.env.KV) return;
+    // The caller already read this window's counter; no failures means there
+    // is nothing to clear on the common success path.
+    if (knownFailureCount === 0) return;
     try {
         // 仅在当前窗口确有失败记录时才 delete。正常成功请求（count=0 / key 不存在）
         // 直接跳过删除——KV delete 与 read 一样都占免费配额（delete 每日仅 1000），

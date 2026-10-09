@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker/Aggregator| 管理员 claim 请求在鉴权时已读取 KV 失败计数；常见的 0 计数成功路径跳过重复 KV 读取，减少每个管理 API 请求的一次串行往返。存在失败计数时仍复查后再删除，保留并发安全和 KV 删除配额保护。
+
 - test: |Worker| 队列保留期测试固定时钟并精确断言截止时间，消除两次系统时钟读取跨毫秒造成的 CI 随机失败。
 
 - fix: |Worker/Aggregator| D1 明确的每日读/写额度耗尽返回 503、`D1_DAILY_READ_LIMIT`/`D1_DAILY_WRITE_LIMIT` 和 UTC 重置时间；聚合器不再同批重试，持久化账号暂停、保留同步水位，到期恢复。覆盖 IDLE、Graph、轮询及状态回写，一个目标失败仍处理健康目标。
