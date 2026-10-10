@@ -273,6 +273,14 @@ x-idempotency-key: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 
 ---
 
+## 🌟 謝辞：LINUX DO
+
+[![LINUX DO](https://img.shields.io/badge/Community-LINUX%20DO-2563eb.svg?logo=linux&logoColor=white)](https://linux.do/)
+
+> 🐧 **本プロジェクトは [LINUX DO](https://linux.do/) コミュニティに感謝します。** One-Mail のアーキテクチャ選定、エッジコンピューティングの実践、そして多くの本番環境トラブルシューティングは、LINUX DO コミュニティの方々の惜しみない知識共有と深い議論に触発されたものです。オープンソースの精神と純粋な技術探求に敬意を！
+
+---
+
 ## コントリビューション
 
 Issue や Pull Request による改善提案を心より歓迎いたします！

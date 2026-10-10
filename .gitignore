@@ -169,3 +169,5 @@ __pycache__/
 
 # 前端构建自动生成（unplugin 类型注入），非手写源码
 frontend/auto-imports.d.ts
+mc.json
+meta.json

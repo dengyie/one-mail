@@ -273,6 +273,14 @@ Full localization support across multiple languages:
 
 ---
 
+## 🌟 Acknowledgments: LINUX DO
+
+[![LINUX DO](https://img.shields.io/badge/Community-LINUX%20DO-2563eb.svg?logo=linux&logoColor=white)](https://linux.do/)
+
+> 🐧 **This project recognizes and thanks the [LINUX DO](https://linux.do/) community.** The architecture decisions, edge-computing practices, and many production troubleshooting techniques behind One-Mail have been inspired by the generous sharing and deep discussions within the LINUX DO community. Salute to the open-source spirit and pure technical exploration!
+
+---
+
 ## Contributing
 
 Contributions, bug reports, and feature suggestions are warmly welcome!
