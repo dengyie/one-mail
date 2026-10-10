@@ -248,39 +248,53 @@
 在用户输入邮箱地址时，前端即时计算响应：
 
 ```typescript
-// frontend/src/views/user/onboarding_hints.ts
+// frontend/src/views/user/onboarding_hints.js
+// 文案不写在本模块：只返回稳定 providerKey 与 i18n 键，由视图用
+// useScopedI18n('providerHints') 渲染成当前语言。文案位于 providerHints
+// 命名空间（frontend/src/i18n/message-registry.ts），6 语言齐全，由 locale-parity 测试守卫。
 export interface ProviderContextHint {
     match: RegExp;
     providerKey: string;
-    badge: string;
-    warningText?: string;
-    docUrl?: string;
+    badgeKey: string;    // -> providerHints.<badgeKey>（如 providerHints.linuxDo.badge）
+    warningKey: string;  // -> providerHints.<warningKey>（如 providerHints.linuxDo.warning）
 }
 
 export const PROVIDER_CONTEXT_HINTS: ProviderContextHint[] = [
     {
         match: /@linux\.do$/i,
         providerKey: "linux_do",
-        badge: "LINUX DO Mail (Mailu)",
-        warningText: "生成认证令牌时，“授权IP”请务必完全留空，切勿填写 0.0.0.0。",
+        badgeKey: "linuxDo.badge",
+        warningKey: "linuxDo.warning",
     },
     {
-        match: /@qq\.com$|@foxmail\.com$/i,
+        match: /@(qq|foxmail)\.com$/i,
         providerKey: "qq",
-        badge: "QQ 邮箱",
-        warningText: "需在 QQ 邮箱网页端“账户设置”中生成 16 位 POP3/IMAP 专属授权码。",
+        badgeKey: "qq.badge",
+        warningKey: "qq.warning",
     },
     {
-        match: /@163\.com$|@126\.com$/i,
+        match: /@(163|126|yeah)\.(com|net)$/i,
         providerKey: "netease",
-        badge: "网易 163/126 邮箱",
-        warningText: "请在设置中开启 POP3/IMAP 服务，并输入客户端专属授权密码。",
+        badgeKey: "netease.badge",
+        warningKey: "netease.warning",
     },
     {
         match: /@gmail\.com$/i,
         providerKey: "gmail",
-        badge: "Google Gmail",
-        warningText: "请使用 Google 账户安全中心生成的 16 位“应用专用密码”。",
+        badgeKey: "gmail.badge",
+        warningKey: "gmail.warning",
+    },
+    {
+        match: /@(outlook|hotmail)\.com$/i,
+        providerKey: "outlook",
+        badgeKey: "outlook.badge",
+        warningKey: "outlook.warning",
+    },
+    {
+        match: /@feishu\.cn$/i,
+        providerKey: "feishu",
+        badgeKey: "feishu.badge",
+        warningKey: "feishu.warning",
     },
 ];
 ```
