@@ -119,6 +119,28 @@ it('rejects a malformed status response rather than showing it as healthy', asyn
   expect(button(host, 'retry')).toBeDefined()
 })
 
+it('rejects a status claiming both initialization and migration are pending', async () => {
+  fetchApi.mockResolvedValueOnce({
+    need_initialization: true,
+    need_migration: true,
+    current_db_version: null,
+    code_db_version: 'v0.0.12',
+  })
+  const { host } = await mount()
+  expect(host.textContent).toContain('invalidStatus')
+  expect(button(host, 'init')).toBeUndefined()
+  expect(button(host, 'migration')).toBeUndefined()
+  expect(button(host, 'retry')).toBeDefined()
+})
+
+it('rejects a healthy status that carries no stamped version', async () => {
+  fetchApi.mockResolvedValueOnce({ ...current, current_db_version: null })
+  const { host } = await mount()
+  expect(host.textContent).toContain('invalidStatus')
+  expect(host.textContent).not.toContain('upToDate')
+  expect(button(host, 'retry')).toBeDefined()
+})
+
 it('confirms an up-to-date schema without offering maintenance actions', async () => {
   fetchApi.mockResolvedValueOnce(current)
   const { host } = await mount()

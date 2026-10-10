@@ -109,10 +109,10 @@ onMounted(async () => {
       <div class="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
         <MailIcon name="shield" :size="25" />
       </div>
-      <h3 class="text-lg font-bold text-slate-900 dark:text-white">暂无管理员权限</h3>
-      <p class="text-xs text-slate-500 mt-2">当前登录账号并非系统管理员，无法访问管理控制台。</p>
+<h3 class="text-lg font-bold text-slate-900 dark:text-white">{{ t('noAdminTitle') }}</h3>
+      <p class="text-xs text-slate-500 mt-2">{{ t('noAdminTip') }}</p>
       <n-button @click="router.push(getRouterPathWithLang('/unified', locale))" type="primary" secondary class="mt-6 rounded-xl">
-        返回收件箱
+        {{ t('backToInbox') }}
       </n-button>
     </div>
 
@@ -121,9 +121,9 @@ onMounted(async () => {
       <div class="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto mb-4 text-2xl">
         <MailIcon name="key" :size="25" />
       </div>
-      <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-2">系统管理员访问凭证</h3>
+      <h3 class="text-lg font-bold text-slate-900 dark:text-white mb-2">{{ t('adminAccessTitle') }}</h3>
       <p class="text-xs text-slate-500 mb-6">{{ t('accessTip') }}</p>
-      <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" placeholder="请输入管理员后台密码" @keyup.enter="authFunc" class="rounded-xl mb-4 text-left" />
+      <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" :placeholder="t('adminPasswordPlaceholder')" @keyup.enter="authFunc" class="rounded-xl mb-4 text-left" />
       <Turnstile ref="turnstileRef" v-if="openSettings.enableGlobalTurnstileCheck" v-model:value="cfToken" class="mb-4" />
       <n-button @click="authFunc" type="primary" block :loading="loading" class="rounded-xl font-medium">
         {{ t('ok') }}
@@ -137,8 +137,8 @@ onMounted(async () => {
       <div v-if="currentAdminView === 'accounts'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">邮箱账户与地址管理</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">查看、创建、重置密码及清理全站邮箱账户与收件箱记录</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('accountsTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('accountsSubtitle') }}</p>
           </div>
         </div>
         <Account />
@@ -148,8 +148,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'users'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">注册用户与角色管理</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">管理全站注册用户账号、绑定关系与角色权限配置</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('usersTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('usersSubtitle') }}</p>
           </div>
         </div>
         <UserManagement />
@@ -159,8 +159,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'statistics'" class="space-y-6">
         <div class="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">全站业务指标与统计看板</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">实时监控全站邮箱数量、活跃地址、发件流水与用户增长</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('statisticsTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('statisticsSubtitle') }}</p>
           </div>
         </div>
         <Statistics />
@@ -170,8 +170,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'ai_extract'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">AI 智能提取策略配置</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">设置验证码启发式提取、摘要生成与白名单策略</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('aiExtractTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('aiExtractSubtitle') }}</p>
           </div>
         </div>
         <AiExtractSettings />
@@ -181,8 +181,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'webhook'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Webhook 推送与告警配置</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">配置全站邮件事件触发的外部 Webhook 回调通道</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('webhookTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('webhookSubtitle') }}</p>
           </div>
         </div>
         <Webhook />
@@ -192,8 +192,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'database'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">D1 数据库版本与维护操作</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">检查数据表结构版本、执行无损迁移与初始化</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('databaseTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('databaseSubtitle') }}</p>
           </div>
         </div>
         <DatabaseManager />
@@ -203,8 +203,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'settings'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">域名与全局策略配置</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">配置系统注册开关、发信限制、黑白名单与域名转发规则</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('settingsTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('settingsSubtitle') }}</p>
           </div>
         </div>
         <AccountSettings />
@@ -214,8 +214,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'sender_access'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">发信权限与配额管理</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">审核用户申请的发信权限、调整邮箱地址的发件额度与启用状态</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('senderAccessTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('senderAccessSubtitle') }}</p>
           </div>
         </div>
         <SenderAccess />
@@ -225,8 +225,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'send_mail'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">管理员专属外发邮件</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">以全站任意托管域名地址直接编辑并外发邮件，享有最高权限与无限额度</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('sendMailTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('sendMailSubtitle') }}</p>
           </div>
         </div>
         <AdminSendMail />
@@ -236,8 +236,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'send_box'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">出站记录</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">按地址、来源与关键词查询全站已发邮件，验证码正文默认折叠</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('sendBoxTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('sendBoxSubtitle') }}</p>
           </div>
         </div>
         <SendBox />
@@ -247,8 +247,8 @@ onMounted(async () => {
       <div v-else-if="currentAdminView === 'send_unknown'" class="settings-section space-y-6">
         <div class="workspace-page-header">
           <div>
-            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">未知投递</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">服务商未确认送达的出站请求。标记已送达会保留额度，标记失败会退回额度。</p>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('sendUnknownTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('sendUnknownSubtitle') }}</p>
           </div>
         </div>
         <UnknownSendMail />

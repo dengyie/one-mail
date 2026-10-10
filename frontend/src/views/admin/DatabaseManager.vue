@@ -20,11 +20,19 @@ const actions = {
 function isDatabaseStatus(value: unknown): value is DatabaseStatus {
     if (!value || typeof value !== 'object') return false
     const status = value as Record<string, unknown>
-    return typeof status.need_initialization === 'boolean'
-        && typeof status.need_migration === 'boolean'
-        && !(status.need_initialization && status.need_migration)
-        && (status.current_db_version === null || typeof status.current_db_version === 'string')
-        && typeof status.code_db_version === 'string' && status.code_db_version.length > 0
+    if (typeof status.need_initialization !== 'boolean') return false
+    if (typeof status.need_migration !== 'boolean') return false
+    // A database cannot need initialization (no tables) and migration (tables,
+    // stale version) at the same time; both-false is the healthy combination.
+    if (status.need_initialization === true && status.need_migration === true) return false
+    if (status.current_db_version !== null && typeof status.current_db_version !== 'string') return false
+    if (typeof status.code_db_version !== 'string' || status.code_db_version.length === 0) return false
+    // A healthy status (no repair needed) always carries the stamped version;
+    // a null version can only be reported together with a pending repair.
+    if (!status.need_initialization && !status.need_migration && status.current_db_version === null) {
+        return false
+    }
+    return true
 }
 
 async function runAction(actionName?: keyof typeof actions): Promise<void> {

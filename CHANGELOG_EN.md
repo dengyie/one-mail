@@ -8,6 +8,12 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| Localize the admin panel's hardcoded Chinese section titles and subtitles (the 11 section headings/subtitles plus the signed-out and non-admin gate copy and the password placeholder) into locale-switching i18n keys; the `views.Admin` namespace gains 27 keys across all four additional languages. Non-Chinese users previously saw Chinese headings embedded in an otherwise English admin UI.
+
+- fix: |Frontend| Tighten the database status guard to reject self-contradictory payloads: it now refuses both "initialization and migration required at once" and "neither required yet the stamped version is missing" — the latter rendered as a contradictory healthy card. Add regression tests for both.
+
+- refactor: |Worker| Report `ensurePop3Columns` changes as `table.column`, matching the unified, provider-identity, and outbound repairs, so one return value no longer mixes bare column names with table-qualified ones; also correct the `repairSchema` JSDoc to state that it reports only the additive-column subset that drives the version-bump decision while the remaining repairs run unconditionally and report nothing.
+
 - fix: |Frontend| Admin database page: replace the hardcoded English `unknown` with a localized placeholder (`notSet`), add an "up to date" success state, render versions as cards matching the admin design language, and make the initialization/migration alerts mutually exclusive so two warnings cannot show at once.
 
 - refactor: |Worker| Share one ordered schema-repair sequence (`repairSchema`) between initialization and migration: the two paths previously maintained the same ten-step repair separately, so a repair added to one and forgotten in the other would silently diverge; the existing initialize/migrate test matrix now covers the shared path.

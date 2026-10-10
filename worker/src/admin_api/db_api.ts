@@ -373,7 +373,7 @@ async function ensurePop3Columns(db: D1Database): Promise<string[]> {
         db.prepare(`UPDATE user_mail_accounts SET use_ssl = 1 WHERE use_ssl IS NULL`),
         db.prepare(`UPDATE user_mail_accounts SET pop3_use_stls = 0 WHERE pop3_use_stls IS NULL`),
     ]);
-    return changes;
+    return changes.map(name => `user_mail_accounts.${name}`);
 }
 
 async function ensureUnifiedColumns(db: D1Database): Promise<string[]> {
@@ -390,7 +390,8 @@ function initQuery() {
 }
 
 /**
- * Brings the actual table shape up to date and reports the columns it added.
+ * Brings the actual table shape up to date and reports the column additions that
+ * drive the version-bump decision.
  *
  * Initialize and migrate must run the exact same ordered repairs: a deployment
  * can be interrupted at any point, and CREATE TABLE never adds columns to a
@@ -398,6 +399,13 @@ function initQuery() {
  * than trusting the version marker. Sharing one sequence keeps the two paths
  * from drifting apart; column-dependent indexes are created by the repair that
  * adds their column, after the column.
+ *
+ * The returned list is deliberately partial: it reports only the repairs that
+ * yield an additive column set (pop3 / unified / provider-identity / outbound),
+ * which is what `migrate` uses to decide whether to re-stamp the version. The
+ * remaining repairs (legacy columns, table-shape and index repairs) run
+ * unconditionally and report nothing — they are idempotent and must not by
+ * themselves force a version bump.
  */
 async function repairSchema(db: D1Database): Promise<string[]> {
     // CREATE IF NOT EXISTS is safe for both a fresh and an existing D1.
