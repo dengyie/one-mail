@@ -97,6 +97,13 @@ jobs:
           test -x "$AGG/.venv/bin/python"
           test -f "$SUPERVISOR"
 
+          # Snapshot the state before touching code so the restart decision
+          # honors the operator's intentional setting (e.g. a deliberate
+          # STOPPED during a write-quota wall) instead of force-starting.
+          PRE_STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg \
+            | awk '{print $2}' || echo UNKNOWN)
+          echo "pre-deploy status: $PRE_STATUS"
+
           # Preserve local runtime state and the existing venv. Replace only
           # repository-managed source/deploy files so stale removed modules do
           # not survive a release.
@@ -112,19 +119,28 @@ jobs:
           "$AGG/.venv/bin/python" -c \
             'import one_mail_agg.mutation_jobs, one_mail_agg.mutation_main; print("mutation worker import OK")'
 
-          supervisorctl -c "$SUPERVISOR" restart one-mail-agg
-          sleep 2
-          STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg)
-          printf '%s\n' "$STATUS"
-          case "$STATUS" in
-            *RUNNING*) ;;
-            *) echo "aggregator failed to reach RUNNING" >&2; exit 1 ;;
-          esac
+          if [ "$PRE_STATUS" = "RUNNING" ]; then
+            supervisorctl -c "$SUPERVISOR" restart one-mail-agg
+            sleep 2
+            STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg)
+            printf '%s\n' "$STATUS"
+            case "$STATUS" in
+              *RUNNING*) ;;
+              *) echo "aggregator failed to reach RUNNING" >&2; exit 1 ;;
+            esac
+          else
+            # Was deliberately stopped (or never started). Redeploy code and
+            # refresh supervisor's view of the program without starting it, so
+            # a quota-wall pause is not overridden by CI.
+            supervisorctl -c "$SUPERVISOR" update
+            STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg)
+            printf 'leaving stopped as configured: %s\n' "$STATUS"
+          fi
 
           rm -f /tmp/one-mail-aggregator.tgz
           REMOTE
 
-      - name: Verify supervisor remains healthy
+      - name: Verify supervisor state
         shell: bash
         env:
           PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
@@ -139,6 +155,9 @@ jobs:
             'supervisorctl -c /personal/pxed/supervisord.conf status one-mail-agg')
           printf '%s\n' "$STATUS"
           case "$STATUS" in
-            *RUNNING*) ;;
-            *) echo "::error::Aggregator did not remain RUNNING after restart."; exit 1 ;;
+            *RUNNING*|*STOPPED*)
+              # RUNNING after a normal deploy, or still deliberately STOPPED
+              # (quota pause). Any other state means the deploy broke it.
+              ;;
+            *) echo "::error::Aggregator in unexpected state after deploy: $STATUS"; exit 1 ;;
           esac
