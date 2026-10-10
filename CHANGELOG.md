@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- perf: |Worker| 管理统计页面的六条 `COUNT(*)` 合并为单次 `DB.batch()`:该页面恰在 D1 日读配额吃紧时才被打开,把六次串行往返压成一次,降低延迟与每语句开销;配额包装器按结果逐个记账,与原先顺序执行口径一致。
+
 - feat: |Worker/Frontend| 管理看板 D1 配额按数据库拆分：`/admin/statistics` 与 `/admin/d1_quota` 新增 `d1Quotas`（主库在前），单对象 `d1Quota` 保留给旧客户端；仅当 `SHARD_MAP` 列出远程分片时才扇出 `/shard/quota`，空注册表保持单卡与零 D1 读不变。远程分片报文经 `isD1QuotaView` 运行时校验，不符即按不可达处理；不可达卡片显示原因码而非伪造的 0%，`accounting_issues` 与主库账号归属说明上抛到界面。
 
 - fix: |Worker/Aggregator| 管理员 claim 请求在鉴权时已读取 KV 失败计数；常见的 0 计数成功路径跳过重复 KV 读取，减少每个管理 API 请求的一次串行往返。存在失败计数时仍复查后再删除，保留并发安全和 KV 删除配额保护。

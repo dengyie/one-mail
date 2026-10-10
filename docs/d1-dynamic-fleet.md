@@ -29,6 +29,7 @@
 | 排序归并 | [shard_merge.ts](../worker/src/unified/shard_merge.ts) | O(K × L) 选择归并；offset 上限 500 |
 | 计量 | [d1_quota.ts](../worker/src/core/d1_quota.ts)、[quota DO](../worker/src/core/d1_quota_coordinator_do.ts) | 包装 D1 结果计量；可选 DO 聚合；不覆盖账户内全部外部管理查询 |
 | 管理端配额视图 | [quota_report.ts](../worker/src/unified/quota_report.ts) | 主库 + 已注册分片逐库扇出 `/shard/quota`；远程报文经 `isD1QuotaView` 校验，不符或不可达按原因码上报；空 `SHARD_MAP` 单卡且零 D1 读 |
+| 管理端统计 | [statistics_api.ts](../worker/src/admin_api/statistics_api.ts) | 六条 `COUNT(*)` 合并为单次 `DB.batch()`(该页恰在 D1 读配额吃紧时打开)；配额卡片复用同一 `d1QuotaByShard` |
 | 薄分片 schema | [shard_schema.ts](../worker/src/unified/shard_schema.ts)、[schema.sql](../db/shard-schema.sql) | 邮件、文件夹、操作任务、清理任务及生命周期表；没有路由写入隔离表 |
 | 账号生命周期 | [account_lifecycle_schema.ts](../worker/src/unified/account_lifecycle_schema.ts) | deleting/purged 防止删除后恢复；不是迁移锁 |
 | 聚合器 | [config.py](../aggregator/src/one_mail_agg/config.py)、[uploader.py](../aggregator/src/one_mail_agg/uploader.py) | 本地配置单独保存分片；按目的地批量上传；失败不应推进同步水位 |
