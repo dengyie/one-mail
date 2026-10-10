@@ -17,4 +17,4 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Run actionlint
-        uses: raven-actions/actionlint@d3490de4e3f7a2c81f0871bdeb2d9a3ce0c023d8 # v3
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
