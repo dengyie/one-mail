@@ -37,6 +37,8 @@ export const deMessages = {
   "views.admin.Statistics.d1QuotaDetail": "Lesen {read} / {readLimit} · Schreiben {written} / {writtenLimit} · {shard} · {date}",
   "views.admin.Statistics.d1QuotaUnreachable": "nicht erreichbar",
   "views.admin.Statistics.d1QuotaAccounts": "Konten {count}: {accounts}",
+  "views.admin.Statistics.d1QuotaAccountsPrimary": "Primäre DB: alle übrigen Konten",
+  "views.admin.Statistics.d1QuotaIssues": "Messprobleme: {issues}",
   "views.admin.UserManagement.address_count": "Adressanzahl",
   "views.User.address_management": "Adressverwaltung",
   "views.admin.UserManagement.userAddressManagement": "Adressverwaltung",

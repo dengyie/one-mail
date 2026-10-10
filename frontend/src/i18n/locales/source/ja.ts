@@ -37,6 +37,8 @@ export const jaMessages = {
   "views.admin.Statistics.d1QuotaDetail": "読取 {read} / {readLimit} · 書込 {written} / {writtenLimit} · {shard} · {date}",
   "views.admin.Statistics.d1QuotaUnreachable": "接続不可",
   "views.admin.Statistics.d1QuotaAccounts": "アカウント {count}: {accounts}",
+  "views.admin.Statistics.d1QuotaAccountsPrimary": "主 DB：その他すべてのアカウント",
+  "views.admin.Statistics.d1QuotaIssues": "計測の問題：{issues}",
   "views.admin.UserManagement.address_count": "アドレス数",
   "views.User.address_management": "アドレス管理",
   "views.admin.UserManagement.userAddressManagement": "アドレス管理",

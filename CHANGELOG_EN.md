@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |Worker/Frontend| Break the admin D1 quota down per database: `/admin/statistics` and `/admin/d1_quota` gain `d1Quotas` (primary first) while the single-object `d1Quota` is kept for older clients. Remote shards are fanned out over `/shard/quota` only when `SHARD_MAP` lists them, so an empty registry keeps the single-card, zero-D1-read behavior. A remote shard body is validated at runtime by `isD1QuotaView` and treated as unreachable when it does not match; an unreachable card shows the transport reason instead of a fabricated 0%, and `accounting_issues` plus the primary account note reach the UI.
+
 - fix: |Worker/Aggregator| Reuse the admin lockout count already read during authorization: the common zero-failure success path skips a duplicate serial KV read on each admin API request. When failures exist, re-read before deleting to preserve concurrency safety and KV delete-budget protection.
 
 - test: |Worker| Freeze the clock and assert exact retention cutoffs in job-pruning tests, removing CI failures caused by elapsed milliseconds between wall-clock reads.
