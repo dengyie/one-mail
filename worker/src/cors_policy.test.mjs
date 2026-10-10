@@ -6,6 +6,7 @@ test("allows exact match and valid subdomains of official domains", () => {
   assert.equal(resolveCorsOrigin("https://inbox.mangoqwq.com"), "https://inbox.mangoqwq.com");
   assert.equal(resolveCorsOrigin("https://mail.mangoqwq.com"), "https://mail.mangoqwq.com");
   assert.equal(resolveCorsOrigin("https://app.mangoqwq.com"), "https://app.mangoqwq.com");
+  assert.equal(resolveCorsOrigin("https://mail-api.mangoqwq.com"), "https://mail-api.mangoqwq.com");
   assert.equal(resolveCorsOrigin("https://mail-api.mangoqwq.cc.cd"), "https://mail-api.mangoqwq.cc.cd");
 });
 
