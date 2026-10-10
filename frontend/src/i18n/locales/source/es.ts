@@ -35,6 +35,8 @@ export const esMessages = {
   "views.admin.Statistics.addressCount": "Cantidad de direcciones",
   "views.admin.Statistics.d1QuotaToday": "Cuota D1 de hoy (lectura / escritura)",
   "views.admin.Statistics.d1QuotaDetail": "lectura {read} / {readLimit} · escritura {written} / {writtenLimit} · {shard} · {date}",
+  "views.admin.Statistics.d1QuotaUnreachable": "inaccesible",
+  "views.admin.Statistics.d1QuotaAccounts": "Cuentas {count}: {accounts}",
   "views.admin.UserManagement.address_count": "Cantidad de direcciones",
   "views.User.address_management": "Gestión de direcciones",
   "views.admin.UserManagement.userAddressManagement": "Gestión de direcciones",
