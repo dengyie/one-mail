@@ -57,55 +57,56 @@ onBeforeUnmount(() => controller.abort())
 
 
 <template>
-    <div class="center">
-        <n-card :bordered="false" embedded :aria-busy="loading">
-            <n-alert v-if="errorMessage" type="error" :show-icon="false" :bordered="false">
+    <div class="space-y-6">
+        <template v-if="errorMessage">
+            <n-alert type="error" :show-icon="false" :bordered="false">
                 <p>{{ errorMessage }}</p>
-                <n-button @click="runAction()" :loading="loading" :disabled="loading">
-                    {{ t('retry') }}
+            </n-alert>
+            <n-button @click="runAction()" :loading="loading" :disabled="loading">
+                {{ t('retry') }}
+            </n-button>
+        </template>
+
+        <p v-else-if="!dbVersionData" role="status" class="text-sm text-slate-500 dark:text-slate-400">
+            {{ t('loading') }}
+        </p>
+
+        <template v-else>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">{{ t('current_db_version') }}</p>
+                    <p class="text-2xl font-extrabold text-slate-900 dark:text-white mt-0.5 font-mono">
+                        {{ dbVersionData.current_db_version || t('notSet') }}
+                    </p>
+                </div>
+                <div class="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">{{ t('code_db_version') }}</p>
+                    <p class="text-2xl font-extrabold text-slate-900 dark:text-white mt-0.5 font-mono">
+                        {{ dbVersionData.code_db_version }}
+                    </p>
+                </div>
+            </div>
+
+            <n-alert v-if="dbVersionData.need_initialization" type="warning" :show-icon="false" :bordered="false">
+                <span>{{ t('need_initialization_tip') }}</span>
+                <n-button @click="runAction('initialize')" type="primary" secondary block :loading="loading" :disabled="loading">
+                    {{ t('init') }}
                 </n-button>
             </n-alert>
-            <template v-else-if="dbVersionData">
-                <n-alert v-if="dbVersionData.need_initialization" type="warning" :show-icon="false" :bordered="false">
-                    <span>{{ t('need_initialization_tip') }}</span>
-                    <n-button @click="runAction('initialize')" type="primary" secondary block :loading="loading" :disabled="loading">
-                        {{ t('init') }}
-                    </n-button>
-                </n-alert>
-                <n-alert v-if="dbVersionData.need_migration" type="warning" :show-icon="false" :bordered="false">
-                    <span>{{ t('need_migration_tip') }}</span>
-                    <n-button @click="runAction('migrate')" type="primary" secondary block :loading="loading" :disabled="loading">
-                        {{ t('migration') }}
-                    </n-button>
-                </n-alert>
-                <n-alert type="info" :show-icon="false" :bordered="false">
-                    <span>
-                        {{ t('current_db_version') }}: {{ dbVersionData.current_db_version || "unknown" }},
-                        {{ t('code_db_version') }}: {{ dbVersionData.code_db_version }}
-                    </span>
-                </n-alert>
-            </template>
-            <p v-else role="status">{{ t('loading') }}</p>
-        </n-card>
+            <n-alert v-else-if="dbVersionData.need_migration" type="warning" :show-icon="false" :bordered="false">
+                <span>{{ t('need_migration_tip') }}</span>
+                <n-button @click="runAction('migrate')" type="primary" secondary block :loading="loading" :disabled="loading">
+                    {{ t('migration') }}
+                </n-button>
+            </n-alert>
+            <n-alert v-else type="success" :show-icon="false" :bordered="false">
+                <span>{{ t('upToDate') }}</span>
+            </n-alert>
+        </template>
     </div>
 </template>
 
 <style scoped>
-.n-card {
-    max-width: 800px;
-}
-
-.n-alert {
-    margin-bottom: 10px;
-}
-
-.center {
-    display: flex;
-    text-align: center;
-    place-items: center;
-    justify-content: center;
-}
-
 .n-button {
     margin-top: 10px;
 }

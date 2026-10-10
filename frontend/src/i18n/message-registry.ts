@@ -2831,6 +2831,14 @@ export const MESSAGE_REGISTRY = {
     "need_migration_tip": {
       "en": "Database migration is required. Please migrate the database.",
       "zh": "需要迁移数据库，请迁移数据库"
+    },
+    "notSet": {
+      "en": "Not set",
+      "zh": "未设置"
+    },
+    "upToDate": {
+      "en": "The database schema is up to date. No action needed.",
+      "zh": "数据库结构已是最新，无需操作。"
     }
   },
   "views.admin.IpBlacklistSettings": {

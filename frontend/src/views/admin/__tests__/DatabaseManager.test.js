@@ -119,6 +119,22 @@ it('rejects a malformed status response rather than showing it as healthy', asyn
   expect(button(host, 'retry')).toBeDefined()
 })
 
+it('confirms an up-to-date schema without offering maintenance actions', async () => {
+  fetchApi.mockResolvedValueOnce(current)
+  const { host } = await mount()
+  expect(host.textContent).toContain('upToDate')
+  expect(host.textContent).toContain('v0.0.12')
+  expect(button(host, 'init')).toBeUndefined()
+  expect(button(host, 'migration')).toBeUndefined()
+})
+
+it('labels a missing db version with the localized placeholder, not English "unknown"', async () => {
+  fetchApi.mockResolvedValueOnce(initial)
+  const { host } = await mount()
+  expect(host.textContent).toContain('notSet')
+  expect(host.textContent).not.toContain('unknown')
+})
+
 it('aborts a pending status read when the view is removed', async () => {
   const pending = deferred()
   fetchApi.mockReturnValue(pending.promise)

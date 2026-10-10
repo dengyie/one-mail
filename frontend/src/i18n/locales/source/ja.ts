@@ -166,6 +166,8 @@ export const jaMessages = {
   "views.admin.DatabaseManager.initializationSuccess": "データベースを初期化しました",
   "views.admin.DatabaseManager.migrationSuccess": "データベースを移行しました",
   "views.admin.DatabaseManager.need_migration_tip": "データベースの移行が必要です。先に移行してください。",
+  "views.admin.DatabaseManager.notSet": "未設定",
+  "views.admin.DatabaseManager.upToDate": "データベーススキーマは最新です。操作は不要です。",
   "components.MailBox.delete": "削除",
   "components.MailContentRenderer.delete": "削除",
   "components.SendBox.delete": "削除",

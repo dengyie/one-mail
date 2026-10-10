@@ -8,6 +8,10 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| Admin database page: replace the hardcoded English `unknown` with a localized placeholder (`notSet`), add an "up to date" success state, render versions as cards matching the admin design language, and make the initialization/migration alerts mutually exclusive so two warnings cannot show at once.
+
+- refactor: |Worker| Share one ordered schema-repair sequence (`repairSchema`) between initialization and migration: the two paths previously maintained the same ten-step repair separately, so a repair added to one and forgotten in the other would silently diverge; the existing initialize/migrate test matrix now covers the shared path.
+
 - perf: |Worker| Collapse the admin statistics page's six `COUNT(*)` queries into one `DB.batch()`. That page is opened precisely when the daily D1 read quota is under pressure, so six serial round trips become one, cutting latency and per-statement overhead; the quota wrapper records per-result deltas exactly as the previous sequential form did.
 
 - feat: |Worker/Frontend| Break the admin D1 quota down per database: `/admin/statistics` and `/admin/d1_quota` gain `d1Quotas` (primary first) while the single-object `d1Quota` is kept for older clients. Remote shards are fanned out over `/shard/quota` only when `SHARD_MAP` lists them, so an empty registry keeps the single-card, zero-D1-read behavior. A remote shard body is validated at runtime by `isD1QuotaView` and treated as unreachable when it does not match; an unreachable card shows the transport reason instead of a fabricated 0%, and `accounting_issues` plus the primary account note reach the UI.
