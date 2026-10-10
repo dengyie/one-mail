@@ -1,44 +1,47 @@
 /**
  * 邮件服务商接入上下文智能提示 (Contextual Intelligence Hint Rules)
  * 根据 docs/external-mailbox-pipeline-upgrade.md §7 规范实现。
+ *
+ * 提示文案不落在本模块：这里只返回 stable providerKey 与 i18n 键，
+ * 由视图用 useScopedI18n('providerHints') 渲染成当前语言。
  */
 
 export const PROVIDER_CONTEXT_HINTS = [
     {
         match: /@linux\.do$/i,
         providerKey: "linux_do",
-        badge: "LINUX DO Mail (Mailu)",
-        warningText: "生成认证令牌时，“授权IP”请务必完全留空，切勿填写 0.0.0.0。",
+        badgeKey: "linuxDo.badge",
+        warningKey: "linuxDo.warning",
     },
     {
         match: /@(qq|foxmail)\.com$/i,
         providerKey: "qq",
-        badge: "QQ 邮箱",
-        warningText: "需在 QQ 邮箱网页端“设置-账户”中开启 POP3/IMAP 服务，并使用 16 位专属授权码。",
+        badgeKey: "qq.badge",
+        warningKey: "qq.warning",
     },
     {
         match: /@(163|126|yeah)\.(com|net)$/i,
         providerKey: "netease",
-        badge: "网易 163/126 邮箱",
-        warningText: "请在网页端设置中开启 POP3/IMAP 服务，并输入客户端专用授权密码。",
+        badgeKey: "netease.badge",
+        warningKey: "netease.warning",
     },
     {
         match: /@gmail\.com$/i,
         providerKey: "gmail",
-        badge: "Google Gmail",
-        warningText: "须开启 Google 账户两步验证，并使用安全中心生成的 16 位“应用专用密码”。",
+        badgeKey: "gmail.badge",
+        warningKey: "gmail.warning",
     },
     {
         match: /@(outlook|hotmail)\.com$/i,
         providerKey: "outlook",
-        badge: "微软个人邮箱 (Outlook)",
-        warningText: "微软已停用普通密码直连，请使用 OAuth2 认证 JSON 接入。",
+        badgeKey: "outlook.badge",
+        warningKey: "outlook.warning",
     },
     {
         match: /@feishu\.cn$/i,
         providerKey: "feishu",
-        badge: "飞书企业邮箱",
-        warningText: "须在飞书客户端安全中心获取外部客户端专用授权码。",
+        badgeKey: "feishu.badge",
+        warningKey: "feishu.warning",
     },
 ];
 

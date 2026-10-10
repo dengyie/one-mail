@@ -525,7 +525,7 @@ const openDetail = (id) => router.push({
 const copyQuickCode = async (code) => {
   try {
     await navigator.clipboard.writeText(code)
-    message.success(`验证码 ${code} 已复制`)
+    message.success(t('copyCodeSuccess', { code }))
   } catch (e) {
     message.error(t('codes.copyFailed'))
   }
@@ -660,14 +660,14 @@ const handleVisibilityChange = () => {
   }
 }
 
-// 来源/账号筛选项
+// 来源/账号筛选项（展示名走 i18n，值仍是后端稳定的 source 标识）
 const SOURCE_MAP = {
-  imap_qq: 'QQ 邮箱',
-  imap_gmail: 'Gmail',
-  imap_163: '网易 163',
-  imap_outlook: 'Outlook',
-  cloudflare: 'Cloudflare',
-  cf_routing: 'CF 邮件路由',
+  imap_qq: 'sources.imap_qq',
+  imap_gmail: 'sources.imap_gmail',
+  imap_163: 'sources.imap_163',
+  imap_outlook: 'sources.imap_outlook',
+  cloudflare: 'sources.cloudflare',
+  cf_routing: 'sources.cf_routing',
 }
 
 const userAccounts = ref([])
@@ -679,7 +679,7 @@ const sourceOptions = computed(() => {
   userAccounts.value.forEach(a => { if (a.source) set.add(a.source) })
   optionRows.value.forEach(r => { if (r.source) set.add(r.source) })
   return [...set].map(s => ({
-    label: SOURCE_MAP[s] ? `${SOURCE_MAP[s]} (${s})` : s,
+    label: SOURCE_MAP[s] ? `${t(SOURCE_MAP[s])} (${s})` : s,
     value: s,
   }))
 })
@@ -703,7 +703,7 @@ const accountOptions = computed(() => {
     const name = typeof b === 'string' ? b : b?.name
     if (name && !seenValues.has(name)) {
       seenValues.add(name)
-      list.push({ label: `域名: ${name}`, value: name })
+      list.push({ label: t('domainPrefix', { name }), value: name })
     }
   })
 
@@ -789,14 +789,14 @@ const loadOptions = async () => {
     const results = await Promise.allSettled(tasks)
     if (!current()) return
     if (results.some(result => result.status === 'rejected')) {
-      throw new AggregateError(results.filter(result => result.status === 'rejected').map(result => result.reason), '筛选项加载失败，请重试')
+      throw new AggregateError(results.filter(result => result.status === 'rejected').map(result => result.reason), t('optionsLoadFailed'))
     }
     optionsScope = identity
   })()
   const handledPromise = promise.catch(error => {
     if (currentRequest('options', controller) && generation === optionsGeneration && identity === authIdentity.value) {
       optionsScope = ''
-      optionsError.value = error.message || '筛选项加载失败，请重试'
+      optionsError.value = error.message || t('optionsLoadFailed')
     }
     return null
   })
@@ -826,11 +826,11 @@ const codesLoading = ref(false)
 const codesError = ref('')
 const codesDegraded = ref([])
 const copiedIndex = ref(-1)
-const freshOptions = [
-  { label: '10 min', value: 10 },
-  { label: '1 h', value: 60 },
-  { label: '24 h', value: 1440 },
-]
+const freshOptions = computed(() => [
+  { label: t('codes.fresh10m'), value: 10 },
+  { label: t('codes.fresh1h'), value: 60 },
+  { label: t('codes.fresh24h'), value: 1440 },
+])
 
 const loadCodes = async ({ background = false } = {}) => {
   if (background && backgroundCodesPending) return
