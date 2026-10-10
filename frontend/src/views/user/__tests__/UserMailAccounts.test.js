@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { getMessageSource } from '../../../i18n/message-registry'
 
 const view = readFileSync(fileURLToPath(new URL('../UserMailAccounts.vue', import.meta.url)), 'utf8')
 
@@ -30,7 +31,13 @@ describe('external mailbox provider form contract', () => {
         expect(view).toContain("const isOutlook = computed(() => form.value.provider === 'outlook')")
         expect(view).toContain(':disabled="isOutlook"')
         expect(view).toContain('v-model:value="form.oauth_json"')
-        expect(view).toContain('msa_authorize.py')
+        expect(view).toContain("t('outlookOauthIntro')")
+    })
+
+    it('keeps the Outlook OAuth guidance in the source-locale copy', () => {
+        const intro = getMessageSource('views.user.UserMailAccounts', 'outlookOauthIntro', 'zh')
+        expect(intro).toContain('OAuth2')
+        expect(intro).toContain('msa_authorize.py')
     })
 
     it('validates and canonicalizes the Outlook OAuth shapes already supported by the aggregator', () => {
