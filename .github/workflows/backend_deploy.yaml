@@ -64,6 +64,8 @@ jobs:
         shell: bash
         run: |
           cd frontend/
+          echo "VITE_API_BASE=https://mail-api.mangoqwq.com" > .env.pages
+          echo "VITE_API_BASE=https://mail-api.mangoqwq.com" > .env.production
           if [ "${{ steps.build_flags.outputs.telegram }}" = "true" ]; then
             echo "Building with telegram pages"
             pnpm build:telegram:pages

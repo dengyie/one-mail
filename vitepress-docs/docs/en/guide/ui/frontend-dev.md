@@ -16,7 +16,7 @@ Browser (Vue 3 SPA)
    │  VITE_API_BASE points at the Worker custom domain
    │  (locally the Vite dev server proxies to 127.0.0.1:8787)
    ▼
-Cloudflare Worker ──mail-api.mangoqwq.cc.cd
+Cloudflare Worker ──mail-api.mangoqwq.com (fallback: mail-api.mangoqwq.cc.cd)
    │  ├─ /api/unified/*       unified inbox queries (API-key auth)
    │  ├─ /admin/unified/*     unified inbox admin (x-admin-auth)
    │  └─ /api/* · /user_api/* · /admin/*   temp-mail base
@@ -31,7 +31,7 @@ The `frontend/` app is a pure static Vue 3 SPA:
   dev the `/api`, `/open_api`, `/user_api`, `/admin`, `/telegram`, `/external` paths are
   proxied to `127.0.0.1:8787` via `vite.config.js`'s `server.proxy` (your local `wrangler dev`).
 - **Production**: `VITE_API_BASE` points at the Worker custom domain (e.g.
-  `https://mail-api.mangoqwq.cc.cd`); the build artifact is static, hosted by Cloudflare
+  `https://mail-api.mangoqwq.com`); the build artifact is static, hosted by Cloudflare
   Pages, and every request goes cross-origin straight to the Worker.
 
 > [!TIP]
@@ -161,7 +161,7 @@ Example:
 
 ```bash
 # .env.local (local / custom environment)
-VITE_API_BASE=https://mail-api.mangoqwq.cc.cd
+VITE_API_BASE=https://mail-api.mangoqwq.com
 VITE_CF_WEB_ANALY_TOKEN=
 ```
 

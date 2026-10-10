@@ -90,8 +90,8 @@ jobs:
       - name: Prepare Frontend env
         run: |
           cd frontend
-          echo "VITE_API_BASE=https://mail-api.mangoqwq.cc.cd" > .env.pages
-          echo "VITE_API_BASE=https://mail-api.mangoqwq.cc.cd" > .env.production
+          echo "VITE_API_BASE=https://mail-api.mangoqwq.com" > .env.pages
+          echo "VITE_API_BASE=https://mail-api.mangoqwq.com" > .env.production
 
       - name: Build Frontend (Production & Pages)
         run: |

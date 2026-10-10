@@ -36,7 +36,7 @@ const sourceOptions = computed(() => ([
     { label: t('outlook'), value: 'outlook', source: 'imap_outlook', host: 'outlook.office365.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
     { label: t('qq'), value: 'qq', source: 'imap_qq', host: 'imap.qq.com', port: 993, pop3Host: 'pop.qq.com', pop3Port: 995, protocol: 'imap' },
     { label: t('163'), value: '163', source: 'imap_163', host: 'imap.163.com', port: 993, pop3Host: 'pop.163.com', pop3Port: 995, protocol: 'auto' },
-    { label: '网易 126', value: '126', source: 'imap_custom', host: 'imap.126.com', port: 993, pop3Host: 'pop.126.com', pop3Port: 995, protocol: 'auto' },
+    { label: t('netease126'), value: '126', source: 'imap_custom', host: 'imap.126.com', port: 993, pop3Host: 'pop.126.com', pop3Port: 995, protocol: 'auto' },
     { label: 'iCloud Mail', value: 'icloud', source: 'imap_custom', host: 'imap.mail.me.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
     { label: 'Yahoo Mail', value: 'yahoo', source: 'imap_custom', host: 'imap.mail.yahoo.com', port: 993, pop3Host: 'pop.mail.yahoo.com', pop3Port: 995, protocol: 'imap' },
     { label: t('custom'), value: 'custom', source: 'imap_custom', host: '', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
@@ -47,11 +47,11 @@ const protocolOptions = computed(() => ([
     { label: t('pop3') || 'POP3', value: 'pop3' },
 ]))
 
-const proxyPolicyOptions = [
-    { label: '智能加速 (自动判定)', value: 'auto' },
-    { label: '强制代理加速', value: 'always' },
-    { label: '直连 (不使用代理)', value: 'never' },
-]
+const proxyPolicyOptions = computed(() => [
+    { label: t('proxySmart'), value: 'auto' },
+    { label: t('proxyAlways'), value: 'always' },
+    { label: t('proxyNever'), value: 'never' },
+])
 
 const smartForm = ref({
     email: '',
@@ -59,6 +59,8 @@ const smartForm = ref({
     label: '',
     proxy_policy: 'auto',
 })
+
+const { t: ph } = useScopedI18n('providerHints')
 
 const providerHint = computed(() => getProviderContextHint(smartForm.value.email))
 
@@ -185,7 +187,7 @@ const handleSmartConnect = async () => {
     const email = smartForm.value.email.trim().toLowerCase()
     const cred = smartForm.value.cred
     if (!email || !cred) {
-        message.error('请填写邮箱地址与密码/授权码')
+        message.error(t('pleaseInputAddressAndCred'))
         return
     }
     submitting.value = true
@@ -203,9 +205,9 @@ const handleSmartConnect = async () => {
     } catch (e) {
         const errMsg = e.message || String(e)
         if (errMsg.includes('AUTH_LINUX_DO_IP_TRAP') || (email.endsWith('@linux.do') && errMsg.includes('AUTHENTICATIONFAILED'))) {
-            message.error('认证失败：生成 LINUX DO 认证令牌时，“授权IP”请务必完全留空，切勿填写 0.0.0.0。')
+            message.error(t('linuxDoTokenIpHint'))
         } else if (errMsg.includes('AUTHENTICATIONFAILED')) {
-            message.error('认证失败：账号或授权码不匹配。部分邮箱（如 QQ/网易）需使用专用授权码而非主密码。')
+            message.error(t('authFailedHint'))
         } else {
             message.error(errMsg || '智能接入失败')
         }
@@ -227,7 +229,7 @@ const submit = async () => {
 
     const outlookOauth = isOutlook.value ? parseOutlookOauth(f.oauth_json) : null
     if (isOutlook.value && !outlookOauth) {
-        message.error('Outlook / Hotmail 需要有效的 OAuth JSON（个人账号使用 msa，组织账号使用 outlook）')
+        message.error(t('oauthJsonRequired'))
         return
     }
 
@@ -235,15 +237,15 @@ const submit = async () => {
     const pop3Valid = f.protocol !== 'pop3' || (effectivePop3Host && validPort(effectivePop3Port))
     const effectiveCred = outlookOauth ? OAUTH_CRED_PLACEHOLDER : f.cred
     if (!f.username || !effectiveCred || !imapValid || !pop3Valid) {
-        message.error('请填写有效的邮箱服务器、端口与授权信息')
+        message.error(t('invalidServerConfig'))
         return
     }
     if (![f.use_ssl, f.pop3_ssl, f.pop3_use_stls].every(v => typeof v === 'boolean')) {
-        message.error('SSL/STLS 配置无效')
+        message.error(t('sslConfigInvalid'))
         return
     }
     if (f.pop3_ssl && f.pop3_use_stls) {
-        message.error('POP3 SSL 与 STLS 互斥，请勿同时勾选')
+        message.error(t('pop3SslStlsExclusive'))
         return
     }
     submitting.value = true
@@ -393,7 +395,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                     :class="connectMode === 'smart' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'"
                     @click="setConnectMode('smart')"
                 >
-                    ⚡ 一键智能接入 (推荐)
+                    ⚡ {{ t('smartConnectMode') }}
                 </button>
                 <button
                     type="button"
@@ -401,7 +403,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                     :class="connectMode === 'manual' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'"
                     @click="setConnectMode('manual')"
                 >
-                    ⚙️ 手动高级配置
+                    ⚙️ {{ t('manualMode') }}
                 </button>
             </div>
 
@@ -411,7 +413,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                     <n-form-item :label="t('emailUsername') || '邮箱地址'">
                         <n-input
                             v-model:value="smartForm.email"
-                            placeholder="如：mangoqwq@linux.do, myname@qq.com"
+                            :placeholder="t('emailPlaceholder')"
                             class="rounded-xl"
                         />
                     </n-form-item>
@@ -420,11 +422,11 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                     <div v-if="providerHint" class="rounded-2xl p-3 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/50 flex items-start gap-2.5">
                         <div class="text-amber-500 font-bold text-base leading-none mt-0.5">💡</div>
                         <div class="flex-1 text-xs">
-                            <div class="font-semibold text-amber-900 dark:text-amber-200">{{ providerHint.badge }}</div>
-                            <div class="text-amber-700 dark:text-amber-300/90 mt-0.5">{{ providerHint.warningText }}</div>
+                            <div class="font-semibold text-amber-900 dark:text-amber-200">{{ ph(providerHint.badgeKey) }}</div>
+                            <div class="text-amber-700 dark:text-amber-300/90 mt-0.5">{{ ph(providerHint.warningKey) }}</div>
                             <div v-if="providerHint.providerKey === 'outlook'" class="pt-2">
                                 <n-button size="small" type="warning" dashed @click="switchToOutlookOauth" class="rounded-lg text-xs">
-                                    点击切换至 Outlook OAuth 配置
+                                    {{ t('switchToOauth') }}
                                 </n-button>
                             </div>
                         </div>
@@ -435,16 +437,16 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                             v-model:value="smartForm.cred"
                             type="password"
                             show-password-on="click"
-                            placeholder="输入邮箱授权码或认证令牌"
+                            :placeholder="t('credentialPlaceholder')"
                             class="rounded-xl"
                         />
                     </n-form-item>
 
                     <div class="grid grid-cols-2 gap-3">
                         <n-form-item :label="t('customLabel') || '自定义名称（选填）'">
-                            <n-input v-model:value="smartForm.label" placeholder="如：我的个人邮箱" class="rounded-xl" />
+                            <n-input v-model:value="smartForm.label" :placeholder="t('labelPlaceholderSmart')" class="rounded-xl" />
                         </n-form-item>
-                        <n-form-item label="网络加速 / 代理策略">
+                        <n-form-item :label="t('proxyPolicyLabel')">
                             <n-select v-model:value="smartForm.proxy_policy" :options="proxyPolicyOptions" class="rounded-xl" />
                         </n-form-item>
                     </div>
@@ -455,7 +457,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                             class="text-xs text-slate-500 hover:text-primary transition-colors underline underline-offset-2"
                             @click="setConnectMode('manual')"
                         >
-                            需要自定义端口与协议？切换到手动配置 →
+                            {{ t('switchToManual') }}
                         </button>
                         <div class="flex gap-2">
                             <n-button @click="showModal = false" class="rounded-xl">{{ t('cancelAction') || '取消' }}</n-button>
@@ -477,16 +479,16 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                         <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook" @update:value="onProtocolChange" class="rounded-xl" />
                     </n-form-item>
                     <n-form-item :label="t('customLabel') || '自定义标签（选填）'">
-                        <n-input v-model:value="form.label" placeholder="如：我的个人 QQ 邮箱" class="rounded-xl" />
+                        <n-input v-model:value="form.label" :placeholder="t('labelPlaceholderManual')" class="rounded-xl" />
                     </n-form-item>
                     <n-form-item :label="t('emailUsername') || '邮箱地址 / 用户名'">
                         <n-input v-model:value="form.username" placeholder="user@example.com" class="rounded-xl" />
                     </n-form-item>
                     <template v-if="isOutlook">
                         <n-alert type="info" :show-icon="false" class="rounded-xl">
-                            Outlook / Hotmail / Microsoft 365 使用 OAuth2。个人账号可粘贴 msa_authorize.py 生成的 JSON；组织账号使用 provider=outlook，并包含 client_secret。
+                            {{ t('outlookOauthIntro') }}
                         </n-alert>
-                        <n-form-item label="OAuth 配置 JSON">
+                        <n-form-item :label="t('oauthJsonLabel')">
                             <n-input
                                 v-model:value="form.oauth_json"
                                 type="password"
@@ -497,7 +499,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                         </n-form-item>
                     </template>
                     <n-form-item v-else :label="t('credential') || '授权码 / 应用专用密码'">
-                        <n-input v-model:value="form.cred" type="password" show-password-on="click" placeholder="应用专用密码或授权码" class="rounded-xl" />
+                        <n-input v-model:value="form.cred" type="password" show-password-on="click" :placeholder="t('credPlaceholderManual')" class="rounded-xl" />
                     </n-form-item>
                     <p v-if="form.protocol === 'auto'" class="text-xs text-slate-500 dark:text-slate-400">
                         {{ t('autoDescription') || '自动：优先使用 IMAP；IMAP 失败时仅对 INBOX 使用 POP3 fallback。' }}
@@ -531,11 +533,11 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                         <n-checkbox v-model:checked="form.use_ssl">{{ t('imapSsl') || 'IMAP SSL' }}</n-checkbox>
                     </template>
                     <div class="grid grid-cols-2 gap-3">
-                        <n-form-item label="出站代理策略">
+                        <n-form-item :label="t('outboundProxyLabel')">
                             <n-select v-model:value="form.proxy_policy" :options="proxyPolicyOptions" class="rounded-xl" />
                         </n-form-item>
-                        <n-form-item label="发件 SMTP 主机（选填）">
-                            <n-input v-model:value="form.smtp_host" placeholder="留空自动推导" class="rounded-xl" />
+                        <n-form-item :label="t('smtpHostLabel')">
+                            <n-input v-model:value="form.smtp_host" :placeholder="t('smtpHostPlaceholder')" class="rounded-xl" />
                         </n-form-item>
                     </div>
                     <n-form-item v-if="form.protocol !== 'pop3'" :label="t('folders') || '文件夹（逗号分隔，默认 INBOX）'">

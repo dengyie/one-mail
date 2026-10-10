@@ -71,11 +71,3 @@ export const I18N_MESSAGES: Record<SupportedLocale, LocaleTree> = {
   ja: buildAdditionalLocaleMessages('ja'),
   de: buildAdditionalLocaleMessages('de'),
 }
-
-export const getLocalizedMessage = (
-  locale: AdditionalLocale,
-  namespace: MessageNamespace,
-  key: string,
-) => {
-  return additionalLocaleSources[locale][`${namespace}.${key}`]
-}
