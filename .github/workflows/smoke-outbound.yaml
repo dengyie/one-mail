@@ -30,7 +30,7 @@ jobs:
       - name: Probe live API
         run: |
           set -u
-          API=https://mail-api.mangoqwq.cc.cd
+          API=https://mail-api.mangoqwq.com
           echo "=== GET / ==="
           curl -sS -m 15 -o /dev/stdout -w "\n[http %{http_code} ip %{remote_ip}]\n" "$API/" || true
           echo "=== GET /admin/unified/mail_accounts (unauth, expect 401) ==="
@@ -67,7 +67,7 @@ jobs:
         run: |
           set -u
           cd worker/
-          API=https://mail-api.mangoqwq.cc.cd
+          API=https://mail-api.mangoqwq.com
 
           d1q() {
             pnpm exec wrangler d1 execute DB --remote --command "$1" --json 2>/dev/null \

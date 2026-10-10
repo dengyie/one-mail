@@ -14,7 +14,7 @@
    │  VITE_API_BASE 指向 Worker 自定义域名
    │  （本地开发时经 vite dev server.proxy 转发到 127.0.0.1:8787）
    ▼
-Cloudflare Worker ──mail-api.mangoqwq.cc.cd
+Cloudflare Worker ──mail-api.mangoqwq.com (备用: mail-api.mangoqwq.cc.cd)
    │  ├─ /api/unified/*       统一收件箱查询（API-key 鉴权）
    │  ├─ /admin/unified/*     统一收件箱管理（x-admin-auth 鉴权）
    │  └─ /api/* · /user_api/* · /admin/*  临时邮箱基座
@@ -24,7 +24,7 @@ Cloudflare Worker ──mail-api.mangoqwq.cc.cd
 
 - **技术栈**：Vue 3（Composition API） + Vite + Naive UI（`unplugin-auto-import` + `unplugin-vue-components`）；`vue-router` 4、`vue-i18n` 11、`axios`（`api/index.js`）、`@vueuse/core`（全局状态持久化）、`@fingerprintjs`（设备指纹）。
 - **本地开发**：`pnpm dev` 起 Vite dev server，浏览器访问 `http://localhost:5173`；dev 时 `/api`、`/open_api`、`/user_api`、`/admin`、`/telegram`、`/external` 均经 `vite.config.js` 的 `server.proxy` 转发到 `127.0.0.1:8787`（即本地 `wrangler dev`）。
-- **生产部署**：`VITE_API_BASE` 指向 Worker 自定义域名（如 `https://mail-api.mangoqwq.cc.cd`），构建产物为静态文件；由 Cloudflare Pages 托管到自定义域名，页面内所有请求跨域直连 Worker。
+- **生产部署**：`VITE_API_BASE` 指向 Worker 自定义域名（如 `https://mail-api.mangoqwq.com`），构建产物为静态文件；由 Cloudflare Pages 托管到自定义域名，页面内所有请求跨域直连 Worker。
 
 > [!TIP]
 > 后端最小本地形态：`cd worker && pnpm install && pnpm dev`（`wrangler dev`，本地 D1/KV）。需要先有本地 D1，可参考 `cli/d1` / `ui/d1`。前端 dev 直连 `127.0.0.1:8787` 即可联调，无需 CORS 配置。
@@ -144,7 +144,7 @@ pnpm dev            # Vite dev server http://localhost:5173
 
 ```bash
 # .env.local（本地 / 自定义环境）
-VITE_API_BASE=https://mail-api.mangoqwq.cc.cd
+VITE_API_BASE=https://mail-api.mangoqwq.com
 VITE_CF_WEB_ANALY_TOKEN=
 ```
 
