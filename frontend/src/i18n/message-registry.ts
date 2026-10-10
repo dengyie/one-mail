@@ -1631,6 +1631,114 @@ export const MESSAGE_REGISTRY = {
     "workerconfig": {
       "en": "Worker Config",
       "zh": "Worker 配置"
+    },
+    "accountsTitle": {
+      "en": "Mail Accounts & Addresses",
+      "zh": "邮箱账户与地址管理"
+    },
+    "accountsSubtitle": {
+      "en": "Review, create, reset passwords, and clean up site-wide accounts and inbox records",
+      "zh": "查看、创建、重置密码及清理全站邮箱账户与收件箱记录"
+    },
+    "usersTitle": {
+      "en": "Registered Users & Roles",
+      "zh": "注册用户与角色管理"
+    },
+    "usersSubtitle": {
+      "en": "Manage site-wide user accounts, bindings, and role permissions",
+      "zh": "管理全站注册用户账号、绑定关系与角色权限配置"
+    },
+    "statisticsTitle": {
+      "en": "Site-wide Metrics Dashboard",
+      "zh": "全站业务指标与统计看板"
+    },
+    "statisticsSubtitle": {
+      "en": "Monitor mailbox counts, active addresses, outgoing traffic, and user growth in real time",
+      "zh": "实时监控全站邮箱数量、活跃地址、发件流水与用户增长"
+    },
+    "aiExtractTitle": {
+      "en": "AI Extraction Policy",
+      "zh": "AI 智能提取策略配置"
+    },
+    "aiExtractSubtitle": {
+      "en": "Configure verification-code heuristics, summary generation, and allowlist policy",
+      "zh": "设置验证码启发式提取、摘要生成与白名单策略"
+    },
+    "webhookTitle": {
+      "en": "Webhook Push & Alerts",
+      "zh": "Webhook 推送与告警配置"
+    },
+    "webhookSubtitle": {
+      "en": "Configure outbound Webhook channels triggered by site-wide mail events",
+      "zh": "配置全站邮件事件触发的外部 Webhook 回调通道"
+    },
+    "databaseTitle": {
+      "en": "D1 Database Version & Maintenance",
+      "zh": "D1 数据库版本与维护操作"
+    },
+    "databaseSubtitle": {
+      "en": "Check schema version and run lossless migration or initialization",
+      "zh": "检查数据表结构版本、执行无损迁移与初始化"
+    },
+    "settingsTitle": {
+      "en": "Domain & Global Policy",
+      "zh": "域名与全局策略配置"
+    },
+    "settingsSubtitle": {
+      "en": "Configure registration switches, sending limits, blocklists, and domain forwarding rules",
+      "zh": "配置系统注册开关、发信限制、黑白名单与域名转发规则"
+    },
+    "senderAccessTitle": {
+      "en": "Sender Permission & Quota",
+      "zh": "发信权限与配额管理"
+    },
+    "senderAccessSubtitle": {
+      "en": "Approve sending requests and adjust per-address send quotas and enablement",
+      "zh": "审核用户申请的发信权限、调整邮箱地址的发件额度与启用状态"
+    },
+    "sendMailTitle": {
+      "en": "Admin Outbound Mail",
+      "zh": "管理员专属外发邮件"
+    },
+    "sendMailSubtitle": {
+      "en": "Compose and send mail directly from any managed domain address with top privileges and unlimited quota",
+      "zh": "以全站任意托管域名地址直接编辑并外发邮件,享有最高权限与无限额度"
+    },
+    "sendBoxTitle": {
+      "en": "Outbound Records",
+      "zh": "出站记录"
+    },
+    "sendBoxSubtitle": {
+      "en": "Search all sent mail by address, source, and keyword; verification-code bodies are collapsed by default",
+      "zh": "按地址、来源与关键词查询全站已发邮件,验证码正文默认折叠"
+    },
+    "sendUnknownTitle": {
+      "en": "Unknown Deliveries",
+      "zh": "未知投递"
+    },
+    "sendUnknownSubtitle": {
+      "en": "Outbound requests the provider did not confirm as delivered. Marking delivered keeps the quota; marking failed refunds it.",
+      "zh": "服务商未确认送达的出站请求。标记已送达会保留额度,标记失败会退回额度。"
+    },
+    "noAdminTitle": {
+      "en": "No Admin Permission",
+      "zh": "暂无管理员权限"
+    },
+    "noAdminTip": {
+      "en": "The current account is not a system administrator and cannot access the admin console.",
+      "zh": "当前登录账号并非系统管理员,无法访问管理控制台。"
+    },
+    "backToInbox": {
+      "en": "Back to Inbox",
+      "zh": "返回收件箱"
+    },
+    "adminAccessTitle": {
+      "en": "System Administrator Credentials",
+      "zh": "系统管理员访问凭证"
+    },
+    "adminPasswordPlaceholder": {
+      "en": "Enter the admin password",
+      "zh": "请输入管理员后台密码"
     }
   },
   "views.User": {
