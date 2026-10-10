@@ -144,7 +144,7 @@ request = build_metrics_request(
 操作员先通过 `GET /internal/fleet/snapshot` 取得 revision，确认 observe 模式和独立 control token 已配置后，才向主站 `POST /internal/fleet/metrics` 发送生成的请求。令牌应由已有 `0600` 私有 curl 配置提供，不写入示例 JSON、终端命令参数或 Git：
 
 ```bash
-curl --fail-with-body --max-time 10 --config /private/onemail-fleet/fleet-control.curl --request POST --header 'Content-Type: application/json' --data-binary @/private/onemail-fleet/metrics-request.json https://mail-api.mangoqwq.cc.cd/internal/fleet/metrics
+curl --fail-with-body --max-time 10 --config /private/onemail-fleet/fleet-control.curl --request POST --header 'Content-Type: application/json' --data-binary @/private/onemail-fleet/metrics-request.json https://mail-api.mangoqwq.com/internal/fleet/metrics
 ```
 
 成功确认后才将对应的原始 `raw` 保存为 `accepted-main.json`。超时/结果未知时保持同一请求和幂等键重试；确认收到 revision 冲突后重新获取快照并按接口合同处理，不用随机换键隐藏冲突。失败适配不会生成可提交报告。当前未创建上述私有文件，也未发送任何生产控制请求。
