@@ -166,6 +166,8 @@ export const esMessages = {
   "views.admin.DatabaseManager.initializationSuccess": "Base de datos inicializada correctamente",
   "views.admin.DatabaseManager.migrationSuccess": "Base de datos migrada correctamente",
   "views.admin.DatabaseManager.need_migration_tip": "Es necesario migrar la base de datos. Realiza la migración primero.",
+  "views.admin.DatabaseManager.notSet": "Sin definir",
+  "views.admin.DatabaseManager.upToDate": "El esquema de la base de datos está actualizado. No se requiere ninguna acción.",
   "components.MailBox.delete": "Eliminar",
   "components.MailContentRenderer.delete": "Eliminar",
   "components.SendBox.delete": "Eliminar",

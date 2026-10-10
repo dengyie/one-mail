@@ -166,6 +166,8 @@ export const ptBRMessages = {
   "views.admin.DatabaseManager.initializationSuccess": "Banco de dados inicializado com sucesso",
   "views.admin.DatabaseManager.migrationSuccess": "Banco de dados migrado com sucesso",
   "views.admin.DatabaseManager.need_migration_tip": "É necessário migrar o banco de dados. Execute a migração primeiro.",
+  "views.admin.DatabaseManager.notSet": "Não definido",
+  "views.admin.DatabaseManager.upToDate": "O esquema do banco de dados está atualizado. Nenhuma ação necessária.",
   "components.MailBox.delete": "Excluir",
   "components.MailContentRenderer.delete": "Excluir",
   "components.SendBox.delete": "Excluir",

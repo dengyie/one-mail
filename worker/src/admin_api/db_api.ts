@@ -389,6 +389,31 @@ function initQuery() {
         .join(";\n");
 }
 
+/**
+ * Brings the actual table shape up to date and reports the columns it added.
+ *
+ * Initialize and migrate must run the exact same ordered repairs: a deployment
+ * can be interrupted at any point, and CREATE TABLE never adds columns to a
+ * table that already exists, so both entry points repair the real schema rather
+ * than trusting the version marker. Sharing one sequence keeps the two paths
+ * from drifting apart; column-dependent indexes are created by the repair that
+ * adds their column, after the column.
+ */
+async function repairSchema(db: D1Database): Promise<string[]> {
+    // CREATE IF NOT EXISTS is safe for both a fresh and an existing D1.
+    await db.exec(initQuery());
+    await ensureLegacyColumns(db);
+    await ensureSendboxSourceSchema(db);
+    await ensurePasskeySchema(db);
+    await ensureAccountLifecycleTable(db);
+    const changes = await ensurePop3Columns(db);
+    changes.push(...await ensureUnifiedColumns(db));
+    changes.push(...await ensureProviderIdentitySchema(db));
+    await ensureSendMailLimitReservationSchema(db);
+    changes.push(...await ensureOutboundSendSchema(db));
+    return changes;
+}
+
 export default {
     initialize: async (c: Context<HonoCustomType>) => {
         if (isShardMode(c.env)) {
@@ -398,20 +423,7 @@ export default {
         const { current_db_version: version } = await readDatabaseStatus(c);
         const budgetError = await checkIndexWriteBudget(c);
         if (budgetError) return budgetError;
-        // CREATE IF NOT EXISTS is safe for both a fresh and an existing D1.
-        await c.env.DB.exec(initQuery());
-        // CREATE TABLE does not add columns to an old table, so repair the
-        // actual table shape even when db_version is missing or stale.
-        await ensureLegacyColumns(c.env.DB);
-        await ensureSendboxSourceSchema(c.env.DB);
-        await ensurePasskeySchema(c.env.DB);
-        await ensureAccountLifecycleTable(c.env.DB);
-        await ensurePop3Columns(c.env.DB);
-        await ensureUnifiedColumns(c.env.DB);
-        await ensureProviderIdentitySchema(c.env.DB);
-        await ensureSendMailLimitReservationSchema(c.env.DB);
-        await ensureOutboundSendSchema(c.env.DB);
-
+        await repairSchema(c.env.DB);
         if (version) {
             return c.json({ message: "Database already initialized" });
         }
@@ -426,26 +438,8 @@ export default {
         const { current_db_version: version } = await readDatabaseStatus(c);
         const budgetError = await checkIndexWriteBudget(c);
         if (budgetError) return budgetError;
-
-        // Repair the actual schema even when the version marker is absent.
-        // Column-dependent indexes are created by their repair after the column.
-        await c.env.DB.exec(initQuery());
-        await ensureLegacyColumns(c.env.DB);
-        await ensureSendboxSourceSchema(c.env.DB);
-        await ensurePasskeySchema(c.env.DB);
-        await ensureAccountLifecycleTable(c.env.DB);
-        const migrationChanges = await ensurePop3Columns(c.env.DB);
-        const unifiedChanges = await ensureUnifiedColumns(c.env.DB);
-        const providerIdentityChanges = await ensureProviderIdentitySchema(c.env.DB);
-        await ensureSendMailLimitReservationSchema(c.env.DB);
-        const outboundChanges = await ensureOutboundSendSchema(c.env.DB);
-        if (
-            version != CONSTANTS.DB_VERSION ||
-            migrationChanges.length > 0 ||
-            unifiedChanges.length > 0 ||
-            providerIdentityChanges.length > 0 ||
-            outboundChanges.length > 0
-        ) {
+        const changes = await repairSchema(c.env.DB);
+        if (version != CONSTANTS.DB_VERSION || changes.length > 0) {
             await saveSetting(c, CONSTANTS.DB_VERSION_KEY, CONSTANTS.DB_VERSION);
             return c.json({
                 success: true,

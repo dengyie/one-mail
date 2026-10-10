@@ -166,6 +166,8 @@ export const deMessages = {
   "views.admin.DatabaseManager.initializationSuccess": "Datenbank erfolgreich initialisiert",
   "views.admin.DatabaseManager.migrationSuccess": "Datenbank erfolgreich migriert",
   "views.admin.DatabaseManager.need_migration_tip": "Die Datenbank muss migriert werden. Bitte zuerst migrieren.",
+  "views.admin.DatabaseManager.notSet": "Nicht gesetzt",
+  "views.admin.DatabaseManager.upToDate": "Das Datenbankschema ist aktuell. Keine Aktion erforderlich.",
   "components.MailBox.delete": "Löschen",
   "components.MailContentRenderer.delete": "Löschen",
   "components.SendBox.delete": "Löschen",

@@ -8,6 +8,10 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| 管理「数据库版本与维护」页：把硬编码的英文 `unknown` 换成随语言本地化的占位（`notSet`），新增「结构已是最新」成功态，版本号改用卡片展示并对齐后台设计语言；初始化与迁移提示改为互斥显示，避免两个告警同时出现。
+
+- refactor: |Worker| 初始化与迁移共用同一份有序 schema 修复序列（`repairSchema`）：两处此前各自维护同一套十步修复，任一路径新增修复而另一处漏改会静默分叉；合并后由既有 initialize/migrate 测试矩阵覆盖。
+
 - perf: |Worker| 管理统计页面的六条 `COUNT(*)` 合并为单次 `DB.batch()`:该页面恰在 D1 日读配额吃紧时才被打开,把六次串行往返压成一次,降低延迟与每语句开销;配额包装器按结果逐个记账,与原先顺序执行口径一致。
 
 - feat: |Worker/Frontend| 管理看板 D1 配额按数据库拆分：`/admin/statistics` 与 `/admin/d1_quota` 新增 `d1Quotas`（主库在前），单对象 `d1Quota` 保留给旧客户端；仅当 `SHARD_MAP` 列出远程分片时才扇出 `/shard/quota`，空注册表保持单卡与零 D1 读不变。远程分片报文经 `isD1QuotaView` 运行时校验，不符即按不可达处理；不可达卡片显示原因码而非伪造的 0%，`accounting_issues` 与主库账号归属说明上抛到界面。
