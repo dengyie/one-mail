@@ -21,6 +21,24 @@ const statistics = ref({
     d1Quotas: [],
 })
 
+// The backend returns d1Quotas (primary first) and keeps the single-object
+// d1Quota for older responses, so the view iterates the list and falls back to
+// the object. An empty array is truthy, so test length explicitly. The legacy
+// object predates the reachable/account_ids fields, so default them here rather
+// than rendering a reachable primary database as unreachable.
+const quotaCards = (d1Quotas, d1Quota) => {
+    if (Array.isArray(d1Quotas) && d1Quotas.length) return d1Quotas
+    if (!d1Quota) return []
+    return [{
+        reachable: true,
+        unavailable_reason: null,
+        account_ids: [],
+        accounts_known: false,
+        accounting_issues: [],
+        ...d1Quota,
+    }]
+}
+
 const fetchStatistics = async () => {
     try {
         const {
@@ -34,13 +52,12 @@ const fetchStatistics = async () => {
         statistics.value.addressCount = addressCount || 0;
         statistics.value.activeAddressCount7days = activeAddressCount7days || 0;
         statistics.value.activeAddressCount30days = activeAddressCount30days || 0;
-        // Older responses only carry the single-object d1Quota.
-        statistics.value.d1Quotas = d1Quotas || (d1Quota ? [d1Quota] : []);
+        statistics.value.d1Quotas = quotaCards(d1Quotas, d1Quota);
     } catch (error) {
         message.error(error.message || "error");
         try {
             const { d1Quota, d1Quotas } = await api.fetch('/admin/d1_quota');
-            statistics.value.d1Quotas = d1Quotas || (d1Quota ? [d1Quota] : []);
+            statistics.value.d1Quotas = quotaCards(d1Quotas, d1Quota);
         } catch (quotaError) {
             message.error(quotaError.message || "error");
         }
@@ -119,6 +136,7 @@ onMounted(async () => {
                 v-for="quota in statistics.d1Quotas"
                 :key="quota.shard_id"
                 class="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 flex items-center gap-4"
+                :class="statistics.d1Quotas.length === 1 ? 'sm:col-span-3' : ''"
             >
                 <div class="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-500 flex items-center justify-center text-xl font-bold">
                     <n-icon :component="Database" />
@@ -126,12 +144,15 @@ onMounted(async () => {
                 <div class="min-w-0 flex-1">
                     <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">
                         {{ t('d1QuotaToday') }}
-                        <span v-if="!quota.reachable" class="text-rose-500 font-bold">· {{ t('d1QuotaUnreachable') }}</span>
+                        <span v-if="!quota.reachable" class="text-rose-500 font-bold">
+                            · {{ t('d1QuotaUnreachable') }}<template v-if="quota.unavailable_reason"> ({{ quota.unavailable_reason }})</template>
+                        </span>
                     </p>
                     <p class="text-2xl font-extrabold text-slate-900 dark:text-white mt-0.5 font-mono">
-                        {{ quota.rows_read_pct }}% / {{ quota.rows_written_pct }}%
+                        <template v-if="quota.reachable">{{ quota.rows_read_pct }}% / {{ quota.rows_written_pct }}%</template>
+                        <template v-else>— / —</template>
                     </p>
-                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono truncate">
+                    <p v-if="quota.reachable" class="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono truncate">
                         {{ t('d1QuotaDetail', {
                             read: quota.rows_read,
                             readLimit: quota.rows_read_limit,
@@ -143,6 +164,12 @@ onMounted(async () => {
                     </p>
                     <p v-if="quota.accounts_known" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono truncate">
                         {{ t('d1QuotaAccounts', { count: quota.account_ids.length, accounts: quota.account_ids.join(', ') || '-' }) }}
+                    </p>
+                    <p v-else class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono truncate">
+                        {{ t('d1QuotaAccountsPrimary') }}
+                    </p>
+                    <p v-if="quota.reachable && quota.accounting_issues?.length" class="text-xs text-amber-600 dark:text-amber-400 mt-0.5 font-mono truncate">
+                        {{ t('d1QuotaIssues', { issues: quota.accounting_issues.join(', ') }) }}
                     </p>
                 </div>
             </div>

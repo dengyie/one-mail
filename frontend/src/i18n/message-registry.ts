@@ -2677,6 +2677,14 @@ export const MESSAGE_REGISTRY = {
     "d1QuotaAccounts": {
       "en": "Accounts {count}: {accounts}",
       "zh": "账号 {count}:{accounts}"
+    },
+    "d1QuotaAccountsPrimary": {
+      "en": "Primary DB: all other accounts",
+      "zh": "主库：其余全部账号"
+    },
+    "d1QuotaIssues": {
+      "en": "Telemetry issues: {issues}",
+      "zh": "计量异常：{issues}"
     }
   },
   "views.admin.SenderAccess": {

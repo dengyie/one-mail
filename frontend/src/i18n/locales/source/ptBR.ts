@@ -37,6 +37,8 @@ export const ptBRMessages = {
   "views.admin.Statistics.d1QuotaDetail": "leitura {read} / {readLimit} · escrita {written} / {writtenLimit} · {shard} · {date}",
   "views.admin.Statistics.d1QuotaUnreachable": "inacessível",
   "views.admin.Statistics.d1QuotaAccounts": "Contas {count}: {accounts}",
+  "views.admin.Statistics.d1QuotaAccountsPrimary": "BD principal: todas as outras contas",
+  "views.admin.Statistics.d1QuotaIssues": "Problemas de medição: {issues}",
   "views.admin.UserManagement.address_count": "Quantidade de endereços",
   "views.User.address_management": "Gerenciamento de endereços",
   "views.admin.UserManagement.userAddressManagement": "Gerenciamento de endereços",

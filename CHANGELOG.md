@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |Worker/Frontend| 管理看板 D1 配额按数据库拆分：`/admin/statistics` 与 `/admin/d1_quota` 新增 `d1Quotas`（主库在前），单对象 `d1Quota` 保留给旧客户端；仅当 `SHARD_MAP` 列出远程分片时才扇出 `/shard/quota`，空注册表保持单卡与零 D1 读不变。远程分片报文经 `isD1QuotaView` 运行时校验，不符即按不可达处理；不可达卡片显示原因码而非伪造的 0%，`accounting_issues` 与主库账号归属说明上抛到界面。
+
 - fix: |Worker/Aggregator| 管理员 claim 请求在鉴权时已读取 KV 失败计数；常见的 0 计数成功路径跳过重复 KV 读取，减少每个管理 API 请求的一次串行往返。存在失败计数时仍复查后再删除，保留并发安全和 KV 删除配额保护。
 
 - test: |Worker| 队列保留期测试固定时钟并精确断言截止时间，消除两次系统时钟读取跨毫秒造成的 CI 随机失败。
