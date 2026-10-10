@@ -2676,7 +2676,7 @@ export const MESSAGE_REGISTRY = {
     },
     "d1QuotaAccounts": {
       "en": "Accounts {count}: {accounts}",
-      "zh": "账号 {count}:{accounts}"
+      "zh": "账号 {count}：{accounts}"
     },
     "d1QuotaAccountsPrimary": {
       "en": "Primary DB: all other accounts",

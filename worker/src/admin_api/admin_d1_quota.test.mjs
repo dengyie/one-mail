@@ -3,6 +3,7 @@ import test from 'node:test';
 import statistics from './statistics_api.ts';
 import { QuotaTelemetryError, resetD1QuotaStateForTests, recordD1Quota } from '../core/d1_quota.ts';
 import { resetShardMapCacheForTests, SHARD_MAP_KV_KEY } from '../unified/shard_map.ts';
+import { isD1QuotaView } from '../unified/quota_report.ts';
 
 const now = Date.UTC(2026, 9, 5, 12);
 // The DB handle throws on any use: these endpoints must stay servable while the
@@ -132,4 +133,76 @@ test('a malformed registry degrades to the primary card instead of failing', asy
     assert.equal(d1Quotas.length, 1);
     assert.equal(d1Quotas[0].shard_id, 'primary');
     assert.equal(d1Quotas[0].reachable, true);
+});
+
+const validQuotaView = () => ({ ...remoteQuota });
+
+test('isD1QuotaView accepts a conforming view and rejects each broken field', () => {
+    assert.equal(isD1QuotaView(validQuotaView()), true);
+    assert.equal(isD1QuotaView(null), false);
+    assert.equal(isD1QuotaView('nope'), false);
+    assert.equal(isD1QuotaView([]), false);
+    // flushed_at is null until the first flush; that must stay valid.
+    assert.equal(isD1QuotaView({ ...validQuotaView(), flushed_at: null }), true);
+    const broken = [
+        { shard_id: 1 },
+        { utc_date: 1 },
+        { rows_read: 'x' },
+        { rows_written: NaN },
+        { rows_read_limit: 'x' },
+        { rows_written_limit: 'x' },
+        { rows_read_pct: 'x' },
+        { rows_written_pct: 'x' },
+        { pending_unflushed: null },
+        { pending_unflushed: { rows_read: 0 } },
+        { flushed_at: 'x' },
+        { flush_count: 'x' },
+        { aggregation_mode: 1 },
+        { confidence: 1 },
+        { accounting_issues: 'x' },
+    ];
+    for (const patch of broken) {
+        assert.equal(isD1QuotaView({ ...validQuotaView(), ...patch }), false, JSON.stringify(patch));
+    }
+});
+
+test('statistics endpoint batches its six counts into one D1 round trip', async () => {
+    resetD1QuotaStateForTests({ now: () => now });
+    resetShardMapCacheForTests();
+    const batches = [];
+    const counts = [11, 22, 3, 4, 55, 66];
+    const db = {
+        prepare: (sql) => ({ sql }),
+        batch: async (statements) => {
+            batches.push(statements.map((statement) => statement.sql));
+            return statements.map((_, index) => ({ results: [{ count: counts[index] }] }));
+        },
+    };
+    const c = {
+        env: { KV: { get: async () => null }, DB: db },
+        req: { raw: { signal: undefined } },
+        json: (value) => Response.json(value),
+    };
+    const response = await statistics.get(c);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    // One round trip, six statements, in the order the fields are destructured.
+    assert.equal(batches.length, 1);
+    assert.deepEqual(batches[0], [
+        `SELECT count(*) as count FROM raw_mails`,
+        `SELECT count(*) as count FROM address`,
+        `SELECT count(*) as count FROM address where updated_at > datetime('now', '-7 day')`,
+        `SELECT count(*) as count FROM address where updated_at > datetime('now', '-30 day')`,
+        `SELECT count(*) as count FROM sendbox`,
+        `SELECT count(*) as count FROM users`,
+    ]);
+    assert.equal(body.mailCount, 11);
+    assert.equal(body.addressCount, 22);
+    assert.equal(body.activeAddressCount7days, 3);
+    assert.equal(body.activeAddressCount30days, 4);
+    assert.equal(body.sendMailCount, 55);
+    assert.equal(body.userCount, 66);
+    assert.equal(body.d1Quotas.length, 1);
+    assert.equal(body.d1Quotas[0].shard_id, 'primary');
+    assert.equal(body.d1Quota.rows_read, 0);
 });
