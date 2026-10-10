@@ -1,5 +1,5 @@
 import { Context } from 'hono'
-import { viewD1Quota } from '../core/d1_quota.ts'
+import { d1QuotaByShard } from '../unified/quota_report.ts'
 
 const get = async (c: Context<HonoCustomType>) => {
     const { count: mailCount } = await c.env.DB.prepare(
@@ -20,7 +20,7 @@ const get = async (c: Context<HonoCustomType>) => {
     const { count: userCount } = await c.env.DB.prepare(
         `SELECT count(*) as count FROM users`
     ).first<{ count: number }>() || {};
-    const d1Quota = await viewD1Quota(c.env);
+    const d1Quotas = await d1QuotaByShard(c);
     return c.json({
         mailCount,
         addressCount,
@@ -28,11 +28,16 @@ const get = async (c: Context<HonoCustomType>) => {
         activeAddressCount30days,
         userCount,
         sendMailCount,
-        d1Quota,
+        // Single object retained for older clients; d1Quotas is the full
+        // per-database breakdown (primary first).
+        d1Quota: d1Quotas[0] ?? null,
+        d1Quotas,
     });
 };
 
-const getD1Quota = async (c: Context<HonoCustomType>): Promise<Response> =>
-    c.json({ d1Quota: await viewD1Quota(c.env) });
+const getD1Quota = async (c: Context<HonoCustomType>): Promise<Response> => {
+    const d1Quotas = await d1QuotaByShard(c);
+    return c.json({ d1Quota: d1Quotas[0] ?? null, d1Quotas });
+};
 
 export default { get, getD1Quota };

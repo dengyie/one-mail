@@ -2669,6 +2669,14 @@ export const MESSAGE_REGISTRY = {
     "d1QuotaDetail": {
       "en": "read {read} / {readLimit} · write {written} / {writtenLimit} · {shard} · {date}",
       "zh": "读 {read} / {readLimit} · 写 {written} / {writtenLimit} · {shard} · {date}"
+    },
+    "d1QuotaUnreachable": {
+      "en": "unreachable",
+      "zh": "无法连接"
+    },
+    "d1QuotaAccounts": {
+      "en": "Accounts {count}: {accounts}",
+      "zh": "账号 {count}:{accounts}"
     }
   },
   "views.admin.SenderAccess": {

@@ -18,7 +18,7 @@ const statistics = ref({
     activeAddressCount7days: 0,
     activeAddressCount30days: 0,
     sendMailCount: 0,
-    d1Quota: null,
+    d1Quotas: [],
 })
 
 const fetchStatistics = async () => {
@@ -26,7 +26,7 @@ const fetchStatistics = async () => {
         const {
             userCount, mailCount, sendMailCount,
             addressCount, activeAddressCount7days,
-            activeAddressCount30days, d1Quota,
+            activeAddressCount30days, d1Quota, d1Quotas,
         } = await api.fetch(`/admin/statistics`);
         statistics.value.mailCount = mailCount || 0;
         statistics.value.sendMailCount = sendMailCount || 0;
@@ -34,12 +34,13 @@ const fetchStatistics = async () => {
         statistics.value.addressCount = addressCount || 0;
         statistics.value.activeAddressCount7days = activeAddressCount7days || 0;
         statistics.value.activeAddressCount30days = activeAddressCount30days || 0;
-        statistics.value.d1Quota = d1Quota || null;
+        // Older responses only carry the single-object d1Quota.
+        statistics.value.d1Quotas = d1Quotas || (d1Quota ? [d1Quota] : []);
     } catch (error) {
         message.error(error.message || "error");
         try {
-            const { d1Quota } = await api.fetch('/admin/d1_quota');
-            statistics.value.d1Quota = d1Quota;
+            const { d1Quota, d1Quotas } = await api.fetch('/admin/d1_quota');
+            statistics.value.d1Quotas = d1Quotas || (d1Quota ? [d1Quota] : []);
         } catch (quotaError) {
             message.error(quotaError.message || "error");
         }
@@ -114,24 +115,34 @@ onMounted(async () => {
                 </div>
             </div>
 
-            <div v-if="statistics.d1Quota" class="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 flex items-center gap-4 sm:col-span-3">
+            <div
+                v-for="quota in statistics.d1Quotas"
+                :key="quota.shard_id"
+                class="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 flex items-center gap-4"
+            >
                 <div class="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-500 flex items-center justify-center text-xl font-bold">
                     <n-icon :component="Database" />
                 </div>
                 <div class="min-w-0 flex-1">
-                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">{{ t('d1QuotaToday') }}</p>
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                        {{ t('d1QuotaToday') }}
+                        <span v-if="!quota.reachable" class="text-rose-500 font-bold">· {{ t('d1QuotaUnreachable') }}</span>
+                    </p>
                     <p class="text-2xl font-extrabold text-slate-900 dark:text-white mt-0.5 font-mono">
-                        {{ statistics.d1Quota.rows_read_pct }}% / {{ statistics.d1Quota.rows_written_pct }}%
+                        {{ quota.rows_read_pct }}% / {{ quota.rows_written_pct }}%
                     </p>
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono truncate">
                         {{ t('d1QuotaDetail', {
-                            read: statistics.d1Quota.rows_read,
-                            readLimit: statistics.d1Quota.rows_read_limit,
-                            written: statistics.d1Quota.rows_written,
-                            writtenLimit: statistics.d1Quota.rows_written_limit,
-                            shard: statistics.d1Quota.shard_id,
-                            date: statistics.d1Quota.utc_date,
+                            read: quota.rows_read,
+                            readLimit: quota.rows_read_limit,
+                            written: quota.rows_written,
+                            writtenLimit: quota.rows_written_limit,
+                            shard: quota.shard_id,
+                            date: quota.utc_date,
                         }) }}
+                    </p>
+                    <p v-if="quota.accounts_known" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono truncate">
+                        {{ t('d1QuotaAccounts', { count: quota.account_ids.length, accounts: quota.account_ids.join(', ') || '-' }) }}
                     </p>
                 </div>
             </div>
