@@ -279,6 +279,14 @@ x-idempotency-key: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 
 ---
 
+## 🌟 致谢：LINUX DO
+
+[![LINUX DO](https://img.shields.io/badge/Community-LINUX%20DO-2563eb.svg?logo=linux&logoColor=white)](https://linux.do/)
+
+> 🐧 **本项目致谢 [LINUX DO](https://linux.do/) 社区。** One-Mail 从零到一的架构选型、边缘计算的实践经验，以及众多生产环境排障与优化思路，都汲取自 LINUX DO 社区佬友们的无私分享与深入探讨。致敬开源精神与纯粹的技术探索！
+
+---
+
 ## 参与贡献
 
 欢迎通过提交 Issue 与 Pull Request 的方式共同参与完善 One-Mail。若该项目在多邮箱管理方面带来了一定帮助，欢迎在代码仓库右上角点亮 Star 给予支持。
