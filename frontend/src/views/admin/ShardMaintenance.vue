@@ -10,6 +10,7 @@ const { t } = useScopedI18n('views.admin.ShardMaintenance')
 
 type ShardEntry = {
     id: string
+    name: string
     base_url: string
     account_ids: string[]
     reachable: boolean
@@ -42,6 +43,7 @@ const isShardList = (value: unknown): value is ShardList => {
         if (!shard || typeof shard !== 'object') return false
         const entry = shard as Record<string, unknown>
         return typeof entry.id === 'string' && entry.id.length > 0
+            && typeof entry.name === 'string' && entry.name.length > 0
             && typeof entry.base_url === 'string'
             && Array.isArray(entry.account_ids)
             && entry.account_ids.every((accountId: unknown) => typeof accountId === 'string')
@@ -127,11 +129,12 @@ onBeforeUnmount(() => controller.abort())
                 <div v-for="shard in shardList.shards" :key="shard.id"
                      class="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 space-y-2">
                     <div class="flex items-center justify-between gap-2">
-                        <p class="text-sm font-bold text-slate-900 dark:text-white font-mono">{{ shard.id }}</p>
+                        <p class="text-sm font-bold text-slate-900 dark:text-white font-mono truncate">{{ shard.name }}</p>
                         <n-tag :type="shard.reachable ? 'success' : 'warning'" size="small" :bordered="false">
                             {{ shard.reachable ? t('reachable') : t('unreachable', { reason: shard.unavailable_reason ?? '' }) }}
                         </n-tag>
                     </div>
+                    <p class="text-xs text-slate-400 dark:text-slate-500 font-mono">{{ t('shardId', { id: shard.id }) }}</p>
                     <p class="text-xs text-slate-500 dark:text-slate-400 break-all">{{ shard.base_url }}</p>
                     <p class="text-xs text-slate-500 dark:text-slate-400">
                         {{ t('assignedAccounts', { count: shard.account_ids.length }) }}

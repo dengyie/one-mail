@@ -2,7 +2,7 @@
 export const SHARD_MAP_KV_KEY = "one-mail:shard-map";
 export const SHARD_MAP_CACHE_MS = 60_000;
 
-export type ShardEndpoint = { id: string; base_url: string; token: string };
+export type ShardEndpoint = { id: string; name: string; base_url: string; token: string };
 export type ShardMap = { v: 1; generation?: number; shards: ShardEndpoint[]; accounts: Record<string, string> };
 type ShardRegistryEnv = { KV?: KVNamespace | null; SHARD_FEDERATION_REQUIRED?: string | boolean; SHARD_FEDERATION_MIN_GENERATION?: string | number };
 export class ShardMapError extends Error {
@@ -44,6 +44,13 @@ export const parseShardMap = (raw: string | null | undefined): ShardMap => {
             || typeof item.token !== "string") throw new ShardMapError("Invalid shard endpoint");
         const id = item.id.trim();
         if (!id || id === "primary" || seen.has(id)) throw new ShardMapError("Invalid or duplicate shard id");
+        // Optional human-readable D1 database name for the admin cards; the id
+        // stays the routing key, so a missing name falls back to it.
+        if (item.name !== undefined && (typeof item.name !== "string"
+            || item.name.trim() === "" || item.name.trim().length > 64)) {
+            throw new ShardMapError("Invalid shard database name");
+        }
+        const name = item.name === undefined ? id : item.name.trim();
         let url: URL;
         try {
             url = new URL(item.base_url);
@@ -54,7 +61,7 @@ export const parseShardMap = (raw: string | null | undefined): ShardMap => {
             || url.pathname !== "/") throw new ShardMapError("Shard endpoint must be an HTTPS origin");
         if (!/^[\x21-\x7e]{32,512}$/.test(item.token)) throw new ShardMapError("Invalid shard token configuration");
         seen.add(id);
-        shards.push({ id, base_url: url.origin, token: item.token });
+        shards.push({ id, name, base_url: url.origin, token: item.token });
     }
     const entries: [string, string][] = [];
     const accountIds = new Set<string>();

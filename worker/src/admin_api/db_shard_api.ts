@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { isShardMode } from "../core/d1_quota.ts";
+import { isShardMode, resolveDatabaseName } from "../core/d1_quota.ts";
 import {
     createShardResponseBudget,
     fanOutShards,
@@ -36,6 +36,7 @@ export const isShardHealthView = (value: unknown): value is ShardHealthView => {
 
 export type AdminShardEntry = {
     id: string;
+    name: string;
     base_url: string;
     account_ids: string[];
     reachable: boolean;
@@ -45,7 +46,7 @@ export type AdminShardEntry = {
 };
 
 export type AdminShardList = {
-    primary: { shard_id: string; is_shard_mode: boolean };
+    primary: { shard_id: string; database_name: string; is_shard_mode: boolean };
     shards: AdminShardEntry[];
     registry_error: string | null;
 };
@@ -59,6 +60,7 @@ const fetchLimits = (signal?: AbortSignal): ShardFetchOptions => ({
 
 const entryOf = (map: ShardMap, shardId: string, overrides: Partial<AdminShardEntry>): AdminShardEntry => ({
     id: shardId,
+    name: map.shards.find((shard) => shard.id === shardId)?.name ?? shardId,
     base_url: map.shards.find((shard) => shard.id === shardId)?.base_url ?? "",
     account_ids: accountsOnShard(map, shardId),
     reachable: false,
@@ -76,7 +78,7 @@ const entryOf = (map: ShardMap, shardId: string, overrides: Partial<AdminShardEn
  * empty list must never look like "no shards exist".
  */
 export const listShards = async (c: Context<HonoCustomType>): Promise<Response> => {
-    const primary = { shard_id: "primary", is_shard_mode: isShardMode(c.env) };
+    const primary = { shard_id: "primary", database_name: resolveDatabaseName(c.env), is_shard_mode: isShardMode(c.env) };
     let map: ShardMap;
     try {
         map = await loadShardMap(c.env);

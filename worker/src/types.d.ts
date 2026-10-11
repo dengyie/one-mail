@@ -135,6 +135,7 @@ type Bindings = {
     // Thin-shard federation (docs/unified-inbox-sharding.md)
     SHARD_MODE: string | boolean | number | undefined
     SHARD_ID: string | undefined
+    D1_DATABASE_NAME: string | undefined
     SHARD_TOKEN: string | undefined
     SHARD_FEDERATION_REQUIRED: string | boolean | undefined
     PASSKEY_CHALLENGES: DurableObjectNamespace

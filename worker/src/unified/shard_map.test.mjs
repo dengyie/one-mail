@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { accountsOnShard, groupAccountsByShard, hasRemoteShards, loadShardMap, parseShardMap, resetShardMapCacheForTests, SHARD_MAP_CACHE_MS, SHARD_MAP_KV_KEY, ShardMapError } from "./shard_map.ts";
-const valid = { v: 1, shards: [{ id: "shard1", base_url: "https://shard1.example.com/", token: "t".repeat(32) }], accounts: { acctA: "shard1" } };
+const valid = { v: 1, shards: [{ id: "shard1", name: "one_mail_shard1", base_url: "https://shard1.example.com/", token: "t".repeat(32) }], accounts: { acctA: "shard1" } };
 test("only missing or explicitly empty registry is local", () => {
     assert.deepEqual(parseShardMap(null), { v: 1, shards: [], accounts: {} });
     assert.deepEqual(parseShardMap(JSON.stringify({ v: 1, shards: [], accounts: {} })), { v: 1, shards: [], accounts: {} });
@@ -17,15 +17,21 @@ test("invalid endpoints fail the entire map without echoing secrets", () => {
         { ...valid.shards[0], base_url: "https://x.example/path" },
         { ...valid.shards[0], base_url: "https://user:secret@x.example" },
         { ...valid.shards[0], token: "short" },
+        { ...valid.shards[0], name: "" },
+        { ...valid.shards[0], name: "x".repeat(65) },
     ]) assert.throws(() => parseShardMap(JSON.stringify({ ...valid, shards: [endpoint] })), ShardMapError);
     assert.throws(() => parseShardMap(JSON.stringify({ ...valid, shards: [valid.shards[0], valid.shards[0]] })), ShardMapError);
 });
 test("validated map normalizes origin and groups real account properties only", () => {
     const parsed = parseShardMap(JSON.stringify(valid));
+    assert.equal(parsed.shards[0].name, "one_mail_shard1");
     assert.equal(parsed.shards[0].base_url, "https://shard1.example.com");
     assert.equal(hasRemoteShards(parsed), true);
     assert.deepEqual(accountsOnShard(parsed, "shard1"), ["acctA"]);
     assert.deepEqual(groupAccountsByShard(parsed, ["acctA", "constructor", "__proto__"]), new Map([["shard1", ["acctA"]]]));
+    // A missing database name falls back to the shard id rather than being empty.
+    const noName = parseShardMap(JSON.stringify({ ...valid, shards: [{ id: "shard1", base_url: "https://shard1.example.com/", token: "t".repeat(32) }] }));
+    assert.equal(noName.shards[0].name, "shard1");
 });
 test("cache lasts 60s and expired KV failure preserves cause rather than returning local", async () => {
     let now = 1000, reads = 0, failure;

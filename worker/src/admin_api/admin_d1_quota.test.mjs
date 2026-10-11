@@ -17,7 +17,7 @@ const context = (kv) => ({
 const SHARD_TOKEN = 's'.repeat(32);
 const shardMap = (overrides = {}) => JSON.stringify({
     v: 1,
-    shards: [{ id: 'shard-b', base_url: 'https://shard-b.example.com', token: SHARD_TOKEN }],
+    shards: [{ id: 'shard-b', name: 'one_mail_shard1', base_url: 'https://shard-b.example.com', token: SHARD_TOKEN }],
     accounts: { 'acc-1': 'shard-b' },
     ...overrides,
 });
@@ -50,6 +50,7 @@ test('admin quota endpoint remains available without any D1 reads', async () => 
     // legacy-static: an empty registry keeps the single-card shape.
     assert.equal(d1Quotas.length, 1);
     assert.equal(d1Quotas[0].shard_id, 'primary');
+    assert.equal(d1Quotas[0].database_name, 'primary');
     assert.equal(d1Quotas[0].accounts_known, false);
     assert.equal(d1Quotas[0].reachable, true);
     assert.equal(d1Quotas[0].unavailable_reason, null);
@@ -80,6 +81,7 @@ test('admin quota endpoint reports each registered shard without any D1 reads', 
         assert.equal(d1Quota.shard_id, 'primary');
         assert.equal(d1Quotas.length, 2);
         assert.equal(d1Quotas[1].shard_id, 'shard-b');
+        assert.equal(d1Quotas[1].database_name, 'one_mail_shard1');
         assert.equal(d1Quotas[1].rows_read, 50);
         assert.equal(d1Quotas[1].reachable, true);
         assert.equal(d1Quotas[1].unavailable_reason, null);
@@ -98,6 +100,7 @@ test('a registered shard that cannot be reached is reported, not dropped', async
         const { d1Quotas } = await response.json();
         assert.equal(d1Quotas.length, 2);
         assert.equal(d1Quotas[1].shard_id, 'shard-b');
+        assert.equal(d1Quotas[1].database_name, 'one_mail_shard1');
         assert.equal(d1Quotas[1].reachable, false);
         // The transport reason must survive, so the card is diagnosable.
         assert.equal(d1Quotas[1].unavailable_reason, 'http_502');

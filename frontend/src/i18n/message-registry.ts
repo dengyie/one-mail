@@ -2787,8 +2787,8 @@ export const MESSAGE_REGISTRY = {
       "zh": "今日 D1 用量估算（读 / 写）"
     },
     "d1QuotaDetail": {
-      "en": "read {read} / {readLimit} · write {written} / {writtenLimit} · {shard} · {date}",
-      "zh": "读 {read} / {readLimit} · 写 {written} / {writtenLimit} · {shard} · {date}"
+      "en": "read {read} / {readLimit} · write {written} / {writtenLimit} · {db} · {date}",
+      "zh": "读 {read} / {readLimit} · 写 {written} / {writtenLimit} · {db} · {date}"
     },
     "d1QuotaUnreachable": {
       "en": "unreachable",
@@ -2969,6 +2969,10 @@ export const MESSAGE_REGISTRY = {
     "sectionHint": {
       "en": "Remote databases registered in SHARD_MAP. The primary database is maintained by the card above.",
       "zh": "SHARD_MAP 中注册的远程数据库；主库由上方卡片维护。"
+    },
+    "shardId": {
+      "en": "Shard ID: {id}",
+      "zh": "分片 ID：{id}"
     },
     "loading": {
       "en": "Checking registered shard databases…",

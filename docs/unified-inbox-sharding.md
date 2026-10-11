@@ -121,6 +121,7 @@
 - 分片 D1 用精简 schema（`db/shard-schema.sql`：emails、mail_account_folders、mail_mutation_jobs、scheduled_locks + 现有索引）；`db_api` 迁移在 SHARD_MODE 下只跑子集。已核实 ingest 路径**无 settings 依赖**（`ingest.ts` 无 getJsonSetting 调用），分片不需要 settings 表。
 - 每分片自己的 **KV namespace**（遥测、锁、冷却键）——KV 配额按账号独立。
 - 每分片的**写入遥测**与主分片同机制（meta.rows_written 累计到各自 KV）——10 万写/天的悬崖对分片同样存在，ingest 永不熔断，超限时降级的是"读"。
+- **数据库名**：管理端用量/维护卡片需要人类可读的数据库名，而 Worker 运行时无法内省自身 D1 binding 名。主库由环境变量 `D1_DATABASE_NAME`（`one_mail_db`）提供，每个分片由注册表里可选 `name`（`one_mail_shard1`，缺省回退为 id）提供；`/admin/d1_quota` 与 `/admin/db_shards` 分别以 `database_name`/`name` 上抛，空配置回退为分片 id，绝不伪造。
 
 ## 6. 落地阶段（每阶段可独立停船）
 
