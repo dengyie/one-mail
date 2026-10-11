@@ -17,6 +17,12 @@ const SCOPED_KEYS = [
   ['views.admin.SendMail', ['deliveryUnknown']],
   // AiExtractInfo copy button labels.
   ['components.AiExtractInfo', ['copy', 'copied']],
+  // Shard maintenance card: every key the component renders through t().
+  ['views.admin.ShardMaintenance', [
+    'sectionTitle', 'sectionHint', 'loading', 'invalidShardList', 'registryError',
+    'noShards', 'refresh', 'reachable', 'unreachable', 'assignedAccounts',
+    'initialize', 'initializeSuccess', 'initializeFailed',
+  ]],
 ]
 
 describe('scoped translation keys resolve', () => {

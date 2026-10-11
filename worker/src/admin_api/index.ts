@@ -15,6 +15,7 @@ import worker_config from './worker_config'
 import admin_mail_api from './admin_mail_api'
 import { sendMailbyAdmin, sendMailByBindingAdmin, listUnknownSendMail, resolveUnknownSendMail } from './send_mail'
 import db_api from './db_api'
+import db_shard_api from './db_shard_api'
 import ip_blacklist_settings from './ip_blacklist_settings'
 import ai_extract_settings from './ai_extract_settings'
 import e2e_test_api from './e2e_test_api'
@@ -98,6 +99,10 @@ api.post('/admin/send_mail/unknown/:id/resolve', resolveUnknownSendMail)
 api.get('admin/db_version', db_api.getVersion)
 api.post('admin/db_initialize', db_api.initialize)
 api.post('admin/db_migration', db_api.migrate)
+
+// db shard maintenance (remote databases registered in SHARD_MAP)
+api.get('/admin/db_shards', db_shard_api.list)
+api.post('/admin/db_shard_initialize', db_shard_api.initialize)
 
 // IP blacklist settings
 api.get('/admin/ip_blacklist/settings', ip_blacklist_settings.getIpBlacklistSettings)
