@@ -1,7 +1,8 @@
 import { Context } from "hono";
 import { CONSTANTS } from "../constants";
-import { AdminWebhookSettings, WebhookSettings, RawMailRow } from "../models";
-import { commonParseMail, sendWebhook } from "../common";
+import { AdminWebhookSettings, WebhookSettings } from "../models";
+import type { RawMailRow } from "../models";
+import { commonParseMail, sendWebhook, isValidWebhookHeaders } from "../common";
 import { resolveRawEmail } from "../gzip";
 import { isSafeWebhookUrl } from "../unified/webhook_url";
 import i18n from "../i18n";
@@ -35,6 +36,9 @@ async function saveWebhookSettings(c: Context<HonoCustomType>): Promise<Response
     if (!isSafeWebhookUrl(settings.url)) {
         return c.text("unsafe webhook url", 400);
     }
+    if (!isValidWebhookHeaders(settings.headers)) {
+        return c.text("invalid webhook headers (must be a JSON object)", 400);
+    }
     await c.env.KV.put(
         `${CONSTANTS.WEBHOOK_KV_USER_SETTINGS_KEY}:${address}`,
         JSON.stringify(settings));
@@ -52,20 +56,26 @@ async function testWebhookSettings(c: Context<HonoCustomType>): Promise<Response
     const raw = mailRow ? await resolveRawEmail(mailRow) : "";
     const parsedEmailContext: ParsedEmailContext = { rawEmail: raw };
     const parsedEmail = await commonParseMail(parsedEmailContext);
-    const res = await sendWebhook(settings, {
-        id: mailId || "0",
-        url: c.env.FRONTEND_URL ? `${c.env.FRONTEND_URL}?mail_id=${mailId}` : "",
-        from: parsedEmail?.sender || "test@test.com",
-        to: address,
-        subject: parsedEmail?.subject || "test subject",
-        raw: raw || "test raw email",
-        parsedText: parsedEmail?.text || "test parsed text",
-        parsedHtml: parsedEmail?.html || "test parsed html",
-        aiExtract: null,
-        aiExtractType: "",
-        aiExtractResult: "",
-        aiExtractResultText: ""
-    });
+    let res: { success: boolean, message?: string };
+    try {
+        res = await sendWebhook(settings, {
+            id: mailId || "0",
+            url: c.env.FRONTEND_URL ? `${c.env.FRONTEND_URL}?mail_id=${mailId}` : "",
+            from: parsedEmail?.sender || "test@test.com",
+            to: address,
+            subject: parsedEmail?.subject || "test subject",
+            raw: raw || "test raw email",
+            parsedText: parsedEmail?.text || "test parsed text",
+            parsedHtml: parsedEmail?.html || "test parsed html",
+            aiExtract: null,
+            aiExtractType: "",
+            aiExtractResult: "",
+            aiExtractResultText: ""
+        });
+    } catch (error) {
+        // A delivery failure (e.g. network error) is a bad setting, not a server fault.
+        return c.text((error as Error)?.message || "send webhook error", 400);
+    }
     if (!res.success) {
         return c.text(res.message || "send webhook error", 400);
     }

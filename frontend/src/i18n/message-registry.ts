@@ -670,6 +670,14 @@ export const MESSAGE_REGISTRY = {
       "en": "Authentication Link",
       "zh": "认证链接"
     },
+    "copied": {
+      "en": "Copied",
+      "zh": "已复制"
+    },
+    "copy": {
+      "en": "Copy",
+      "zh": "复制"
+    },
     "copyFailed": {
       "en": "Copy failed",
       "zh": "复制失败"
@@ -2401,6 +2409,10 @@ export const MESSAGE_REGISTRY = {
     "contentEmpty": {
       "en": "Content is empty",
       "zh": "内容不能为空"
+    },
+    "deliveryUnknown": {
+      "en": "The provider has not confirmed delivery. Retry with the same request, or ask an administrator to verify delivery before trying again.",
+      "zh": "邮件服务商尚未确认是否送达。请使用相同请求重试，或先联系管理员确认后再发送。"
     },
     "edit": {
       "en": "Edit",

@@ -34,7 +34,7 @@ const listParsedMails = async (c: Context<HonoCustomType>) => {
     const lim = typeof limit === "string" ? parseInt(limit) : limit;
     const off = typeof offset === "string" ? parseInt(offset) : offset;
     if (!lim || lim < 0 || lim > 100) return c.text(msgs.InvalidLimitMsg, 400);
-    if (off == null || off == undefined || off < 0) return c.text(msgs.InvalidOffsetMsg, 400);
+    if (typeof off !== "number" || !Number.isInteger(off) || off < 0) return c.text(msgs.InvalidOffsetMsg, 400);
     const resolved = await resolveRawEmailList(await listRawMails(c, address, { limit: lim, offset: off }));
     const count = off === 0 ? await countRawMails(c, address) : 0;
     const parsed = await Promise.all(resolved.map(toParsedMailRow));

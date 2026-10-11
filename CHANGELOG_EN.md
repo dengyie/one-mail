@@ -8,6 +8,18 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| Admin address deletion previously left the unified inbox `emails` rows behind: the user-facing delete paths clean them by `to_addr`, but the admin batch delete did not, so when the same address name was later re-created for a new user the previous owner's mail history leaked to the new owner (unified-inbox ownership is decided by `to_addr`). Add the missing delete and a regression test.
+
+- fix: |Worker| List pagination `offset` validation: `parseInt` returns `NaN` for a non-numeric string, and `NaN` makes `offset < 0` always false, so `NaN` was bound into `LIMIT/OFFSET` and surfaced as a SQLite "datatype mismatch" 500 (and mis-skipped the count branch). All four entry points (`handleListQuery`, `handleMailListQuery`, `mails_crud`, `parsed_mail_api`) now require a non-negative integer, keeping a malformed value a 400.
+
+- fix: |Worker| Webhook delivery robustness: when `settings.headers` was not JSON, `sendWebhook` threw, and because `triggerWebhook` awaited it in a loop with no per-iteration guard, every later webhook for that mail was silently skipped (the two test endpoints also returned 500). Now validate at save time (400 on bad input), parse defensively at send time (a single failure is reported, not thrown), and catch per webhook in the loop, so one bad endpoint no longer affects the rest.
+
+- fix: |Frontend| Admin send-mail referenced a `deliveryUnknown` key that does not exist in the `views.admin.SendMail` namespace on the 503 (provider has not confirmed delivery) branch; with `missingWarn`/`fallbackWarn` disabled, vue-i18n renders the raw key path to the user. Add the key across all four additional languages. Also add the missing `components.AiExtractInfo` `copy`/`copied` keys (the copy button rendered raw key paths). Add a scoped-key resolution regression test so a key a view calls must actually exist in its namespace.
+
+- fix: |Frontend| `CreateAccount.vue`'s mount hook read `openSettings.prefix` off the ref without `.value` (always `undefined`); change it to `openSettings.value.prefix`.
+
+- refactor: |Worker| Mark type-only imports as `import type` (`worker-mailer`, `i18n/type`, and the type symbols from `models`) so those modules load directly under Node `--experimental-strip-types`, making the admin handlers and the shared pagination/webhook logic directly unit-testable for the first time.
+
 - fix: |Frontend| Localize the admin panel's hardcoded Chinese section titles and subtitles (the 11 section headings/subtitles plus the signed-out and non-admin gate copy and the password placeholder) into locale-switching i18n keys; the `views.Admin` namespace gains 27 keys across all four additional languages. Non-Chinese users previously saw Chinese headings embedded in an otherwise English admin UI.
 
 - fix: |Frontend| Tighten the database status guard to reject self-contradictory payloads: it now refuses both "initialization and migration required at once" and "neither required yet the stamped version is missing" — the latter rendered as a contradictory healthy card. Add regression tests for both.
