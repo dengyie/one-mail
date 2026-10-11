@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- fix: |Frontend| 打开邮件不再一直显示未读：详情页 `load()` 拿到未读邮件后自动调用 `markRead`（此前只有手动点「标为已读」按钮才写状态，后端 `GET /api/unified/emails/:id` 本身是纯读、无副作用，所以读完邮件列表标记纹丝不动）。标记先乐观置位让正文与「已读」标签立即更新，再后台等源邮箱终态，并复用详情页既有的邮件身份/鉴权身份/路由 id 三重视护才回写，失败则回滚为未读并提示。`DomainMailbox` 与收件箱共用该详情页，同一问题一并修复。
+
 - feat: |Worker/Frontend| 管理端 D1 用量与分片维护显式标注数据库名：SHARD_MAP 的每个分片新增可选 `name`（缺省回退为其 id，校验为 ≤64 字符），主库 Worker 新增 `D1_DATABASE_NAME` 环境变量（`one_mail_db`）。`/admin/d1_quota`（`d1Quotas[]`）与 `/admin/db_shards`（`primary`/`shards[]`）返回 `database_name`/`name`；前端统计卡片以数据库名为标题、明细行占位 `{shard}`→`{db}`，分片维护卡片以数据库名为标题并单列 `shardId`。名称来自部署配置而非运行时无法内省的 D1 binding 名，空配置回退为分片 id，绝不伪造。
 
 - feat: |Worker/Frontend| 管理端「数据库」分区新增分片库维护：`GET /admin/db_shards` 列出 SHARD_MAP 注册的远程分片（id、端点、账号归属、经 `/shard/health` 探测的连通性），`POST /admin/db_shard_initialize` 用注册表里的端点与 token 把请求转发到该分片自身的幂等 `/shard/schema/initialize`（与分片自己的初始化/迁移路径执行同一修复）。分片 id 必须已在注册表中（无法指向任意 URL）、token 只发往其自己的端点且绝不出现在响应里、注册表不可读或报文不符契约时显式降级（`invalid_shard_map`/`invalid_health_payload`）而非伪装成功。前端数据库分区新增「分片数据库」卡片（`ShardMaintenance.vue`）：空 SHARD_MAP 明示「当前仅主库」，注册表损坏显示警告，不可达分片禁用维护按钮并展示原因。沿用全局 3 秒分片超时与 64KB 响应预算；管理鉴权由既有 `/admin/*` 中间件承担。

@@ -146,6 +146,37 @@ let loadRequestSeq = 0
 let disposed = false
 /** @type {AbortController | undefined} */
 let detailController
+// 打开即已读：内容先渲染，标记随后异步补上，不阻塞阅读。
+const autoMarkRead = async () => {
+  const target = email.value
+  if (!target || target.is_read || marking.value) return
+  const targetId = String(target.id)
+  const targetIdentity = authIdentity.value
+  marking.value = true
+  target.is_read = 1
+  try {
+    const result = await api.unified.markRead(targetId, { signal: detailController?.signal })
+    if (
+      disposed || email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
+    target.is_read = Number(result?.is_read ?? 1) ? 1 : 0
+  } catch (e) {
+    if (
+      disposed || email.value !== target ||
+      authIdentity.value !== targetIdentity ||
+      String(route.params.id || '') !== targetId
+    ) return
+    target.is_read = 0
+    message.error(e.message || '标记已读失败')
+  } finally {
+    if (email.value === target) {
+      marking.value = false
+    }
+  }
+}
+
 const load = async () => {
   detailController?.abort()
   const controller = new AbortController()
@@ -170,6 +201,7 @@ const load = async () => {
     const nextEmail = await api.unified.getEmail(requestedId, { signal: controller.signal })
     if (!isCurrent()) return
     email.value = nextEmail
+    if (!Number(nextEmail.is_read)) void autoMarkRead()
   } catch (e) {
     if (!isCurrent()) return
     error.value = e.message || 'error'
