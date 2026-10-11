@@ -32,6 +32,7 @@ const quotaCards = (d1Quotas, d1Quota) => {
     return [{
         reachable: true,
         unavailable_reason: null,
+        database_name: d1Quota?.shard_id ?? 'primary',
         account_ids: [],
         accounts_known: false,
         accounting_issues: [],
@@ -142,7 +143,10 @@ onMounted(async () => {
                     <n-icon :component="Database" />
                 </div>
                 <div class="min-w-0 flex-1">
-                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <p class="text-sm font-bold text-slate-900 dark:text-white font-mono truncate">
+                        {{ quota.database_name }}
+                    </p>
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
                         {{ t('d1QuotaToday') }}
                         <span v-if="!quota.reachable" class="text-rose-500 font-bold">
                             · {{ t('d1QuotaUnreachable') }}<template v-if="quota.unavailable_reason"> ({{ quota.unavailable_reason }})</template>
@@ -158,7 +162,7 @@ onMounted(async () => {
                             readLimit: quota.rows_read_limit,
                             written: quota.rows_written,
                             writtenLimit: quota.rows_written_limit,
-                            shard: quota.shard_id,
+                            db: quota.database_name,
                             date: quota.utc_date,
                         }) }}
                     </p>

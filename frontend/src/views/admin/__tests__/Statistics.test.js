@@ -34,6 +34,11 @@ describe('admin statistics D1 quota per-database cards', () => {
     expect(source).toContain('quota.unavailable_reason')
   })
 
+  it('shows the database name as the card title and in the detail line', () => {
+    expect(source).toContain('{{ quota.database_name }}')
+    expect(source).toContain('db: quota.database_name')
+  })
+
   it('never renders a numeric percentage for an unreachable database', () => {
     // The percentage is only shown inside the reachable branch; the unknown
     // case renders a dash instead of a fabricated 0%.

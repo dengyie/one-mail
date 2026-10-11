@@ -219,6 +219,17 @@ export const resolveShardId = (env: { SHARD_ID?: string }): string => {
     return id || "primary";
 };
 
+/**
+ * Human-readable D1 database name for the local database, as shown on the admin
+ * quota/maintenance cards. The Worker cannot introspect its own D1 binding's
+ * name, so operators set `D1_DATABASE_NAME` (e.g. `one_mail_db`); absent that it
+ * degrades to the shard id, never to a fabricated database name.
+ */
+export const resolveDatabaseName = (env: { D1_DATABASE_NAME?: string; SHARD_ID?: string }): string => {
+    const name = typeof env.D1_DATABASE_NAME === "string" ? env.D1_DATABASE_NAME.trim() : "";
+    return name || resolveShardId(env);
+};
+
 export const isShardMode = (env: { SHARD_MODE?: string | boolean | number }): boolean => {
     const value = env.SHARD_MODE;
     return value === true || value === 1 || value === "1" || value === "true";

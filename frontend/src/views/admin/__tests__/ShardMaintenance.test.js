@@ -16,6 +16,7 @@ vi.mock('naive-ui', async importOriginal => ({ ...await importOriginal(), useMes
 const mounted = []
 const shard = overrides => ({
   id: 'shard-b',
+  name: 'one_mail_shard1',
   base_url: 'https://shard-b.example.com',
   account_ids: ['acc-1'],
   reachable: true,
@@ -73,6 +74,7 @@ afterEach(() => { for (const unmount of mounted.splice(0)) unmount() })
 describe('shard list rendering', () => {
   it('renders the registered shard with its endpoint, assignment and reachability', async () => {
     const { host } = await mount()
+    expect(host.textContent).toContain('one_mail_shard1')
     expect(host.textContent).toContain('shard-b')
     expect(host.textContent).toContain('https://shard-b.example.com')
     expect(host.textContent).toContain('assignedAccounts {"count":1}')

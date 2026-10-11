@@ -6,7 +6,7 @@ import { resetShardMapCacheForTests, SHARD_MAP_KV_KEY } from '../unified/shard_m
 const SHARD_TOKEN = 's'.repeat(32);
 const shardMap = (overrides = {}) => JSON.stringify({
     v: 1,
-    shards: [{ id: 'shard-b', base_url: 'https://shard-b.example.com', token: SHARD_TOKEN }],
+    shards: [{ id: 'shard-b', name: 'one_mail_shard1', base_url: 'https://shard-b.example.com', token: SHARD_TOKEN }],
     accounts: { 'acc-1': 'shard-b' },
     ...overrides,
 });
@@ -37,6 +37,7 @@ test('list keeps a legacy-static deployment explicit: no shards, no registry err
     assert.equal(response.status, 200);
     const { primary, shards, registry_error } = await response.json();
     assert.equal(primary.shard_id, 'primary');
+    assert.equal(primary.database_name, 'primary');
     assert.equal(primary.is_shard_mode, false);
     assert.deepEqual(shards, []);
     assert.equal(registry_error, null);
@@ -62,6 +63,7 @@ test('list probes registered shards and never leaks the registry token', async (
     assert.equal(shards.length, 1);
     assert.deepEqual(shards[0], {
         id: 'shard-b',
+        name: 'one_mail_shard1',
         base_url: 'https://shard-b.example.com',
         account_ids: ['acc-1'],
         reachable: true,

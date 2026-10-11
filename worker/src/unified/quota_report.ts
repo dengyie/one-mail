@@ -18,7 +18,7 @@
  */
 import type { Context } from "hono";
 import {
-    D1_ROWS_READ_LIMIT, D1_ROWS_WRITTEN_LIMIT, utcDateOf, viewD1Quota, type D1QuotaView,
+    D1_ROWS_READ_LIMIT, D1_ROWS_WRITTEN_LIMIT, resolveDatabaseName, utcDateOf, viewD1Quota, type D1QuotaView,
 } from "../core/d1_quota.ts";
 import {
     createShardResponseBudget, fanOutShards, SHARD_LIST_MAX_BYTES, type ShardFetchOptions,
@@ -27,6 +27,8 @@ import { SHARD_FETCH_TIMEOUT_MS } from "./shard_merge.ts";
 import { accountsOnShard, hasRemoteShards, loadShardMap, type ShardMap } from "./shard_map.ts";
 
 export type D1QuotaShardReport = D1QuotaView & {
+    /** Human-readable D1 database name (`one_mail_db`, `one_mail_shard1`, …). */
+    database_name: string;
     /** Account ids the registry assigns to this database. Empty for the primary,
      * which owns every account the registry does not list. */
     account_ids: string[];
@@ -78,11 +80,13 @@ export const isD1QuotaView = (value: unknown): value is D1QuotaView => {
 
 const unavailableReport = (
     shardId: string,
+    databaseName: string,
     accountIds: string[],
     accountsKnown: boolean,
     reason: string,
 ): D1QuotaShardReport => ({
     shard_id: shardId,
+    database_name: databaseName,
     utc_date: utcDateOf(Date.now()),
     rows_read: 0,
     rows_written: 0,
@@ -106,6 +110,7 @@ export const d1QuotaByShard = async (c: Context<HonoCustomType>): Promise<D1Quot
     const local = await viewD1Quota(c.env);
     const reports: D1QuotaShardReport[] = [{
         ...local,
+        database_name: resolveDatabaseName(c.env),
         account_ids: [],
         accounts_known: false,
         reachable: true,
@@ -135,6 +140,7 @@ export const d1QuotaByShard = async (c: Context<HonoCustomType>): Promise<D1Quot
             reports.push({
                 ...result.data,
                 shard_id: shard.id,
+                database_name: shard.name,
                 account_ids: accountIds,
                 accounts_known: true,
                 reachable: true,
@@ -146,7 +152,7 @@ export const d1QuotaByShard = async (c: Context<HonoCustomType>): Promise<D1Quot
         // one that was never registered, so surface both the row and the reason.
         const reason = result?.ok ? "invalid_quota_payload" : (result?.error ?? "unreachable");
         console.warn(`[d1-quota] shard ${shard.id} unreachable: ${reason}`);
-        reports.push(unavailableReport(shard.id, accountIds, true, reason));
+        reports.push(unavailableReport(shard.id, shard.name, accountIds, true, reason));
     }
     return reports;
 };

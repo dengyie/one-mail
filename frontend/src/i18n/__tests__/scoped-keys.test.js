@@ -19,7 +19,7 @@ const SCOPED_KEYS = [
   ['components.AiExtractInfo', ['copy', 'copied']],
   // Shard maintenance card: every key the component renders through t().
   ['views.admin.ShardMaintenance', [
-    'sectionTitle', 'sectionHint', 'loading', 'invalidShardList', 'registryError',
+    'sectionTitle', 'sectionHint', 'shardId', 'loading', 'invalidShardList', 'registryError',
     'noShards', 'refresh', 'reachable', 'unreachable', 'assignedAccounts',
     'initialize', 'initializeSuccess', 'initializeFailed',
   ]],
