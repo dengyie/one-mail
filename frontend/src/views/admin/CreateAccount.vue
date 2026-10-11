@@ -62,7 +62,7 @@ const newEmail = async () => {
 }
 
 onMounted(async () => {
-    if (openSettings.prefix) {
+    if (openSettings.value.prefix) {
         enablePrefix.value = true
     }
     emailDomain.value = openSettings.value.domains?.[0]?.value || ""

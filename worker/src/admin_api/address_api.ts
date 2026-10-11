@@ -93,6 +93,13 @@ const deleteAddress = async (c: Context<HonoCustomType>) => {
             `DELETE FROM raw_mails WHERE address IN`
             + ` (select name from address where id = ?) `
         ).bind(id),
+        // Unified inbox rows use to_addr for ownership checks. Remove them with
+        // the address so a later owner cannot inherit the previous owner's
+        // history; the user-facing delete paths do the same (see common.ts).
+        c.env.DB.prepare(
+            `DELETE FROM emails WHERE to_addr IN`
+            + ` (select name from address where id = ?) `
+        ).bind(id),
         c.env.DB.prepare(
             `DELETE FROM address_sender WHERE address IN`
             + ` (select name from address where id = ?) `

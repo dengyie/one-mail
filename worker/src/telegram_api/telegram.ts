@@ -12,7 +12,7 @@ import { commonParseMail } from "../common";
 import { resolveRawEmail } from "../gzip";
 import { UserFromGetMe } from "telegraf/types";
 import i18n from "../i18n";
-import { LocaleMessages } from "../i18n/type";
+import type { LocaleMessages } from "../i18n/type";
 import type { ExtractResult, RawMailRow } from "../models";
 
 

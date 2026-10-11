@@ -3,7 +3,7 @@ import { verifyActiveAddressJwt } from "../core/auth";
 import { CONSTANTS } from "../constants";
 import { getBooleanValue, getIntValue, getJsonSetting } from "../utils";
 import { deleteAddressWithData, newAddress, generateRandomName } from "../common";
-import { LocaleMessages } from "../i18n/type";
+import type { LocaleMessages } from "../i18n/type";
 
 export const tgUserNewAddress = async (
     c: Context<HonoCustomType>, userId: string, address: string,

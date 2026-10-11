@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { WorkerMailerOptions } from 'worker-mailer';
+import type { WorkerMailerOptions } from 'worker-mailer';
 
 import { getBooleanValue, getDomains, getStringArray, getStringValue, getIntValue, getUserRoles, getDefaultDomains, getJsonSetting, getAnotherWorkerList, getRandomSubdomainDomains, normalizeDomains, trimLower } from './utils';
 import { getDomainResendToken, resolveSendMailChannel } from './core/send_mail_channel';
@@ -12,7 +12,8 @@ import {
 import { unbindTelegramByAddress } from './telegram_api/common';
 import { generateRandomPassword, hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
-import { AddressCreationSettings, AdminWebhookSettings, ExtractResult, RawMailRow, WebhookMail, WebhookSettings } from './models';
+import { AddressCreationSettings, AdminWebhookSettings, WebhookSettings } from './models';
+import type { ExtractResult, RawMailRow, WebhookMail } from './models';
 import { signAddressJwt } from './core/auth';
 import { isSafeWebhookUrl } from './unified/webhook_url';
 import i18n from './i18n';
@@ -716,7 +717,11 @@ export const handleListQuery = async (
     if (!limit || limit < 0 || limit > 100) {
         return c.text(msgs.InvalidLimitMsg, 400)
     }
-    if (offset == null || offset == undefined || offset < 0) {
+    // parseInt returns NaN for a non-numeric string, and NaN fails every
+    // relational comparison, so an `offset < 0` test lets it through and binds
+    // NaN into LIMIT/OFFSET (a SQLite "datatype mismatch" -> 500). Require a
+    // real non-negative integer so a malformed client value stays a 400.
+    if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) {
         return c.text(msgs.InvalidOffsetMsg, 400)
     }
     const orderClause = orderBy || 'id desc';
@@ -762,7 +767,8 @@ export const handleMailListQuery = async (
     if (typeof limit === "string") limit = parseInt(limit);
     if (typeof offset === "string") offset = parseInt(offset);
     if (!limit || limit < 0 || limit > 100) return c.text(msgs.InvalidLimitMsg, 400);
-    if (offset == null || offset == undefined || offset < 0) return c.text(msgs.InvalidOffsetMsg, 400);
+    // See handleListQuery: NaN must not reach the LIMIT/OFFSET binding.
+    if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) return c.text(msgs.InvalidOffsetMsg, 400);
     const orderClause = orderBy || 'id desc';
     const resultsQuery = `${query} order by ${orderClause} limit ? offset ?`;
     const { results } = await c.env.DB.prepare(resultsQuery).bind(
@@ -878,6 +884,23 @@ export const getAllowDomains = async (c: Context<HonoCustomType>): Promise<strin
     return getDefaultDomains(c);
 }
 
+/**
+ * Webhook `headers` is persisted as a free-form string from the settings UI.
+ * Reject anything that is not a JSON object (or empty, meaning "no custom
+ * headers") at save time, so a broken value cannot be stored and then throw on
+ * every delivery. `sendWebhook` re-checks defensively for values already stored.
+ */
+export const isValidWebhookHeaders = (raw: unknown): boolean => {
+    if (typeof raw !== "string") return false;
+    if (raw.trim() === "") return true;
+    try {
+        const parsed = JSON.parse(raw);
+        return !!parsed && typeof parsed === "object" && !Array.isArray(parsed);
+    } catch {
+        return false;
+    }
+};
+
 export async function sendWebhook(
     settings: WebhookSettings, formatMap: WebhookMail
 ): Promise<{ success: boolean, message?: string }> {
@@ -899,9 +922,25 @@ export async function sendWebhook(
         console.warn("send webhook blocked unsafe url", settings.url);
         return { success: false, message: "unsafe webhook url (private/internal IP or invalid)" };
     }
+    // settings.headers is a free-form string persisted from the settings UI. A
+    // non-JSON value must fail this one delivery, not throw: triggerWebhook
+    // awaits this in a loop, so a throw would silently skip every later webhook.
+    let headers: Record<string, string> = {};
+    if (typeof settings.headers === "string" && settings.headers.trim() !== "") {
+        try {
+            const parsed = JSON.parse(settings.headers);
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                throw new TypeError("webhook headers must be a JSON object");
+            }
+            headers = parsed as Record<string, string>;
+        } catch {
+            console.warn("send webhook blocked invalid headers json", settings.url);
+            return { success: false, message: "invalid webhook headers (must be a JSON object)" };
+        }
+    }
     const response = await fetch(settings.url, {
         method: settings.method,
-        headers: JSON.parse(settings.headers),
+        headers,
         body: body
     });
     if (!response.ok) {
@@ -968,9 +1007,15 @@ export async function triggerWebhook(
         aiExtractResultText: usableAiExtract?.result_text || "",
     }
     for (const settings of webhookList) {
-        const res = await sendWebhook(settings, webhookMail);
-        if (!res.success) {
-            console.error(res.message);
+        // One broken endpoint (bad config, network error) must not silently skip
+        // the remaining webhooks for this mail.
+        try {
+            const res = await sendWebhook(settings, webhookMail);
+            if (!res.success) {
+                console.error(res.message);
+            }
+        } catch (error) {
+            console.error("webhook delivery failed", error);
         }
     }
 }

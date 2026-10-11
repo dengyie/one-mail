@@ -5,7 +5,7 @@ import { CONSTANTS } from '../constants';
 import { getJsonSetting, saveSetting } from '../utils';
 import { CleanupSettings, CustomSqlCleanup } from '../models';
 import i18n from '../i18n';
-import { LocaleMessages } from '../i18n/type';
+import type { LocaleMessages } from '../i18n/type';
 
 // SQL validation error types
 type SqlValidationError = 'empty' | 'too_long' | 'not_delete' | 'multiple_statements' | 'has_comments';

@@ -8,6 +8,18 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| 管理员删除地址此前漏删统一收件箱 `emails` 行：用户侧删除路径会按 `to_addr` 清理这些行，管理端批量删除没有，导致同一地址名被新用户重建后，旧主的邮件历史会泄漏给新主（统一收件箱按 `to_addr` 判归属）。补上该删除语句并加回归测试。
+
+- fix: |Worker| 列表分页 `offset` 校验：`parseInt` 对非数字返回 `NaN`，而 `NaN` 使 `offset < 0` 恒为假，`NaN` 会被绑进 `LIMIT/OFFSET` 触发 SQLite 报错返回 500，且计数分支也会误判。四个入口（`handleListQuery`、`handleMailListQuery`、`mails_crud`、`parsed_mail_api`）统一改为要求非负整数，畸形取值返回 400。
+
+- fix: |Worker| Webhook 投递健壮性：`settings.headers` 为非 JSON 时 `sendWebhook` 原先直接抛异常，`triggerWebhook` 循环无逐条兜底会静默跳过其后的全部 webhook，两个测试端点也会返回 500。改为保存时校验（非法即 400）＋发送时防御式解析（单条失败只记为失败）＋循环逐条捕获，一处坏配置不再影响其余投递。
+
+- fix: |Frontend| 管理发信在 503（服务商未确认投递）分支引用了 `views.admin.SendMail` 命名空间中不存在的 `deliveryUnknown`，vue-i18n 缺键时会把原始键路径当作字符串渲染给用户；补齐该键与四套附加语言。同时补齐 `components.AiExtractInfo` 的 `copy`/`copied`（复制按钮此前显示原始键路径）。新增 scoped 键解析回归测试，锁住「视图使用的键必须在命名空间内真实存在」。
+
+- fix: |Frontend| `CreateAccount.vue` 挂载钩子误写 `openSettings.prefix`（ref 未取 `.value`，恒为 `undefined`），改为 `openSettings.value.prefix`。
+
+- refactor: |Worker| 把仅作类型使用的导入改为 `import type`（`worker-mailer`、`i18n/type`、`models` 中的类型），使这些模块可在 Node `--experimental-strip-types` 下直接加载，管理端处理器与共享分页/Webhook 逻辑首次可被直接单元测试。
+
 - fix: |Frontend| 管理各分区把硬编码的中文标题与副标题（11 个分区的标题/副标题，以及未登录拦截与非管理员门禁的文案和密码占位）改为随语言切换的 i18n 键；`views.Admin` 命名空间补齐 27 个键并同步四套附加语言。此前非中文用户在管理页会看到中文标题夹在英文界面里。
 
 - fix: |Frontend| 数据库状态守卫收紧为拒绝自相矛盾的报文：既不允许「同时要求初始化与迁移」，也不允许「两项都不需要却缺少已盖章的版本号」——后者会被渲染成一张自相矛盾的健康卡片。补齐这两类回归测试。
