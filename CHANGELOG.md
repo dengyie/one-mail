@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |Worker/Frontend| 管理端「数据库」分区新增分片库维护：`GET /admin/db_shards` 列出 SHARD_MAP 注册的远程分片（id、端点、账号归属、经 `/shard/health` 探测的连通性），`POST /admin/db_shard_initialize` 用注册表里的端点与 token 把请求转发到该分片自身的幂等 `/shard/schema/initialize`（与分片自己的初始化/迁移路径执行同一修复）。分片 id 必须已在注册表中（无法指向任意 URL）、token 只发往其自己的端点且绝不出现在响应里、注册表不可读或报文不符契约时显式降级（`invalid_shard_map`/`invalid_health_payload`）而非伪装成功。前端数据库分区新增「分片数据库」卡片（`ShardMaintenance.vue`）：空 SHARD_MAP 明示「当前仅主库」，注册表损坏显示警告，不可达分片禁用维护按钮并展示原因。沿用全局 3 秒分片超时与 64KB 响应预算；管理鉴权由既有 `/admin/*` 中间件承担。
+
 - fix: |Worker| 管理员删除地址此前漏删统一收件箱 `emails` 行：用户侧删除路径会按 `to_addr` 清理这些行，管理端批量删除没有，导致同一地址名被新用户重建后，旧主的邮件历史会泄漏给新主（统一收件箱按 `to_addr` 判归属）。补上该删除语句并加回归测试。
 
 - fix: |Worker| 列表分页 `offset` 校验：`parseInt` 对非数字返回 `NaN`，而 `NaN` 使 `offset < 0` 恒为假，`NaN` 会被绑进 `LIMIT/OFFSET` 触发 SQLite 报错返回 500，且计数分支也会误判。四个入口（`handleListQuery`、`handleMailListQuery`、`mails_crud`、`parsed_mail_api`）统一改为要求非负整数，畸形取值返回 400。

@@ -25,6 +25,7 @@ import MailsUnknow from './admin/MailsUnknow.vue'
 import About from './common/About.vue'
 import Maintenance from './admin/Maintenance.vue'
 import DatabaseManager from './admin/DatabaseManager.vue'
+import ShardMaintenance from './admin/ShardMaintenance.vue'
 import Appearance from './common/Appearance.vue'
 import Telegram from './admin/Telegram.vue'
 import Webhook from './admin/Webhook.vue'
@@ -197,6 +198,7 @@ onMounted(async () => {
           </div>
         </div>
         <DatabaseManager />
+        <ShardMaintenance />
       </div>
 
       <!-- 域名与系统全局设置模块 -->

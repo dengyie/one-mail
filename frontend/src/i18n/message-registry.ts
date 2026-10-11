@@ -2961,6 +2961,60 @@ export const MESSAGE_REGISTRY = {
       "zh": "数据库结构已是最新，无需操作。"
     }
   },
+  "views.admin.ShardMaintenance": {
+    "sectionTitle": {
+      "en": "Shard databases",
+      "zh": "分片数据库"
+    },
+    "sectionHint": {
+      "en": "Remote databases registered in SHARD_MAP. The primary database is maintained by the card above.",
+      "zh": "SHARD_MAP 中注册的远程数据库；主库由上方卡片维护。"
+    },
+    "loading": {
+      "en": "Checking registered shard databases…",
+      "zh": "正在检查已注册的分片数据库…"
+    },
+    "invalidShardList": {
+      "en": "The shard database list is invalid. Please refresh.",
+      "zh": "分片数据库列表响应无效，请刷新重试。"
+    },
+    "registryError": {
+      "en": "The shard registry (SHARD_MAP) is unreadable or malformed. Shard maintenance is unavailable until it is fixed.",
+      "zh": "分片注册表（SHARD_MAP）不可读或格式非法，修复前无法进行分片维护。"
+    },
+    "noShards": {
+      "en": "No shard database is registered (empty SHARD_MAP). The primary database above is the only one in use.",
+      "zh": "未注册任何分片库（SHARD_MAP 为空），当前仅使用上方主库。"
+    },
+    "refresh": {
+      "en": "Refresh",
+      "zh": "刷新"
+    },
+    "reachable": {
+      "en": "Reachable",
+      "zh": "可连通"
+    },
+    "unreachable": {
+      "en": "Unreachable ({reason})",
+      "zh": "不可达（{reason}）"
+    },
+    "assignedAccounts": {
+      "en": "{count} assigned mailbox account(s)",
+      "zh": "已分配 {count} 个邮箱账号"
+    },
+    "initialize": {
+      "en": "Initialize / repair schema",
+      "zh": "初始化/修复结构"
+    },
+    "initializeSuccess": {
+      "en": "Shard {id} schema initialized",
+      "zh": "分片 {id} 结构已初始化"
+    },
+    "initializeFailed": {
+      "en": "Shard {id} maintenance failed: {reason}",
+      "zh": "分片 {id} 维护失败：{reason}"
+    }
+  },
   "views.admin.IpBlacklistSettings": {
     "asn_blacklist": {
       "en": "ASN Organization Blacklist",
