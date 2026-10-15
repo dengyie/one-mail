@@ -14,6 +14,7 @@ registerHooks({ resolve(specifier, context, next) {
             "./admin_api/cleanup_api": "export const executeCustomSqlCleanup=async()=>{}",
             "./mails_api/send_mail_limit_utils": "export const reconcileSendMailLimitReservations=async()=>{throw new Error('sendbox forbidden')};export const countUnknownSendMailReservations=async()=>0",
             "./unified/retention": "export const purgeOldEmailBodies=async()=>{globalThis.shardCronScans++;if(globalThis.shardCronFailure)throw new Error('retention failed');return{purged:0}};export const cleanupReadEmails=async()=>{globalThis.shardCronScans++;return{deleted:0}}",
+            "./unified/mirror_jobs.ts": "export const reconcileUnifiedMirrorJobs=async()=>0;export const processUnifiedMirrorJobs=async()=>({succeeded:0,retried:0,dropped:0})",
         };
         if (replacements[specifier]) return { url: `data:text/javascript,${encodeURIComponent(replacements[specifier])}`, shortCircuit: true };
     }

@@ -1,4 +1,7 @@
 import time
+import copy
+import json
+from urllib.parse import quote
 import requests
 
 from .config import Config, WorkerDestination
@@ -14,6 +17,11 @@ class UploadBatchError(RuntimeError):
         self.result = result
         super().__init__(f"{kind} upload failed (up to {max_retries} attempts): " + "; ".join(
             f"{context}: {type(error).__name__}" for context, error in self.failures))
+
+
+def _safe_header(value: object, fallback: str) -> str:
+    text = str(value or fallback)
+    return "".join(char if 0x20 <= ord(char) <= 0x7e else "_" for char in text)[:255] or fallback
 
 
 def quota_retry_at(error: Exception) -> float | None:
@@ -39,6 +47,12 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
         headers = {**destination.headers(), "Content-Type": "application/json"}
         for i in range(0, len(batch), chunk_size):
             chunk = batch[i:i + chunk_size]
+            if kind == "emails":
+                try:
+                    chunk = _upload_attachment_payloads(destination, chunk, max_retries=max_retries, timeout=timeout)
+                except UploadBatchError as error:
+                    failures.extend(error.failures)
+                    break
             delay = 1.0
             last = None
             succeeded = False
@@ -78,6 +92,96 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
     if failures:
         raise UploadBatchError(kind, max_retries, failures, totals) from failures[0][1]
     return totals
+
+
+def _upload_attachment_payloads(destination: WorkerDestination, rows: list[dict], *, max_retries: int,
+                                timeout: int) -> list[dict]:
+    """Persist binary parts before acknowledging the corresponding email batch."""
+    prepared = []
+    for original in rows:
+        row = copy.deepcopy(original)
+        has_payloads = "_attachment_payloads" in row
+        payloads = row.pop("_attachment_payloads", []) or []
+        if not has_payloads:
+            prepared.append(row)
+            continue
+        metadata = []
+        for payload in payloads:
+            content = payload.get("_content", b"")
+            if not isinstance(content, (bytes, bytearray)):
+                raise ValueError("attachment content must be bytes")
+            attachment_id = str(payload.get("id") or "")
+            account_id = str(row.get("account_id") or "")
+            email_id = str(row.get("id") or "")
+            if not attachment_id or not account_id or not email_id:
+                raise ValueError("attachment identity is incomplete")
+            if len(content) > 30 * 1024 * 1024:
+                metadata.append({"name": str(payload.get("name") or "attachment"),
+                                 "size": len(content),
+                                 "mimeType": str(payload.get("mimeType") or "application/octet-stream")})
+                continue
+            path = "/attachments/{}/{}/{}".format(
+                quote(account_id, safe=""), quote(email_id, safe=""), quote(attachment_id, safe=""))
+            upload_headers = {
+                **destination.headers(),
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(content)),
+                "x-one-mail-name": _safe_header(payload.get("name"), "attachment"),
+                "x-one-mail-mime-type": _safe_header(payload.get("mimeType"), "application/octet-stream"),
+            }
+            if destination.api_prefix == "/shard":
+                upload_headers["x-one-mail-shard-scope"] = quote(
+                    json.dumps({"account_ids": [account_id], "sources": None}, separators=(",", ":")))
+            response = None
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    response = requests.put(destination.api_url(path), data=bytes(content),
+                                            headers=upload_headers, timeout=timeout)
+                    if response.status_code == 200:
+                        break
+                    quota = database_quota_error(response, time.time())
+                    if quota is not None:
+                        last_error = quota
+                        break
+                    last_error = requests.HTTPError(
+                        f"attachment upload failed: HTTP {response.status_code}", response=response)
+                    if attempt < max_retries - 1:
+                        time.sleep(min(2 ** attempt, 10))
+                except Exception as error:
+                    last_error = error
+                    if attempt >= max_retries - 1:
+                        break
+                    time.sleep(min(2 ** attempt, 10))
+            if response is None or response.status_code != 200:
+                raise UploadBatchError(
+                    "attachment", max_retries,
+                    [(f"{destination.id}: attachment {attachment_id}", last_error or requests.HTTPError("attachment upload failed"))],
+                    {"inserted": 0, "skipped": 0},
+                ) from last_error
+            try:
+                reply = response.json()
+            except Exception as error:
+                raise UploadBatchError(
+                    "attachment", max_retries,
+                    [(f"{destination.id}: attachment {attachment_id}", error)],
+                    {"inserted": 0, "skipped": 0},
+                ) from error
+            r2_key = reply.get("r2_key") if isinstance(reply, dict) else None
+            if not isinstance(r2_key, str) or not r2_key:
+                error = ValueError("attachment upload acknowledgement missing r2_key")
+                raise UploadBatchError(
+                    "attachment", max_retries,
+                    [(f"{destination.id}: attachment {attachment_id}", error)],
+                    {"inserted": 0, "skipped": 0},
+                ) from error
+            metadata.append({"id": attachment_id, "name": str(payload.get("name") or "attachment"),
+                             "size": len(content), "mimeType": str(payload.get("mimeType") or "application/octet-stream"),
+                             "r2_key": r2_key})
+        row["attachments_json"] = json.dumps(metadata, ensure_ascii=False)
+        row["has_attachments"] = 1 if metadata else 0
+        prepared.append(row)
+    return prepared
 
 
 def upload_emails(config: Config, emails: list[dict], max_retries: int = 5, chunk_size: int = 15) -> dict:

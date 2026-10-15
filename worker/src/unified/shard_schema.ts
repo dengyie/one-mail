@@ -1,5 +1,6 @@
 import { ensureProviderIdentitySchema } from "./schema.ts";
 import { ACCOUNT_LIFECYCLE_INIT_SQL } from "./account_lifecycle_schema.ts";
+import { ATTACHMENT_DELETE_GC_TRIGGER_SQL } from "./attachment_gc_schema.ts";
 
 /**
  * Thin-shard D1: emails + folders + mutation jobs + locks. No users/settings.
@@ -70,6 +71,7 @@ const toExecScript = (sql: string): string =>
 export const initializeShardSchema = async (db: D1Database): Promise<void> => {
     try {
         await db.exec(toExecScript(SHARD_INIT_SQL));
+        await db.exec(ATTACHMENT_DELETE_GC_TRIGGER_SQL);
         await ensureProviderIdentitySchema(db);
     } catch (cause) {
         throw new Error("Shard schema initialization failed", { cause });

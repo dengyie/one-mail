@@ -96,6 +96,39 @@ jobs:
           printf '%s\n' "$WRANGLER_TOML_CONTENT" > worker/wrangler.toml
           chmod 600 worker/wrangler.toml
 
+      - name: Validate production Worker bindings
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import sys
+          import tomllib
+
+          with open("worker/wrangler.toml", "rb") as config_file:
+              config = tomllib.load(config_file)
+
+          bindings = {
+              "D1": {item.get("binding") for item in config.get("d1_databases", [])},
+              "KV": {item.get("binding") for item in config.get("kv_namespaces", [])},
+              "R2": {item.get("binding") for item in config.get("r2_buckets", [])},
+              "DO": {item.get("name") for item in config.get("durable_objects", {}).get("bindings", [])},
+              "send_email": {item.get("name") for item in config.get("send_email", [])},
+          }
+          required = {
+              "D1": {"DB"},
+              "KV": {"KV"},
+              "R2": {"ATTACHMENTS"},
+              "DO": {"PASSKEY_CHALLENGES", "D1_QUOTA_COORDINATOR", "FLEET_REGISTRY"},
+              "send_email": {"SEND_MAIL"},
+          }
+          missing = [f"{kind}:{name}" for kind, names in required.items()
+                     for name in names - bindings[kind]]
+          if missing:
+              print("::error title=Incomplete production Worker configuration::Missing required bindings: " + ", ".join(missing))
+              sys.exit(1)
+
+          print("Production Worker config passed required binding checks")
+          PY
+
       - name: Ensure remote D1 provider identity schema
         shell: bash
         env:
@@ -193,13 +226,72 @@ jobs:
             exit 1
           fi
           cd worker/
+          trap 'rm -f ../.d1-email-schema.json ../.d1-email-attachment-gc.sql' EXIT
           # This migration is idempotent and must run before retention code can
           # access attachment_gc on an existing production database.
           pnpm exec wrangler d1 execute DB \
             --remote \
             --yes \
             --file ../db/2026-10-05-retention-attachment-gc.sql
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --command "PRAGMA table_info(emails)" \
+            --json > ../.d1-email-schema.json
+          python3 ../db/render_email_attachment_gc_migration.py \
+            --schema-json ../.d1-email-schema.json \
+            --migration ../db/2026-10-16-email-attachment-gc.sql \
+            --output ../.d1-email-attachment-gc.sql
+          if [ -s ../.d1-email-attachment-gc.sql ]; then
+            pnpm exec wrangler d1 execute DB \
+              --remote \
+              --yes \
+              --file ../.d1-email-attachment-gc.sql
+            echo "Remote D1 email attachment deletion trigger is current"
+          else
+            echo "Remote D1 emails table is not initialized yet; attachment deletion trigger will be created with fresh schema"
+          fi
           echo "Remote D1 attachment GC schema is current"
+
+      - name: Ensure remote D1 unified mirror retry schema
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd worker/
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-10-16-unified-mirror-jobs.sql
+          echo "Remote D1 unified mirror retry schema is current"
+
+      - name: Ensure remote D1 raw-mail unified identity
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd worker/
+          trap 'rm -f ../.d1-raw-mail-schema.json ../.d1-raw-mail-unified-id.sql' EXIT
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --command "PRAGMA table_info(raw_mails)" \
+            --json > ../.d1-raw-mail-schema.json
+          python3 ../db/render_raw_mail_unified_id_migration.py \
+            --schema-json ../.d1-raw-mail-schema.json \
+            --migration ../db/2026-10-16-raw-mail-unified-id.sql \
+            --output ../.d1-raw-mail-unified-id.sql
+          if [ -s ../.d1-raw-mail-unified-id.sql ]; then
+            pnpm exec wrangler d1 execute DB \
+              --remote \
+              --yes \
+              --file ../.d1-raw-mail-unified-id.sql
+            echo "Remote D1 raw-mail unified identity schema is current"
+          else
+            echo "Remote D1 raw_mails table is not initialized yet; fresh initialization creates the identity column"
+          fi
 
       - name: Ensure remote D1 sendbox source schema
         shell: bash

@@ -1,4 +1,5 @@
 import json
+import hashlib
 from email import message_from_bytes
 from email.header import decode_header, make_header
 from email.utils import parseaddr
@@ -74,7 +75,8 @@ def _bodies(msg) -> tuple[str, str]:
     for p in parts:
         ctype = p.get_content_type()
         disp = str(p.get("Content-Disposition", ""))
-        if "attachment" in disp:
+        if ("attachment" in disp or p.get_filename()
+                or (not p.is_multipart() and p.get_content_maintype() != "text")):
             continue
         try:
             payload = p.get_payload(decode=True) or b""
@@ -93,20 +95,28 @@ def _bodies(msg) -> tuple[str, str]:
 
 def _attachments(msg) -> list[dict]:
     out = []
-    parts = msg.walk() if msg.is_multipart() else []
-    for p in parts:
+    parts = msg.walk() if msg.is_multipart() else [msg]
+    for index, p in enumerate(parts):
         disp = str(p.get("Content-Disposition", ""))
-        if "attachment" not in disp:
+        if ("attachment" not in disp and not p.get_filename()
+                and (p.is_multipart() or p.get_content_maintype() == "text")):
             continue
         # 附件 base64/quoted-printable 损坏时 get_payload(decode=True) 会抛
         # binascii.Error/ValueError；这里与 _bodies 一样容错跳过，避免单封畸形
         # 附件让整批 sync 崩溃、水印不推进导致账号永久死锁（C3，与 from_addr 兜底同类）。
         try:
-            payload = p.get_payload(decode=True) or b""
+            if p.get_content_type() == "message/rfc822" and isinstance(p.get_payload(), list):
+                payload = b"".join(part.as_bytes() for part in p.get_payload())
+            elif p.is_multipart():
+                payload = p.as_bytes()
+            else:
+                payload = p.get_payload(decode=True) or b""
         except Exception:
             continue
-        out.append({"name": _dec(p.get_filename() or ""), "size": len(payload),
-                    "mimeType": p.get_content_type()})
+        name = _dec(p.get_filename() or "")
+        digest = hashlib.sha256(index.to_bytes(4, "big") + payload).hexdigest()[:32]
+        out.append({"id": f"att-{digest}", "name": name, "size": len(payload),
+                    "mimeType": p.get_content_type(), "_content": payload})
     return out
 
 
@@ -157,9 +167,11 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
     else:
         provider_name = _infer_provider(account)
     source_key = source_key_override or legacy_uid
+    stable_id = "mail-" + hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:40]
     refs = _references(msg)
 
     return {
+        "id": stable_id,
         "source": account.source,
         "account_id": account.id,
         "from_addr": from_addr,
@@ -174,7 +186,9 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
         ),
         "is_read": 0,
         "flags_json": "[]",
-        "attachments_json": json.dumps(attachments, ensure_ascii=False),
+        "attachments_json": json.dumps(
+            [{k: v for k, v in attachment.items() if k != "_content"} for attachment in attachments],
+            ensure_ascii=False),
         "raw_ref": None,
         # Keep the legacy field for rolling deploys and old IMAP-proxy/API
         # consumers. It is no longer the canonical cross-provider model.
@@ -195,4 +209,5 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
         # Folder state is not an emails column; Worker consumes it while
         # upserting mail_account_folders from the same ingest batch.
         "source_uidvalidity": uidvalidity if provider_name == "imap" and uidvalidity > 0 else None,
+        "_attachment_payloads": attachments,
     }

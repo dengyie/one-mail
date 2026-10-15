@@ -8,6 +8,8 @@
 
 ## v1.11.0(main)
 
+- feat: |Worker/Aggregator/Frontend| 统一收件箱附件现在保存真实字节并支持鉴权下载：聚合器先按稳定邮件/附件 ID 幂等上传到私有 R2，再提交 ingest；原生 Email Routing 同样在写 unified 行前保存对象。下载接口复用邮件行权限，分片请求带账号作用域并通过真正的有界流式代理，浏览器不接触 R2 URL；下载按鉴权主体限频。补上 30 MiB 限制、GC 宽限期、失败清理、水位不前移、旧元数据不可下载状态和下载按钮。
+
 - fix: |Frontend| 打开邮件不再一直显示未读：详情页 `load()` 拿到未读邮件后自动调用 `markRead`（此前只有手动点「标为已读」按钮才写状态，后端 `GET /api/unified/emails/:id` 本身是纯读、无副作用，所以读完邮件列表标记纹丝不动）。标记先乐观置位让正文与「已读」标签立即更新，再后台等源邮箱终态，并复用详情页既有的邮件身份/鉴权身份/路由 id 三重视护才回写，失败则回滚为未读并提示。`DomainMailbox` 与收件箱共用该详情页，同一问题一并修复。
 
 - feat: |Worker/Frontend| 管理端 D1 用量与分片维护显式标注数据库名：SHARD_MAP 的每个分片新增可选 `name`（缺省回退为其 id，校验为 ≤64 字符），主库 Worker 新增 `D1_DATABASE_NAME` 环境变量（`one_mail_db`）。`/admin/d1_quota`（`d1Quotas[]`）与 `/admin/db_shards`（`primary`/`shards[]`）返回 `database_name`/`name`；前端统计卡片以数据库名为标题、明细行占位 `{shard}`→`{db}`，分片维护卡片以数据库名为标题并单列 `shardId`。名称来自部署配置而非运行时无法内省的 D1 binding 名，空配置回退为分片 id，绝不伪造。

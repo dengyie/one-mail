@@ -35,6 +35,7 @@ import {
     loadShardMap,
     excludeRemoteSql,
     primaryOnlyContext,
+    downloadRemoteAttachment,
 } from "./federation.ts";
 import { UNIFIED_EMAIL_ORDER, UNIFIED_EMAIL_SELECT } from "./unified_sql.ts";
 import mail_accounts from "../user_api/mail_accounts";
@@ -43,6 +44,8 @@ import {
     HARD_MAX_UNIFIED_PAGE_SIZE,
     getMaxUnifiedPageSize,
 } from "../quota.ts";
+import { attachmentDownloadRateLimit, downloadAttachment, uploadAttachment } from "./attachment_routes.ts";
+import { publicAttachmentJson } from "./attachments.ts";
 
 const api = new Hono<HonoCustomType>();
 
@@ -234,10 +237,28 @@ const getEmail = async (c: Context<HonoCustomType>) => {
         if (!(await checkRowAccess(c, row))) {
             return c.json({ error: "forbidden" }, 403);
         }
-        return c.json(row);
+        return c.json({ ...row, attachments_json: publicAttachmentJson((row as Record<string, unknown>).attachments_json) });
     }
     if (!hasRemoteShards(map)) return c.json({ error: "not found" }, 404);
     return fanOutGet(c, map, `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}`);
+};
+
+const getAttachment = async (c: Context<HonoCustomType>) => {
+    const map = await loadShardMap(c.env);
+    const exclude = excludeRemoteSql(map);
+    const row = await c.env.DB.prepare(`SELECT source, account_id, to_addr FROM emails WHERE id = ? AND ${exclude.sql}`)
+        .bind(c.req.param("id"), ...exclude.params).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null } | null;
+    if (row) {
+        if (!(await checkRowAccess(c, row))) return c.json({ error: "forbidden" }, 403);
+        return downloadAttachment(c);
+    }
+    if (!hasRemoteShards(map)) return c.json({ error: "not found" }, 404);
+    const owner = await locateRemoteEmailOwner(c, map, `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}`);
+    if (owner.duplicate) return c.json({ error: "duplicate email owners" }, 409);
+    if (owner.degraded.length) return c.json({ error: "shard unavailable", degraded: owner.degraded }, 503);
+    if (owner.rejected?.data) return c.json(owner.rejected.data, owner.rejected.status as 400 | 403 | 404 | 409);
+    if (!owner.shard || !owner.accountId) return c.json({ error: "not found" }, 404);
+    return downloadRemoteAttachment(c, map, owner.shard, owner.accountId, owner);
 };
 
 const applyIfExists = async (
@@ -276,6 +297,7 @@ api.get("/api/unified/folders", async (c) => {
     return federatedFolders(c, map);
 });
 api.get("/api/unified/emails/:id", getEmail);
+api.get("/api/unified/emails/:id/attachments/:attachmentId", attachmentDownloadRateLimit, getAttachment);
 api.get("/api/unified/count", async (c) => {
     const map = await loadShardMap(c.env);
     if (!hasRemoteShards(map)) return countEmails(c);
@@ -306,6 +328,7 @@ api.post("/api/unified/emails/:id/star", (c) => applyIfExists(c, toggleStar, "PO
 api.post("/api/unified/emails/:id/move", (c) => applyIfExists(c, moveEmail, "POST", `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}/move`));
 api.delete("/api/unified/emails/:id", (c) => applyIfExists(c, deleteEmail, "DELETE", `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}`));
 api.post("/admin/unified/ingest", ingestHandler);
+api.put("/admin/unified/attachments/:accountId/:emailId/:attachmentId", uploadAttachment);
 api.get("/admin/unified/mail_accounts", mail_accounts.exportForAggregator);  // x-admin-auth 保护
 api.post("/admin/unified/mail_accounts/:id/status", mail_accounts.reportStatus);  // 聚合器 sync 回写
 api.post("/admin/unified/mail_accounts/:id/refresh_token", mail_accounts.reportRefreshToken);  // 聚合器 RT 轮换回写

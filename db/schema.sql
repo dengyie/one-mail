@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS raw_mails (
     raw TEXT,
     raw_blob BLOB,
     metadata TEXT,
+    unified_id TEXT,
+    mirror_pending INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -14,6 +16,25 @@ CREATE INDEX IF NOT EXISTS idx_raw_mails_address ON raw_mails(address);
 CREATE INDEX IF NOT EXISTS idx_raw_mails_created_at ON raw_mails(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_mails_unified_id_uq
+    ON raw_mails(unified_id) WHERE unified_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_raw_mails_mirror_pending
+    ON raw_mails(id) WHERE mirror_pending = 1;
+
+CREATE TABLE IF NOT EXISTS unified_mirror_jobs (
+    unified_id TEXT PRIMARY KEY,
+    raw_mail_id INTEGER NOT NULL,
+    next_attempt_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_unified_mirror_jobs_due
+    ON unified_mirror_jobs(next_attempt_at, created_at);
 
 CREATE TABLE IF NOT EXISTS address (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -298,6 +319,31 @@ CREATE TABLE IF NOT EXISTS attachment_gc (
     updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key);
+
+CREATE TRIGGER IF NOT EXISTS trg_emails_attachment_gc_after_delete
+AFTER DELETE ON emails
+BEGIN
+    INSERT INTO attachment_gc (r2_key, created_at, updated_at)
+    SELECT json_extract(json_each.value, '$.r2_key'),
+           CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+           CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+      FROM json_each(
+          CASE WHEN json_valid(OLD.attachments_json)
+                    AND json_type(OLD.attachments_json) = 'array'
+               THEN OLD.attachments_json ELSE '[]' END
+      )
+     WHERE json_each.type = 'object'
+       AND json_type(json_each.value, '$.r2_key') = 'text'
+       AND length(json_extract(json_each.value, '$.r2_key')) = 51
+       AND substr(json_extract(json_each.value, '$.r2_key'), 1, 8) = 'unified/'
+       AND substr(json_extract(json_each.value, '$.r2_key'), 9) NOT GLOB '*[^A-Za-z0-9_-]*'
+    ON CONFLICT(r2_key) DO UPDATE SET
+        updated_at = MAX(excluded.updated_at, attachment_gc.updated_at + 1),
+        attempts = 0,
+        last_error = NULL
+    WHERE attachment_gc.last_error IS NOT 'gc_in_progress'
+       OR attachment_gc.updated_at <= excluded.updated_at - 600000;
+END;
 
 CREATE TABLE IF NOT EXISTS scheduled_locks (
     name TEXT PRIMARY KEY,

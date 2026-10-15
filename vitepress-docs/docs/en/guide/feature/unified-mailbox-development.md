@@ -52,7 +52,7 @@ The accurate current product description is therefore “unified inbox aggregato
 | Reply/forward/compose | Missing for external accounts | Existing send mainly serves one-mail/SMTP configuration |
 | Folders/labels | Incomplete | INBOX is the practical default; row lacks folder semantics |
 | Threads/conversations | Missing | No thread/message-reference model |
-| Attachment download | Missing | Mostly attachment metadata is stored |
+| Attachment download | Available | Aggregated and native attachments are stored in private R2; the unified API streams downloads after row-scope checks, while legacy/oversized rows remain metadata-only |
 | Full HTML rendering | Degraded | Unified detail primarily displays text |
 | Full-text search | Basic | `LIKE` over a small set of fields |
 | Real-time receive | Available (IMAP IDLE) | Long-lived IDLE listeners push supported accounts within seconds; POP3 / graph fall back to 60s polling |
@@ -222,6 +222,19 @@ provider → aggregator → R2
 ```
 
 Store filename, MIME type, size, R2 key, checksum, and email ownership. Downloads must enforce scope, use short-lived URLs or a Worker proxy, and never expose provider credentials.
+
+The implementation publishes attachment bytes and the email row as two idempotent
+steps. The aggregator first calls `PUT
+/admin/unified/attachments/:accountId/:emailId/:attachmentId` (or
+`PUT /shard/attachments/...`), then posts `POST /admin/unified/ingest`. The Worker
+derives a private R2 key from the account, email, and opaque attachment ID. The
+browser only calls `GET /api/unified/emails/:id/attachments/:attachmentId`; it
+never submits or receives an R2 object URL. Configure the `ATTACHMENTS` R2 binding
+alongside the D1-owning Worker. Uploaded objects enter `attachment_gc` with a
+grace period and are released after ingest; failed publishes are removed by the
+retention job. Uploads and downloads enforce a 30 MiB per-file limit while
+streaming and canceling oversized bodies. Download requests are rate-limited by
+the authenticated user, API key, or administrator client identity.
 
 Unified detail must reuse the existing `sanitizeHtmlMail` and remote-resource policy: sanitize scripts, event attributes, dangerous URLs, and active resources by default; allow only an explicit per-message remote-image action; and keep sanitization inside the renderer rather than relying on every caller.
 

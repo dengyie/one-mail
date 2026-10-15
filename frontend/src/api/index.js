@@ -419,6 +419,36 @@ const bindUserAddress = async () => {
 
 const unifiedAuthFetch = (path, options = {}) => unifiedClient.request(path, options);
 
+// Binary responses cannot go through the JSON request wrapper. Keep the same
+// credential snapshot and 401 handling, but return the Blob plus response
+// headers so callers can create a local download without exposing R2 URLs.
+const unifiedAuthDownload = async (path, options = {}) => {
+    const auth = getUnifiedAuth();
+    if (!auth.key) throw new Error('unified api key not set');
+    const response = await instance.request(path, {
+        method: 'GET',
+        data: null,
+        headers: auth.headers,
+        signal: options.signal,
+        timeout: 60_000,
+        responseType: 'blob',
+    });
+    if (response.status === 401) handleUnifiedUnauthorized(response);
+    if (response.status >= 300) {
+        let detail = `Code ${response.status}: error`;
+        try {
+            const text = await response.data?.text?.();
+            const parsed = text ? JSON.parse(text) : null;
+            detail = `Code ${response.status}: ${parsed?.error || parsed?.message || detail}`;
+        } catch { /* preserve generic status when the body is not JSON */ }
+        const error = new Error(detail);
+        error.status = response.status;
+        error.retryable = response.status === 503;
+        throw error;
+    }
+    return { blob: response.data, headers: response.headers };
+};
+
 // 构造 /api/unified/emails 的查询串：source/account_id 逗号多值、未读标记、分页、关键词。
 const buildUnifiedQuery = (params = {}) => {
     const qs = new URLSearchParams();
@@ -450,6 +480,9 @@ export const api = {
         },
         /** @param {string} id @param {import('./contracts').RequestOptions} options @returns {Promise<import('./contracts').UnifiedEmailDetail>} */
         getEmail: (id, options = {}) => unifiedAuthFetch(`/api/unified/emails/${encodeURIComponent(id)}`, options),
+        downloadAttachment: (emailId, attachmentId, options = {}) => unifiedAuthDownload(
+            `/api/unified/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`,
+            options),
         count: async (params = {}, options = {}) => {
             const s = buildUnifiedQuery(params);
             return unifiedAuthFetch(`/api/unified/count${s ? `?${s}` : ''}`, options);

@@ -89,8 +89,8 @@ test("retention drains a durable GC row even when no email is newly eligible", a
         bind(...params) {
           calls.push({ sql, params });
           return {
-            all: async () => /SELECT r2_key FROM attachment_gc/.test(sql)
-              ? { results: deletedGc ? [] : [{ r2_key: "attachment-retry" }] }
+            all: async () => /SELECT r2_key, updated_at FROM attachment_gc/.test(sql)
+              ? { results: deletedGc ? [] : [{ r2_key: "attachment-retry", updated_at: Date.now() - 2 * 60 * 60 * 1000 }] }
               : { results: [] },
             first: async () => null,
             run: async () => {
@@ -106,7 +106,9 @@ test("retention drains a durable GC row even when no email is newly eligible", a
   const deleted = [];
   await cleanupReadEmails({ DB: db, ATTACHMENTS: { delete: async key => deleted.push(key) } }, 90, 1, 1);
   assert.deepEqual(deleted, ["attachment-retry"]);
-  assert.ok(calls.some(call => /SELECT r2_key FROM attachment_gc/.test(call.sql)));
+  assert.ok(calls.some(call => /SELECT r2_key, updated_at FROM attachment_gc/.test(call.sql)));
+  assert.equal(calls.find(call => /SELECT r2_key, updated_at FROM attachment_gc/.test(call.sql)).params[0] < Date.now(), true);
+  assert.match(calls.find(call => /SELECT r2_key, updated_at FROM attachment_gc/.test(call.sql)).sql, /updated_at <= \?/);
 });
 
 /**
@@ -125,7 +127,7 @@ function gcDb({ gcKeys, referencedKeys }) {
           return {
             all: async () => {
               if (/FROM attachment_gc/.test(sql)) {
-                return { results: gcKeys.map(r2_key => ({ r2_key })) };
+                return { results: gcKeys.map(r2_key => ({ r2_key, updated_at: Date.now() - 2 * 60 * 60 * 1000 })) };
               }
               if (/json_each/.test(sql)) {
                 return { results: referencedKeys.map(r2_key => ({ r2_key })) };

@@ -72,7 +72,7 @@ Gmail / Outlook / QQ / 163 / 自定义 IMAP 邮箱 / one-mail 地址
 | 回复、转发、新建 | 外部账号无 | 现有发送能力主要服务 one-mail 地址/SMTP 配置 |
 | 文件夹/标签 | 不完整 | 实际常用路径以 INBOX 为主，统一行没有 folder/label 语义 |
 | 线程/会话 | 无 | 没有 thread/message-reference 模型 |
-| 附件下载 | 无 | 当前外部邮件主要保存附件元数据 |
+| 附件下载 | 已有 | 聚合器与 Email Routing 附件写入私有 R2；统一 API 按邮件权限流式下载，旧数据/超限附件仅显示元数据 |
 | HTML 邮件完整渲染 | 降级 | UnifiedInboxDetail 目前主要显示纯文本 |
 | 全文搜索 | 基础 | `LIKE` 搜索 subject/from/text，缺少 FTS 和高级条件 |
 | 实时收件 | 已具备（IMAP IDLE） | 支持的账号由常驻 IDLE 监听线程秒级推送到位；POP3 / graph 等账号 60s 兜底轮询 |
@@ -411,6 +411,16 @@ D1 保存：
 ```text
 attachment_id, email_id, filename, mime_type, size, r2_key, checksum
 ```
+
+当前实现把附件对象写入与邮件 ingest 分成两个幂等步骤：聚合器先调用
+`PUT /admin/unified/attachments/:accountId/:emailId/:attachmentId`（分片为
+`PUT /shard/attachments/...`），再提交 `POST /admin/unified/ingest`。Worker
+根据账号、邮件和不透明附件 ID 计算私有 R2 key；浏览器只调用
+`GET /api/unified/emails/:id/attachments/:attachmentId`，不会提交或获得 R2
+对象地址。`ATTACHMENTS` R2 binding 必须和拥有该 D1 的 Worker 同库配置。
+上传对象会进入带宽限期的 `attachment_gc`，ingest 成功后释放；失败对象由
+retention 定时任务清理。单个附件上限为 30 MiB，下载和上传都会在流式读取时
+取消超限请求；下载还会按用户、API key 或管理员客户端身份限频。
 
 下载接口必须：
 

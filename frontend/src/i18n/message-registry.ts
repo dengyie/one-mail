@@ -4047,9 +4047,17 @@ export const MESSAGE_REGISTRY = {
       "en": "metadata only",
       "zh": "仅元数据"
     },
+    "detail.download": {
+      "en": "Download",
+      "zh": "下载"
+    },
+    "detail.downloadFailed": {
+      "en": "Attachment download failed",
+      "zh": "附件下载失败"
+    },
     "detail.attachmentNoDownload": {
-      "en": "The unified API does not provide an attachment download endpoint.",
-      "zh": "统一收件箱 API 未提供附件下载接口。"
+      "en": "Attachment bytes are unavailable for this legacy or oversized item.",
+      "zh": "此附件属于旧数据或超过大小限制，当前没有可下载的文件内容。"
     },
     "detail.noBody": {
       "en": "No body content",

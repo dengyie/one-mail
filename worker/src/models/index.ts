@@ -214,6 +214,7 @@ export type RoleAddressConfig = Record<string, RoleConfig>;
 
 export type RawMailRow = {
     id: number;
+    unified_id?: string | null;
     message_id?: string;
     source?: string;
     address?: string;

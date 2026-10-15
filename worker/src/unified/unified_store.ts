@@ -1,5 +1,14 @@
 import { Context } from "hono";
 import { insertEmail } from "../core/ingest.ts";
+import {
+    MAX_ATTACHMENT_BYTES,
+    attachmentGcInsert,
+    attachmentKey,
+    releaseAttachmentGc,
+    safeAttachmentId,
+    safeAttachmentName,
+    safeMimeType,
+} from "./attachments.ts";
 
 export interface UnifiedEmailRow {
     id: string; source: string; account_id: string | null;
@@ -62,15 +71,60 @@ export function buildUnifiedEmailRow(
     };
 }
 
+const nativeAttachmentId = async (
+    index: number,
+    name: string,
+    mimeType: string,
+    content: Uint8Array,
+): Promise<string> => {
+    const prefix = new TextEncoder().encode(`${index}\u0000${name}\u0000${mimeType}\u0000`);
+    const bytes = new Uint8Array(prefix.byteLength + content.byteLength);
+    bytes.set(prefix);
+    bytes.set(content, prefix.byteLength);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    return `native-${Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("").slice(0, 48)}`;
+};
+
 export async function saveUnifiedEmail(
     c: Context, rawEmail: string, fromAddress: string, toAddress: string,
+    unifiedId?: string,
 ): Promise<void> {
     // Lazy import: keeps the module graph light for pure-function unit tests and
     // is bundled into the same chunk by esbuild/wrangler in production.
     const { commonParseMail } = await import("../common.ts");
     const parsed = await commonParseMail({ rawEmail });
-    const row = buildUnifiedEmailRow(parsed, toAddress, fromAddress, Date.now(), crypto.randomUUID());
-    await insertEmail(c, [
+    const row = buildUnifiedEmailRow(parsed, toAddress, fromAddress, Date.now(), unifiedId || crypto.randomUUID());
+    const uploadedKeys: string[] = [];
+    if (c.env.ATTACHMENTS && parsed?.attachments?.length) {
+        const storedAttachments = [];
+        for (let index = 0; index < parsed.attachments.length; index += 1) {
+            const attachment = parsed.attachments[index];
+            const content = attachment.content instanceof Uint8Array
+                ? attachment.content
+                : new Uint8Array(attachment.content || []);
+            const name = safeAttachmentName(attachment.filename || "attachment");
+            const mimeType = safeMimeType(attachment.mimeType || "application/octet-stream");
+            if (content.byteLength > MAX_ATTACHMENT_BYTES) {
+                storedAttachments.push({ name, size: content.byteLength, mimeType });
+                continue;
+            }
+            const id = await nativeAttachmentId(index, name, mimeType, content);
+            if (!safeAttachmentId(id)) continue;
+            const key = await attachmentKey(toAddress, row.id, id);
+            if (!(await attachmentGcInsert(c.env, key))) {
+                throw new Error("native attachment cleanup in progress; retry delivery");
+            }
+            await c.env.ATTACHMENTS.put(key, content, {
+                httpMetadata: { contentType: mimeType },
+                customMetadata: { name },
+            });
+            uploadedKeys.push(key);
+            storedAttachments.push({ id, name, size: content.byteLength, mimeType, r2_key: key });
+        }
+        row.attachments_json = JSON.stringify(storedAttachments);
+        row.has_attachments = storedAttachments.length > 0 ? 1 : 0;
+    }
+    const result = await insertEmail(c, [
         row.id, row.source, row.account_id, row.from_addr, row.to_addr, row.subject,
         row.text_body, row.html_body, row.received_at, row.internal_date, row.headers_json,
         row.is_read, row.flags_json, row.attachments_json, row.raw_ref, row.imap_uid, row.updated_at,
@@ -78,4 +132,5 @@ export async function saveUnifiedEmail(
         row.provider_thread_id, row.message_id_header, row.in_reply_to, row.references_json,
         row.has_attachments, row.source_key, row.sync_version, 0,
     ]);
+    if ((result as { success?: boolean }).success) await releaseAttachmentGc(c.env, uploadedKeys, [row.id]);
 }

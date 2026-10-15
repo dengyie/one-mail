@@ -1,6 +1,8 @@
 import type { Context } from "hono";
 import {
     createShardResponseBudget, fanOutShardRequests, fetchShardJson,
+    fetchShardStream,
+    SHARD_ATTACHMENT_MAX_BYTES,
     SHARD_LIST_MAX_BYTES, SHARD_DETAIL_MAX_BYTES,
     type ShardFetchOptions, type ShardCallResult, type ShardRequest,
 } from "./shard_client.ts";
@@ -352,6 +354,34 @@ export const fanOutGet = (
     map: ShardMap,
     path: string,
 ): Promise<Response> => scopedSingleFanOut(c, map, path, {});
+
+export const downloadRemoteAttachment = async (
+    c: Context<HonoCustomType>,
+    _map: ShardMap,
+    shard: ShardEndpoint,
+    accountId: string,
+    location: RemoteEmailLocation,
+): Promise<Response> => {
+    const attachmentId = c.req.param("attachmentId") || "";
+    const emailId = location.emailId;
+    const path = `/shard/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`;
+    const result = await fetchShardStream(shard, path, {
+        scope: { account_ids: [accountId], sources: null },
+        signal: c.req.raw.signal,
+        maxBodyBytes: SHARD_ATTACHMENT_MAX_BYTES,
+    });
+    if (!result.ok) {
+        if (result.error === "http_404") return c.json({ error: "attachment not found" }, 404);
+        if (result.error === "http_403") return c.json({ error: "forbidden" }, 403);
+        return c.json({ error: "shard unavailable", degraded: [shard.id] }, 503);
+    }
+    const headers = new Headers();
+    for (const name of ["content-type", "content-disposition", "content-length", "cache-control", "x-content-type-options"] as const) {
+        const value = result.headers.get(name);
+        if (value) headers.set(name, value);
+    }
+    return new Response(result.body, { status: result.status, headers });
+};
 
 export type RemoteEmailLocation = {
     shard: ShardEndpoint | null;

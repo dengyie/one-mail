@@ -21,6 +21,44 @@ def test_upload_posts_to_ingest():
 
 
 @responses.activate
+def test_uploads_attachment_before_ingest_and_strips_private_payload():
+    responses.add(responses.PUT, "https://w.example/admin/unified/attachments/a/mail-1/att-1",
+                  json={"id": "att-1", "r2_key": "unified/key"}, status=200)
+    responses.add(responses.POST, "https://w.example/admin/unified/ingest",
+                  json={"inserted": 1, "skipped": 0}, status=200)
+    out = upload_emails(cfg(), [{
+        "id": "mail-1", "account_id": "a", "source": "imap_qq",
+        "_attachment_payloads": [{"id": "att-1", "name": "x.txt", "mimeType": "text/plain", "_content": b"hello"}],
+    }])
+    assert out == {"inserted": 1, "skipped": 0}
+    assert [call.request.method for call in responses.calls] == ["PUT", "POST"]
+    ingest = json.loads(responses.calls[1].request.body)
+    row = ingest["emails"][0]
+    assert "_attachment_payloads" not in row
+    assert json.loads(row["attachments_json"])[0]["r2_key"] == "unified/key"
+
+
+@responses.activate
+def test_attachment_upload_failure_skips_ingest_and_healthy_destination_runs():
+    config = _sharded_config()
+    responses.add(responses.PUT, "https://s1.example/shard/attachments/a/mail-a/att-a", status=503)
+    responses.add(responses.POST, "https://s2.example/shard/ingest",
+                  json={"inserted": 1, "skipped": 0}, status=200)
+    with pytest.raises(UploadBatchError) as caught:
+        upload_emails(config, [
+            {"id": "mail-a", "account_id": "a", "source": "imap_qq",
+             "_attachment_payloads": [{"id": "att-a", "_content": b"data"}]},
+            {"id": "mail-b", "account_id": "b", "source": "imap_qq"},
+        ], max_retries=1)
+    assert [call.request.url for call in responses.calls] == [
+        "https://s1.example/shard/attachments/a/mail-a/att-a",
+        "https://s2.example/shard/ingest",
+    ]
+    assert caught.value.result == {"inserted": 1, "skipped": 0}
+    assert caught.value.failures[0][0].startswith("s1: attachment att-a")
+
+
+@responses.activate
 def test_upload_retries_on_500():
     responses.add(responses.POST, "https://w.example/admin/unified/ingest", status=500)
     responses.add(responses.POST, "https://w.example/admin/unified/ingest",

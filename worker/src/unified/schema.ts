@@ -1,5 +1,6 @@
 import { ensureMailMutationSchema } from "./mutation_schema";
 import { ensureTableColumns } from "../core/db_schema.ts";
+import { ATTACHMENT_DELETE_GC_TRIGGER_SQL } from "./attachment_gc_schema.ts";
 
 const PROVIDER_IDENTITY_COLUMNS: Array<[string, string]> = [
     ["provider", "TEXT"],
@@ -122,7 +123,8 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
         last_error TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-    )`), db.prepare(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key)`)]);
+    )`), db.prepare(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key)`),
+        db.prepare(ATTACHMENT_DELETE_GC_TRIGGER_SQL)]);
 
     return changes;
 }

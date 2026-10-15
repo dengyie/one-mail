@@ -5,6 +5,18 @@
 >
 > **数据库迁移发布顺序（外部邮箱 POP3）：** 先部署包含 schema migration 的 Worker，执行 `POST /admin/db_migration` 并确认返回成功、`GET /admin/db_version` 的 `need_migration` 为 `false`，再发布/启用会读写 POP3 字段的代码。不要在迁移完成前让新代码接收流量；迁移接口可重复执行，多个并发请求中若另一请求已添加列会安全成功。
 
+## 统一收件箱附件
+
+统一收件箱附件需要在拥有对应 D1 的 Worker 配置私有 R2 binding：
+
+```toml
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "one-mail-attachments"
+```
+
+附件单文件上限为 30 MiB。部署前必须确认 `BACKEND_TOML` secret 保留所有既有 D1/KV/DO/send_email binding，并包含 `ATTACHMENTS`；部署 workflow 会在远程 D1 迁移前阻止缺少该 binding 的配置。
+
 ## 必填变量
 
 | 变量名                     | 类型        | 说明                                       | 示例                                 |

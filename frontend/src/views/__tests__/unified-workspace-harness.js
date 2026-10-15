@@ -41,6 +41,7 @@ beforeEach(() => {
       getEmail: vi.fn().mockResolvedValue(email()), meta: vi.fn().mockResolvedValue({ sources: [], accounts: [], to_addrs: [] }),
       verifcodes: vi.fn().mockResolvedValue({ results: [] }), stats: vi.fn().mockResolvedValue({ count: 1, unread: 1 }),
       markRead: vi.fn().mockResolvedValue({ ok: true }), markUnread: vi.fn().mockResolvedValue({ ok: true }), toggleStar: vi.fn().mockResolvedValue({ is_starred: 1 }),
+      downloadAttachment: vi.fn().mockResolvedValue({ blob: new Blob(['ok'], { type: 'text/plain' }), headers: { 'content-disposition': "attachment; filename*=UTF-8''x.txt" } }),
     },
   }
   vi.clearAllMocks()

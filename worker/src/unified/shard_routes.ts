@@ -23,6 +23,8 @@ import { claimLegacyMutationJobs } from "./mutation_claim_legacy.ts";
 import { listFolders } from "./folders.ts";
 import { countEmails, getMetaOptions, statsEmails, verifCodes } from "./extra_endpoints.ts";
 import { chunkValues, SHARD_ACCOUNT_BIND_CHUNK } from "./shard_merge.ts";
+import { downloadAttachment, uploadAttachment } from "./attachment_routes.ts";
+import { publicAttachmentJson } from "./attachments.ts";
 
 export type ShardListDto = {
     account_ids?: unknown;
@@ -71,6 +73,9 @@ shard.use("/shard/*", async (c, next) => {
     if (scopeHeaderPresent && !scope) return c.json({ error: "invalid shard scope" }, 400);
     const rowPath = /^\/shard\/(emails|mutations)\/[^/]+(?:\/(read|unread|star|move))?$/.test(c.req.path)
         && !["/shard/mutations/claim", "/shard/mutations/v2/claim"].includes(c.req.path);
+    const attachmentDownloadPath = /^\/shard\/emails\/[^/]+\/attachments\/[^/]+$/.test(c.req.path);
+    const attachmentUploadPath = /^\/shard\/attachments\/[^/]+\/[^/]+\/[^/]+$/.test(c.req.path);
+    if ((attachmentDownloadPath || attachmentUploadPath) && !scope) return c.json({ error: "shard scope required" }, 403);
     if (rowPath && !scope) return c.json({ error: "shard scope required" }, 403);
     if (scope) {
         const key = {
@@ -92,7 +97,7 @@ shard.use("/shard/*", async (c, next) => {
         }
         c.set("apiKey", key);
         // Use the immutable row/job snapshot before any mutation or response.
-        if (rowPath) {
+        if (rowPath || attachmentDownloadPath) {
             let id: string;
             try { id = decodeURIComponent(c.req.path.split("/")[3]); }
             catch { return c.json({ error: "invalid id" }, 400); }
@@ -100,6 +105,11 @@ shard.use("/shard/*", async (c, next) => {
             const row = await c.env.DB.prepare(`SELECT source, account_id FROM ${table} WHERE id = ?`)
                 .bind(id).first<{ source: string | null; account_id: string | null }>();
             if (row && !shardScopeAllowsRow(scope, row)) return c.json({ error: "forbidden" }, 403);
+        }
+        if (attachmentUploadPath) {
+            let accountId = "";
+            try { accountId = decodeURIComponent(c.req.path.split("/")[3]); } catch { return c.json({ error: "invalid account id" }, 400); }
+            if (!scope.account_ids?.includes(accountId)) return c.json({ error: "forbidden" }, 403);
         }
     } else {
         c.set("unifiedUserAuth", { userPayload: null, isAdmin: true, userRole: c.env.ADMIN_USER_ROLE || "admin" });
@@ -195,8 +205,11 @@ shard.get("/shard/emails/:id", async (c) => {
     const row = await c.env.DB.prepare(`SELECT * FROM emails WHERE id = ?`)
         .bind(c.req.param("id")).first();
     if (!row) return c.json({ error: "not found" }, 404);
-    return c.json(row);
+    return c.json({ ...(row as Record<string, unknown>), attachments_json: publicAttachmentJson((row as Record<string, unknown>).attachments_json) });
 });
+
+shard.get("/shard/emails/:id/attachments/:attachmentId", downloadAttachment);
+shard.put("/shard/attachments/:accountId/:emailId/:attachmentId", uploadAttachment);
 
 shard.post("/shard/emails/:id/read", markRead);
 shard.post("/shard/emails/:id/unread", markUnread);

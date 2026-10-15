@@ -165,6 +165,55 @@ def test_normalize_corrupt_attachment_does_not_wedge_sync():
     assert e["has_attachments"] in (0, 1)
 
 
+def test_normalize_attachment_has_stable_id_and_private_payload():
+    raw = (b"From: alice@ex.com\r\nTo: me@qq.com\r\nSubject: attach\r\n"
+           b"Content-Type: multipart/mixed; boundary=b\r\n\r\n"
+           b"--b\r\nContent-Type: text/plain\r\n\r\nbody\r\n"
+           b"--b\r\nContent-Type: application/octet-stream\r\n"
+           b"Content-Disposition: attachment; filename=x.bin\r\n\r\nbytes\r\n--b--\r\n")
+    e = normalize_message(raw, acc(), "INBOX", uidvalidity=7, uid=1004, internal_date_ms=None)
+    metadata = json.loads(e["attachments_json"])
+    assert metadata[0]["id"].startswith("att-")
+    assert e["_attachment_payloads"][0]["_content"] == b"bytes"
+
+
+def test_filename_part_without_disposition_is_attachment_not_body():
+    raw = (b"From: alice@example.com\r\nTo: me@qq.com\r\nSubject: file\r\n"
+           b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"
+           b"--b\r\nContent-Type: text/plain\r\n\r\nbody\r\n"
+           b"--b\r\nContent-Type: text/plain; name=note.txt\r\n"
+           b"Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--b--\r\n")
+    email = normalize_message(raw, acc(), "INBOX", 7, 1005, None)
+    assert email["text_body"] == "body"
+    payloads = email["_attachment_payloads"]
+    assert len(payloads) == 1
+    assert payloads[0]["name"] == "note.txt"
+    assert payloads[0]["_content"] == b"hello"
+
+
+def test_non_multipart_root_attachment_is_saved():
+    raw = (b"From: alice@example.com\r\nTo: me@qq.com\r\nSubject: root file\r\n"
+           b"Content-Type: application/octet-stream; name=root.bin\r\n"
+           b"Content-Transfer-Encoding: base64\r\n\r\nYnl0ZXM=\r\n")
+    email = normalize_message(raw, acc(), "INBOX", 7, 1006, None)
+    assert email["text_body"] == ""
+    assert email["_attachment_payloads"][0]["_content"] == b"bytes"
+
+
+def test_attached_rfc822_message_keeps_its_nested_content():
+    raw = (b"From: alice@example.com\r\nTo: me@qq.com\r\nSubject: forwarded\r\n"
+           b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=outer\r\n\r\n"
+           b"--outer\r\nContent-Type: message/rfc822\r\n"
+           b"Content-Disposition: attachment; filename=forwarded.eml\r\n\r\n"
+           b"From: nested@example.com\r\nSubject: nested mail\r\n"
+           b"Content-Type: text/plain; charset=utf-8\r\n\r\nnested body\r\n"
+           b"--outer--\r\n")
+    email = normalize_message(raw, acc(), "INBOX", 7, 1007, None)
+    payload = email["_attachment_payloads"][0]["_content"]
+    assert b"Subject: nested mail" in payload
+    assert b"nested body" in payload
+
+
 def test_attachments_guard_skips_part_whose_decode_raises():
     """C3 mechanism: _attachments 对 get_payload(decode=True) 的 except 分支。"""
     from one_mail_agg import normalize as N
