@@ -270,6 +270,7 @@ test("folder catalog rejects malformed provider or uidvalidity", async () => {
  */
 function lifecycleHarness(lifecycleRow) {
   const lifecycleQueries = [];
+  const gcDeletes = [];
   const fakeEnv = {
     DB: {
       prepare(sql) {
@@ -281,14 +282,26 @@ function lifecycleHarness(lifecycleRow) {
             },
           };
         }
-        return { bind: () => ({ sql }) };
+        return {
+          bind(...params) {
+            return {
+              sql,
+              params,
+              run: async () => {
+                if (/DELETE FROM attachment_gc/.test(sql)) gcDeletes.push(params);
+                return { meta: { changes: 1 } };
+              },
+              all: async () => ({ results: [] }),
+            };
+          },
+        };
       },
       async batch(stmts) {
         return stmts.map(() => ({ meta: { changes: 1 } }));
       },
     },
   };
-  return { fakeEnv, lifecycleQueries };
+  return { fakeEnv, lifecycleQueries, gcDeletes };
 }
 
 const batchOf = (accountId, count) =>
@@ -319,6 +332,59 @@ test("lifecycle memoisation still skips every email of a deleting account", asyn
   assert.equal(res.inserted, 0);
   assert.equal(res.skipped, 15);
   assert.deepEqual(lifecycleQueries, ["qq"], "one lookup, one verdict for the whole batch");
+});
+
+test("lifecycle-skipped emails keep provisional attachment GC records", async () => {
+  const { insertEmails } = await import("./ingest.ts");
+  const { fakeEnv, gcDeletes } = lifecycleHarness({
+    account_id: "qq", user_id: 1, username: "u", state: "deleting",
+  });
+  const result = await insertEmails({ env: fakeEnv }, [{
+    ...batchOf("qq", 1)[0],
+    attachments_json: JSON.stringify([{ id: "att-1", name: "x.txt", size: 1, mimeType: "text/plain", r2_key: "unified/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]),
+  }]);
+  assert.deepEqual(result, { inserted: 0, skipped: 1 });
+  assert.deepEqual(gcDeletes, [], "unreferenced objects remain queued for retention GC");
+});
+
+test("idempotent email replays do not release unreferenced newly uploaded attachment keys", async () => {
+  const { insertEmails } = await import("./ingest.ts");
+  const gcDeletes = [];
+  const fakeEnv = {
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...params) {
+            return {
+              sql,
+              params,
+              first: async () => null,
+              run: async () => {
+                if (/DELETE FROM attachment_gc/.test(sql)) gcDeletes.push({ sql, params });
+                return { meta: { changes: 1 } };
+              },
+              all: async () => ({ results: [] }),
+            };
+          },
+        };
+      },
+      async batch(statements) {
+        return statements.map((statement) => ({
+          // Simulate an INSERT OR IGNORE replay: the email row already exists,
+          // and its stored attachment list may not include this upload.
+          meta: { changes: /INSERT OR IGNORE INTO emails/.test(statement.sql) ? 0 : 1 },
+        }));
+      },
+    },
+  };
+  const result = await insertEmails({ env: fakeEnv }, [{
+    id: "mail-1", source: "imap_qq", account_id: "qq",
+    from_addr: "a@b.com", to_addr: "me@qq.com",
+    attachments_json: JSON.stringify([{ id: "att-new", name: "new.txt", size: 1, mimeType: "text/plain" }]),
+  }]);
+  assert.deepEqual(result, { inserted: 0, skipped: 1 });
+  assert.equal(gcDeletes.length, 1);
+  assert.match(gcDeletes[0].sql, /EXISTS\s*\(/);
 });
 
 test("distinct accounts in one batch each get their own lifecycle lookup", async () => {

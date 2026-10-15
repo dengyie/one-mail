@@ -1,3 +1,5 @@
+import { ATTACHMENT_GC_GRACE_MS, ATTACHMENT_GC_LEASE_MS, safeAttachmentKey } from "./attachments.ts";
+
 export function cutoffMs(days: number, nowMs: number): number {
     return nowMs - days * 24 * 60 * 60 * 1000;
 }
@@ -10,6 +12,7 @@ const ATTACHMENT_GC_BATCH_LIMIT = 100;
 
 type AttachmentGcRow = {
     r2_key: string;
+    updated_at: number;
 };
 
 function positiveInteger(value: number, fallback: number): number {
@@ -28,7 +31,7 @@ function attachmentKeys(attachmentsJson: string | null | undefined): string[] {
             .map((attachment) => (attachment && typeof attachment === "object"
                 ? (attachment as { r2_key?: unknown }).r2_key
                 : null))
-            .filter((key): key is string => typeof key === "string" && key.length > 0))];
+            .filter((key): key is string => safeAttachmentKey(key)))];
     } catch (error) {
         console.error("invalid attachment metadata; skipping R2 GC enqueue", error);
         return [];
@@ -54,7 +57,11 @@ async function findReferencedAttachmentKeys(
         const placeholders = chunk.map(() => "?").join(", ");
         const { results } = await env.DB.prepare(
             `SELECT DISTINCT json_extract(json_each.value, '$.r2_key') AS r2_key
-             FROM emails, json_each(COALESCE(emails.attachments_json, '[]'))
+             FROM emails, json_each(
+                CASE WHEN json_valid(emails.attachments_json)
+                          AND json_type(emails.attachments_json) = 'array'
+                     THEN emails.attachments_json ELSE '[]' END
+             )
              WHERE json_extract(json_each.value, '$.r2_key') IN (${placeholders})`,
         ).bind(...chunk).all<{ r2_key: string }>();
         for (const row of results ?? []) {
@@ -74,10 +81,11 @@ async function drainAttachmentGc(env: Bindings): Promise<void> {
     if (!bucket) return;
 
     const { results } = await env.DB.prepare(
-        `SELECT r2_key FROM attachment_gc
+        `SELECT r2_key, updated_at FROM attachment_gc
+         WHERE updated_at <= ?
          ORDER BY created_at ASC
          LIMIT ?`,
-    ).bind(ATTACHMENT_GC_BATCH_LIMIT).all<AttachmentGcRow>();
+    ).bind(Date.now() - ATTACHMENT_GC_GRACE_MS, ATTACHMENT_GC_BATCH_LIMIT).all<AttachmentGcRow>();
     const rows = results ?? [];
     if (rows.length === 0) return;
 
@@ -89,22 +97,36 @@ async function drainAttachmentGc(env: Bindings): Promise<void> {
     for (const row of rows) {
         const key = row?.r2_key;
         if (typeof key !== "string" || key.length === 0) continue;
+        const observedUpdatedAt = Number.isSafeInteger(row.updated_at)
+            ? row.updated_at
+            : Date.now() - ATTACHMENT_GC_GRACE_MS;
         if (referenced.has(key)) {
-            await env.DB.prepare(`DELETE FROM attachment_gc WHERE r2_key = ?`).bind(key).run();
+            await env.DB.prepare(
+                `DELETE FROM attachment_gc WHERE r2_key = ? AND updated_at = ?`,
+            ).bind(key, observedUpdatedAt).run();
             continue;
         }
+        const leaseAt = Date.now();
+        const lease = await env.DB.prepare(
+            `UPDATE attachment_gc SET last_error = 'gc_in_progress', updated_at = ?
+             WHERE r2_key = ? AND updated_at = ?`,
+        ).bind(leaseAt, key, observedUpdatedAt).run();
+        if (resultChanges(lease as D1Result<unknown>) === 0) continue;
         try {
             await bucket.delete(key);
         } catch (error) {
             await env.DB.prepare(
                 `UPDATE attachment_gc
                     SET attempts = attempts + 1, last_error = ?, updated_at = ?
-                  WHERE r2_key = ?`,
-            ).bind(String(error).slice(0, 500), Date.now(), key).run();
+                  WHERE r2_key = ? AND last_error = 'gc_in_progress' AND updated_at = ?`,
+            ).bind(String(error).slice(0, 500), Date.now(), key, leaseAt).run();
             console.error("r2 attachment cleanup failed; retaining GC row", error);
             continue;
         }
-        await env.DB.prepare(`DELETE FROM attachment_gc WHERE r2_key = ?`).bind(key).run();
+        await env.DB.prepare(
+            `DELETE FROM attachment_gc WHERE r2_key = ?
+             AND last_error = 'gc_in_progress' AND updated_at = ?`,
+        ).bind(key, leaseAt).run();
     }
 }
 
@@ -176,9 +198,16 @@ export async function cleanupReadEmails(
         const statements: D1PreparedStatement[] = [];
         if (keys.length) {
             statements.push(env.DB.prepare(
-                `INSERT OR IGNORE INTO attachment_gc (r2_key, created_at, updated_at)
-                 SELECT value, ?, ? FROM json_each(?)`,
-            ).bind(Date.now(), Date.now(), JSON.stringify(keys)));
+                `INSERT INTO attachment_gc (r2_key, created_at, updated_at)
+                 SELECT value, ?, ? FROM json_each(?)
+                 WHERE true
+                 ON CONFLICT(r2_key) DO UPDATE SET
+                   updated_at = excluded.updated_at,
+                   attempts = 0,
+                   last_error = NULL
+                 WHERE attachment_gc.last_error IS NOT 'gc_in_progress'
+                    OR attachment_gc.updated_at <= ?`,
+            ).bind(Date.now(), Date.now(), JSON.stringify(keys), Date.now() - ATTACHMENT_GC_LEASE_MS));
         }
         statements.push(env.DB.prepare(
             `DELETE FROM emails

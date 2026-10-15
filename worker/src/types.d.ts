@@ -25,6 +25,7 @@ type Bindings = {
     SEND_MAIL: SendEmail
     ASSETS: Fetcher
     AI: Ai
+    ATTACHMENTS?: R2Bucket
 
     // config
     DEFAULT_LANG: string | undefined

@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS raw_mails (
     raw TEXT,
     raw_blob BLOB,
     metadata TEXT,
+    unified_id TEXT,
+    mirror_pending INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -27,6 +29,19 @@ CREATE INDEX IF NOT EXISTS idx_raw_mails_address ON raw_mails(address);
 CREATE INDEX IF NOT EXISTS idx_raw_mails_created_at ON raw_mails(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id);
+
+CREATE TABLE IF NOT EXISTS unified_mirror_jobs (
+    unified_id TEXT PRIMARY KEY,
+    raw_mail_id INTEGER NOT NULL,
+    next_attempt_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_unified_mirror_jobs_due
+    ON unified_mirror_jobs(next_attempt_at, created_at);
 
 CREATE TABLE IF NOT EXISTS address (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,10 +337,17 @@ async function ensureLegacyColumns(db: D1Database): Promise<void> {
     // Version settings can be absent after an interrupted/old deployment. Use
     // the actual table shape rather than assuming the version is authoritative.
     await ensureTableColumns(db, 'address', [['password', 'TEXT'], ['source_meta', 'TEXT']]);
-    await ensureTableColumns(db, 'raw_mails', [['metadata', 'TEXT'], ['raw_blob', 'BLOB']]);
+    await ensureTableColumns(db, 'raw_mails', [['metadata', 'TEXT'], ['raw_blob', 'BLOB'], ['unified_id', 'TEXT']]);
     await db.batch([
         db.prepare(`CREATE INDEX IF NOT EXISTS idx_address_source_meta ON address(source_meta)`),
         db.prepare(`CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id)`),
+    ]);
+    await ensureTableColumns(db, 'raw_mails', [['mirror_pending', 'INTEGER NOT NULL DEFAULT 0']]);
+    await db.batch([
+        db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_mails_unified_id_uq
+            ON raw_mails(unified_id) WHERE unified_id IS NOT NULL`),
+        db.prepare(`CREATE INDEX IF NOT EXISTS idx_raw_mails_mirror_pending
+            ON raw_mails(id) WHERE mirror_pending = 1`),
     ]);
 }
 

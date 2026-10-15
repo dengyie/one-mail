@@ -34,7 +34,7 @@
         </div>
         <div v-if="attachments.length" class="mail-reader-attachments">
           <div class="flex items-center gap-2 text-xs mb-4"><MailIcon name="paperclip" :size="16" />{{ t('detail.attachments') }} · {{ attachments.length }}</div>
-          <div class="flex flex-wrap gap-3"><div v-for="(att, i) in attachments" :key="i" class="mail-attachment"><MailIcon name="paperclip" :size="18" /><div><strong>{{ att.name || att.id || ('attachment-' + (i + 1)) }}</strong><span>{{ att.size ? fmtSize(att.size) + ' · ' : '' }}{{ att.mimeType }}</span><span :title="t('detail.attachmentNoDownload')">{{ t('detail.metadataOnly') }}</span></div></div></div>
+          <div class="flex flex-wrap gap-3"><div v-for="(att, i) in attachments" :key="att.id || i" class="mail-attachment"><MailIcon name="paperclip" :size="18" /><div><strong>{{ att.name || att.id || ('attachment-' + (i + 1)) }}</strong><span>{{ att.size ? fmtSize(att.size) + ' · ' : '' }}{{ att.mimeType }}</span><n-button v-if="att.id && att.downloadable" size="tiny" :loading="downloadingAttachment === att.id" :disabled="Boolean(downloadingAttachment)" @click="downloadAttachment(att)"><template #icon><MailIcon name="download" :size="14" /></template>{{ t('detail.download') }}</n-button><span v-else :title="t('detail.attachmentNoDownload')">{{ t('detail.metadataOnly') }}</span></div></div></div>
         </div>
       </article>
     </template>
@@ -86,6 +86,7 @@ const loading = ref(true)
 const error = ref('')
 const marking = ref(false)
 const starring = ref(false)
+const downloadingAttachment = ref('')
 const authIdentity = computed(() => {
   const jwt = userJwt.value?.trim()
   const admin = adminAuth.value?.trim()
@@ -285,6 +286,7 @@ const normalizeAttachment = (value) => {
     size: Number.isFinite(size) && size >= 0 ? size : 0,
     mimeType,
     id,
+    downloadable: value.downloadable === true,
   }
 }
 
@@ -298,6 +300,35 @@ const attachments = computed(() => {
     return []
   }
 })
+
+const filenameFromDisposition = (value) => {
+  const encoded = String(value || '').match(/filename\*=(?:UTF-8'')?([^;]+)/i)?.[1]
+  if (encoded) {
+    try { return decodeURIComponent(encoded.replace(/^"|"$/g, '')) } catch { /* use metadata name */ }
+  }
+  return String(value || '').match(/filename="([^"]+)"/i)?.[1] || ''
+}
+
+const downloadAttachment = async (attachment) => {
+  if (!email.value || !attachment?.id || downloadingAttachment.value) return
+  downloadingAttachment.value = attachment.id
+  try {
+    const result = await api.unified.downloadAttachment(email.value.id, attachment.id, { signal: detailController?.signal })
+    const url = URL.createObjectURL(result.blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filenameFromDisposition(result.headers?.['content-disposition']) || attachment.name || 'attachment'
+    link.rel = 'noopener'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  } catch (e) {
+    if (e?.name !== 'CanceledError' && e?.name !== 'AbortError') message.error(e.message || t('detail.downloadFailed'))
+  } finally {
+    downloadingAttachment.value = ''
+  }
+}
 
 const markRead = async () => {
   const target = email.value

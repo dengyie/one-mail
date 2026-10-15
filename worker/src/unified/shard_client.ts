@@ -6,6 +6,8 @@ export const SHARD_LIST_MAX_BYTES = 512 * 1024;
 export const SHARD_DETAIL_MAX_BYTES = 8 * 1024 * 1024;
 export const SHARD_RESPONSE_BUDGET_BYTES = 8 * 1024 * 1024;
 export const SHARD_FANOUT_CONCURRENCY = 4;
+export const SHARD_ATTACHMENT_TIMEOUT_MS = 45_000;
+export const SHARD_ATTACHMENT_MAX_BYTES = 32 * 1024 * 1024;
 const LEGACY_BODY_MAX_BYTES = 16 * 1024 * 1024;
 
 export type ShardRequestScope = { account_ids: string[] | null; sources: string[] | null };
@@ -24,6 +26,131 @@ export class ShardTransportError extends Error {
 export type ShardCallResult<T> =
     | { ok: true; shard_id: string; data: T; status?: number }
     | { ok: false; shard_id: string; error: string; cause?: unknown; diagnostics?: ShardTransportError };
+
+export type ShardStreamResult =
+    | { ok: true; shard_id: string; body: ReadableStream<Uint8Array>; headers: Headers; status: number }
+    | { ok: false; shard_id: string; error: string; cause?: unknown };
+
+/**
+ * Authenticated bounded stream proxy for binary shard responses. The gateway
+ * does not retain the attachment in memory; the returned stream pulls from the
+ * shard only as the downstream response consumes it.
+ */
+export const fetchShardStream = async (
+    shard: ShardEndpoint,
+    path: string,
+    init: Pick<ShardFetchOptions, "scope" | "signal" | "timeoutMs" | "maxBodyBytes" | "fetchImpl"> = {},
+): Promise<ShardStreamResult> => {
+    const ac = new AbortController();
+    const timeoutMs = init.timeoutMs ?? SHARD_ATTACHMENT_TIMEOUT_MS;
+    const maxBodyBytes = init.maxBodyBytes ?? SHARD_ATTACHMENT_MAX_BYTES;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > SHARD_ATTACHMENT_TIMEOUT_MS
+        || !Number.isSafeInteger(maxBodyBytes) || maxBodyBytes <= 0 || maxBodyBytes > SHARD_ATTACHMENT_MAX_BYTES) {
+        return { ok: false, shard_id: shard.id, error: "invalid_limits" };
+    }
+    const timer = setTimeout(() => stop(new Error("Shard request timed out")), timeoutMs);
+    let interrupted = false;
+    let handedOff = false;
+    let activeReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let rejectInterruption: ((cause: unknown) => void) | undefined;
+    const interruption = new Promise<never>((_, reject) => { rejectInterruption = reject; });
+    const stop = (cause: unknown): void => {
+        if (interrupted) return;
+        interrupted = true;
+        ac.abort(cause);
+        if (activeReader) void activeReader.cancel(cause).catch(() => undefined);
+        rejectInterruption?.(cause);
+    };
+    const onCallerAbort = (): void => stop(init.signal?.reason ?? new Error("request cancelled"));
+    if (init.signal?.aborted) {
+        clearTimeout(timer);
+        return { ok: false, shard_id: shard.id, error: "cancelled" };
+    }
+    init.signal?.addEventListener("abort", onCallerAbort, { once: true });
+    const headers: Record<string, string> = { authorization: shardAuthorizationHeader(shard.token) };
+    if (init.scope) headers[SHARD_SCOPE_HEADER] = encodeURIComponent(JSON.stringify(init.scope));
+    const fetchPromise = (init.fetchImpl ?? fetch)(
+        `${shard.base_url}${path.startsWith("/") ? path : `/${path}`}`,
+        { method: "GET", headers, signal: ac.signal, redirect: "manual" },
+    );
+    try {
+        const response = await Promise.race([fetchPromise, interruption]);
+        if (interrupted) {
+            if (response.body) await response.body.cancel().catch(() => undefined);
+            return { ok: false, shard_id: shard.id, error: "timeout" };
+        }
+        if (!response.ok) {
+            if (response.body) await response.body.cancel().catch(() => undefined);
+            return { ok: false, shard_id: shard.id, error: `http_${response.status}` };
+        }
+        const declared = Number(response.headers.get("content-length") || "0");
+        if (declared > maxBodyBytes) {
+            if (response.body) await response.body.cancel().catch(() => undefined);
+            return { ok: false, shard_id: shard.id, error: "body_too_large" };
+        }
+        const reader = response.body?.getReader();
+        if (!reader) {
+            clearTimeout(timer);
+            init.signal?.removeEventListener("abort", onCallerAbort);
+            return { ok: true, shard_id: shard.id, body: new ReadableStream(), headers: response.headers, status: response.status };
+        }
+        activeReader = reader;
+        let total = 0;
+        let closed = false;
+        const cleanup = (): void => {
+            if (closed) return;
+            closed = true;
+            clearTimeout(timer);
+            init.signal?.removeEventListener("abort", onCallerAbort);
+        };
+        const body = new ReadableStream<Uint8Array>({
+            async pull(controller) {
+                try {
+                    const part = await reader.read();
+                    if (interrupted) {
+                        cleanup();
+                        controller.error(init.signal?.aborted
+                            ? new Error("Shard attachment download cancelled")
+                            : new Error("Shard attachment download timed out"));
+                        return;
+                    }
+                    if (part.done) {
+                        cleanup();
+                        controller.close();
+                        return;
+                    }
+                    total += part.value.byteLength;
+                    if (total > maxBodyBytes) {
+                        await reader.cancel().catch(() => undefined);
+                        cleanup();
+                        controller.error(new Error("Shard attachment exceeds the response limit"));
+                        return;
+                    }
+                    controller.enqueue(part.value);
+                } catch (cause) {
+                    cleanup();
+                    controller.error(cause);
+                }
+            },
+            async cancel(reason) {
+                stop(reason ?? new Error("downstream cancelled"));
+                await reader.cancel().catch(() => undefined);
+                cleanup();
+            },
+        });
+        handedOff = true;
+        return { ok: true, shard_id: shard.id, body, headers: response.headers, status: response.status };
+    } catch (cause) {
+        const error = init.signal?.aborted ? "cancelled" : (interrupted ? "timeout" : "network");
+        void fetchPromise.then(response => response.body?.cancel().catch(() => undefined)).catch(() => undefined);
+        return { ok: false, shard_id: shard.id, error, cause };
+    } finally {
+        if (!handedOff) {
+            clearTimeout(timer);
+            init.signal?.removeEventListener("abort", onCallerAbort);
+        }
+    }
+};
 
 /** Request-local cumulative decoded response bytes, not JavaScript heap size.
  * Completed JSON results remain charged until the interaction ends. */

@@ -5,6 +5,18 @@
 >
 > **Database migration release order (external-mail POP3):** Deploy the Worker containing the schema migration first, run `POST /admin/db_migration`, and verify success plus `need_migration: false` from `GET /admin/db_version`. Only then release/enable code that reads or writes POP3 columns. Do not send traffic to the new code before migration completes. The migration endpoint is retry-safe; concurrent requests tolerate a column already added by another request.
 
+## Unified inbox attachments
+
+Attachment downloads require a private R2 binding on the Worker that owns the corresponding D1 database:
+
+```toml
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "one-mail-attachments"
+```
+
+The per-file limit is 30 MiB. Before deployment, `BACKEND_TOML` must retain every existing D1/KV/DO/send_email binding and include `ATTACHMENTS`; the deployment workflow blocks before remote D1 migrations when that binding is missing.
+
 ## Required Variables
 
 | Variable Name              | Type        | Description                                                            | Example                              |

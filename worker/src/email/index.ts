@@ -13,6 +13,7 @@ import { EmailRuleSettings } from "../models";
 import { CONSTANTS } from "../constants";
 import { compressText } from "../gzip";
 import { saveUnifiedEmail } from "../unified/unified_store";
+import { enqueueUnifiedMirror, markUnifiedMirrorComplete } from "../unified/mirror_jobs.ts";
 
 
 async function email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
@@ -72,8 +73,15 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
     const message_id = message.headers.get("Message-ID");
     // save email
     let savedToInbox = false;
+    let rawMailId: number | null = null;
+    const unifiedId = `native-${crypto.randomUUID()}`;
     try {
         let success = false;
+        const captureRawResult = (result: D1Result<unknown>): void => {
+            success = result.success;
+            const lastRowId = (result.meta as { last_row_id?: unknown } | undefined)?.last_row_id;
+            rawMailId = Number.isSafeInteger(lastRowId) ? Number(lastRowId) : null;
+        };
         if (getBooleanValue(env.ENABLE_MAIL_GZIP)) {
             let compressed: ArrayBuffer | null = null;
             try {
@@ -83,37 +91,37 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
             }
             if (compressed) {
                 try {
-                    ({ success } = await env.DB.prepare(
-                        `INSERT INTO raw_mails (source, address, raw_blob, message_id) VALUES (?, ?, ?, ?)`
+                    captureRawResult(await env.DB.prepare(
+                        `INSERT INTO raw_mails (source, address, raw_blob, message_id, unified_id, mirror_pending) VALUES (?, ?, ?, ?, ?, 1)`
                     ).bind(
-                        message.from, toAddress, compressed, message_id
+                        message.from, toAddress, compressed, message_id, unifiedId
                     ).run());
                 } catch (dbError) {
                     // Fallback to plaintext only if raw_blob column is missing (migration not applied)
                     const errMsg = String(dbError);
                     if (errMsg.includes('raw_blob') || errMsg.includes('no such column')) {
                         console.error("raw_blob column missing, falling back to plaintext", dbError);
-                        ({ success } = await env.DB.prepare(
-                            `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
+                        captureRawResult(await env.DB.prepare(
+                            `INSERT INTO raw_mails (source, address, raw, message_id, unified_id, mirror_pending) VALUES (?, ?, ?, ?, ?, 1)`
                         ).bind(
-                            message.from, toAddress, parsedEmailContext.rawEmail, message_id
+                            message.from, toAddress, parsedEmailContext.rawEmail, message_id, unifiedId
                         ).run());
                     } else {
                         throw dbError;
                     }
                 }
             } else {
-                ({ success } = await env.DB.prepare(
-                    `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
+                captureRawResult(await env.DB.prepare(
+                    `INSERT INTO raw_mails (source, address, raw, message_id, unified_id, mirror_pending) VALUES (?, ?, ?, ?, ?, 1)`
                 ).bind(
-                    message.from, toAddress, parsedEmailContext.rawEmail, message_id
+                    message.from, toAddress, parsedEmailContext.rawEmail, message_id, unifiedId
                 ).run());
             }
         } else {
-            ({ success } = await env.DB.prepare(
-                `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
+            captureRawResult(await env.DB.prepare(
+                `INSERT INTO raw_mails (source, address, raw, message_id, unified_id, mirror_pending) VALUES (?, ?, ?, ?, ?, 1)`
             ).bind(
-                message.from, toAddress, parsedEmailContext.rawEmail, message_id
+                message.from, toAddress, parsedEmailContext.rawEmail, message_id, unifiedId
             ).run());
         }
         if (!success) {
@@ -132,9 +140,20 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
 
     // one-mail: mirror into unified emails table (never block base ingest)
     try {
-        await saveUnifiedEmail({ env } as Context<HonoCustomType>, parsedEmailContext.rawEmail, message.from, toAddress);
+        await saveUnifiedEmail(
+            { env } as Context<HonoCustomType>, parsedEmailContext.rawEmail, message.from, toAddress,
+            unifiedId,
+        );
+        await markUnifiedMirrorComplete(env, unifiedId);
     } catch (error) {
         console.warn("save unified email error", error);
+        if (rawMailId != null) {
+            try {
+                await enqueueUnifiedMirror(env, rawMailId, unifiedId, error);
+            } catch (queueError) {
+                console.error("enqueue unified email mirror retry failed", queueError);
+            }
+        }
     }
 
     // forward email

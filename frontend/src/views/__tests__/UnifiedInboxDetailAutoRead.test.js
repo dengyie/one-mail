@@ -1,9 +1,22 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ctx, email, flush, mount } from './unified-workspace-harness.js'
 import UnifiedInboxDetail from '../UnifiedInboxDetail.vue'
 
 describe('reading a mail marks it read', () => {
+  it('downloads stored attachments through the unified API', async () => {
+    ctx.api.unified.getEmail.mockResolvedValue({ ...email('mail-a'), is_read: 1, attachments_json: JSON.stringify([{ id: 'att-1', name: 'x.txt', size: 2, mimeType: 'text/plain', downloadable: true }]) })
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test')
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const { host } = await mount(UnifiedInboxDetail)
+    const download = [...host.querySelectorAll('button')].find(node => node.textContent.includes('Download'))
+    download.click()
+    await flush()
+    expect(ctx.api.unified.downloadAttachment).toHaveBeenCalledWith('mail-a', 'att-1', expect.anything())
+    expect(createUrl).toHaveBeenCalled()
+    revokeUrl.mockRestore(); createUrl.mockRestore()
+  })
+
   it('marks an unread mail read as soon as the detail view opens it', async () => {
     const unread = email('mail-a')
     ctx.api.unified.getEmail.mockResolvedValue(unread)

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers";
-import { fanOutShards, fetchShardJson, readBearerToken, shardAuthorizationHeader } from "./shard_client.ts";
+import { fanOutShards, fetchShardJson, fetchShardStream, readBearerToken, shardAuthorizationHeader } from "./shard_client.ts";
 import * as client from "./shard_client.ts";
 
 const shard = {
@@ -116,6 +116,74 @@ test("deadline bounds a fetch implementation that ignores abort", async () => {
         timeoutMs: 10, fetchImpl: () => new Promise(() => {}),
     });
     assert.equal(result.error, "timeout");
+});
+
+test("fetchShardStream enforces the limit while streaming and cancels excess bytes", async () => {
+    let cancelled = false;
+    const result = await fetchShardStream(shard, "/shard/file", {
+        maxBodyBytes: 3,
+        fetchImpl: async () => new Response(new ReadableStream({
+            start(controller) { controller.enqueue(new Uint8Array([1, 2])); controller.enqueue(new Uint8Array([3, 4])); },
+            cancel() { cancelled = true; },
+        })),
+    });
+    assert.equal(result.ok, true);
+    const reader = result.body.getReader();
+    assert.deepEqual((await reader.read()).value, new Uint8Array([1, 2]));
+    await assert.rejects(reader.read(), /exceeds the response limit/);
+    assert.equal(cancelled, true);
+});
+
+test("fetchShardStream allows bounded attachment downloads beyond the short JSON timeout", async () => {
+    const start = Date.now();
+    const result = await fetchShardStream(shard, "/shard/file", {
+        fetchImpl: async () => {
+            await new Promise(resolve => setTimeout(resolve, 25));
+            return new Response(new Uint8Array([1, 2, 3]));
+        },
+    });
+    assert.equal(result.ok, true);
+    assert.ok(Date.now() - start >= 20);
+    assert.deepEqual(await new Response(result.body).bytes(), new Uint8Array([1, 2, 3]));
+});
+
+test("already cancelled attachment streams do not leave a timeout timer behind", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("cancelled before dispatch"));
+  const result = await fetchShardStream(shard, "/attachment", { signal: controller.signal });
+  assert.deepEqual(result, { ok: false, shard_id: "shard1", error: "cancelled" });
+});
+test("fetchShardStream relays chunks without buffering the whole attachment", async () => {
+    let cancelled = false;
+    const result = await fetchShardStream(shard, "/shard/file", {
+        fetchImpl: async () => new Response(new ReadableStream({
+            start(controller) { controller.enqueue(new Uint8Array([1, 2])); controller.enqueue(new Uint8Array([3, 4])); controller.close(); },
+            cancel() { cancelled = true; },
+        }), { headers: { "content-length": "4" } }),
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.body instanceof ReadableStream);
+    const reader = result.body.getReader();
+    assert.deepEqual((await reader.read()).value, new Uint8Array([1, 2]));
+    assert.deepEqual((await reader.read()).value, new Uint8Array([3, 4]));
+    assert.equal((await reader.read()).done, true);
+    assert.equal(cancelled, false);
+});
+test("fetchShardStream aborts a stalled body at its deadline", async () => {
+    let cancelled = false;
+    const result = await fetchShardStream(shard, "/shard/file", {
+        timeoutMs: 10,
+        fetchImpl: async () => new Response(new ReadableStream({
+            start(controller) { controller.enqueue(new Uint8Array([1])); },
+            cancel() { cancelled = true; },
+        })),
+    });
+    assert.equal(result.ok, true);
+    const reader = result.body.getReader();
+    assert.deepEqual((await reader.read()).value, new Uint8Array([1]));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await assert.rejects(reader.read(), /timed out/);
+    assert.equal(cancelled, true);
 });
 test("scope is encoded, redirects forbidden, and network cause retained", async () => {
     const scope = { account_ids: ["邮箱"], sources: ["imap_qq"] };

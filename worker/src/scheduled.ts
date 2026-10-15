@@ -8,6 +8,7 @@ import { cleanupReadEmails, purgeOldEmailBodies } from './unified/retention';
 import { pruneTerminalJobs } from './unified/job_pruning';
 import { reconcileSendMailLimitReservations, countUnknownSendMailReservations } from './mails_api/send_mail_limit_utils';
 import { isShardMode, resolveShardId } from './core/d1_quota.ts';
+import { processUnifiedMirrorJobs, reconcileUnifiedMirrorJobs } from './unified/mirror_jobs.ts';
 
 const RETENTION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const RETENTION_KEY = "one-mail:retention:last-success";
@@ -61,6 +62,20 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
     console.log("Scheduled event: ", event);
     const names = retentionNames(env);
     const shardMode = isShardMode(env);
+    // Unified mirror recovery is independent of the retention lock and KV
+    // marker. Keep it outside that gate so a retention contention or missing
+    // KV binding cannot leave native messages permanently out of the inbox.
+    if (!shardMode) {
+        try {
+            const recovered = await reconcileUnifiedMirrorJobs(env);
+            const mirrors = await processUnifiedMirrorJobs(env);
+            if (recovered || mirrors.succeeded || mirrors.retried || mirrors.dropped) {
+                console.log("one-mail unified mirror retries:", JSON.stringify({ recovered, ...mirrors }));
+            }
+        } catch (error) {
+            console.error("one-mail unified mirror retry failed", error);
+        }
+    }
     const owner = await acquireRetentionLock(env, names.lock);
     if (!owner) {
         console.log("one-mail retention skipped (lock held or migration pending)");

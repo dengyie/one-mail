@@ -5,6 +5,7 @@ import { fetchShardJson } from "./shard_client.ts";
 import { isShardMode } from "../core/d1_quota.ts";
 import { IngestValidationError, insertArchive } from "./archival_ingest.ts";
 import { lifecycleState } from "./account_lifecycle_schema.ts";
+import { materializeAttachmentKeys, parseAttachments, releaseAttachmentGc } from "./attachments.ts";
 
 const jsonText = (value: unknown, fallback: unknown): string =>
     typeof value === "string" ? value : JSON.stringify(value ?? fallback);
@@ -335,9 +336,27 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
         else skipped++;
     }
     emails = activeEmails;
-    if (emails.length === 0) return { inserted, skipped };
+    if (emails.length === 0) {
+        // Do not release provisional GC records when lifecycle protection skips
+        // the batch: no email row references these objects. Retention must keep
+        // the records long enough to reclaim the orphaned uploads.
+        return { inserted, skipped };
+    }
 
     const nowMs = Date.now();
+    emails = await Promise.all(emails.map(async (email) => {
+        const id = nullableText(email.id) ?? crypto.randomUUID();
+        if (email.attachments_json == null) return { ...email, id };
+        return {
+            ...email,
+            id,
+            attachments_json: await materializeAttachmentKeys(
+                email.attachments_json,
+                String(email.account_id),
+                id,
+            ),
+        };
+    }));
     const emailStatements = emails.map((e) => {
         const params = toEmailInsertParams(e, nullableText(e.id) ?? crypto.randomUUID(), nowMs);
         return c.env.DB.prepare(INSERT_EMAIL_SQL).bind(...(params as never[]));
@@ -371,6 +390,19 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
 
     for (let start = 0; start < stateStatements.length; start += 100) {
         await c.env.DB.batch(stateStatements.slice(start, start + 100));
+    }
+
+    // The release query checks durable references atomically. A stable-ID insert
+    // may have been ignored because a row already exists with older metadata;
+    // its newly uploaded objects must remain queued for orphan cleanup.
+    const rowsWithAttachments = emails.filter(email =>
+        parseAttachments(email.attachments_json).some(attachment => !!attachment.r2_key));
+    if (rowsWithAttachments.length) {
+        const uploadedKeys = rowsWithAttachments.flatMap(email =>
+            parseAttachments(email.attachments_json).flatMap(attachment =>
+                attachment.r2_key ? [attachment.r2_key] : []));
+        await releaseAttachmentGc(c.env, uploadedKeys,
+            rowsWithAttachments.map(email => nullableText(email.id)).filter((id): id is string => !!id));
     }
 
     return { inserted, skipped };
@@ -429,6 +461,13 @@ export const ingestHandler = async (c: Context<HonoCustomType>) => {
         if (!row || typeof row !== "object" || Array.isArray(row)) return c.json({ error: "invalid email row" }, 400);
         try {
             toEmailInsertParams(row, "validation", 0);
+            if (row.attachments_json != null) {
+                await materializeAttachmentKeys(
+                    row.attachments_json,
+                    String(row.account_id),
+                    nullableText(row.id) ?? "validation",
+                );
+            }
         } catch (error) {
             return c.json({ error: error instanceof Error ? error.message : "invalid email row" }, 400);
         }
