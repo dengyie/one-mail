@@ -34,9 +34,9 @@ database_name = "one_mail_db"
 database_id = "<REDACTED>"
 
 # Private R2 bucket used by unified inbox attachment upload/download.
-# [[r2_buckets]]
-# binding = "ATTACHMENTS"
-# bucket_name = "one-mail-attachments"
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "one-mail-attachments"
 
 [triggers]
 crons = [ "*/10 * * * *" ]

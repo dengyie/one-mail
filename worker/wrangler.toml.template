@@ -205,9 +205,9 @@ ENABLE_AUTO_REPLY = false
 # ENABLE_MAIL_GZIP = true
 
 # Private R2 bucket used by unified inbox attachment upload/download.
-# [[r2_buckets]]
-# binding = "ATTACHMENTS"
-# bucket_name = "one-mail-attachments"
+[[r2_buckets]]
+binding = "ATTACHMENTS"
+bucket_name = "one-mail-attachments"
 # AI email extraction, automatically extract verification codes, auth links, etc.
 # ENABLE_AI_EMAIL_EXTRACT = true
 # AI model name, choose from https://developers.cloudflare.com/workers-ai/features/json-mode/#supported-models

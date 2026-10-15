@@ -129,6 +129,64 @@ jobs:
           print("Production Worker config passed required binding checks")
           PY
 
+      - name: Ensure production R2 attachment bucket
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare credentials::R2 provisioning requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+
+          bucket_name=$(python3 - <<'PY'
+          import re
+          import tomllib
+
+          with open("worker/wrangler.toml", "rb") as config_file:
+              config = tomllib.load(config_file)
+          buckets = [item for item in config.get("r2_buckets", [])
+                     if item.get("binding") == "ATTACHMENTS"]
+          if len(buckets) != 1 or not isinstance(buckets[0].get("bucket_name"), str):
+              raise SystemExit("ATTACHMENTS must define exactly one bucket_name")
+          name = buckets[0]["bucket_name"]
+          if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}[a-z0-9]", name):
+              raise SystemExit("ATTACHMENTS bucket_name has an invalid R2 name")
+          print(name)
+          PY
+          )
+          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2/buckets"
+          buckets_json=$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "$api")
+          if ! printf '%s' "$buckets_json" | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("success") is True else 1)'; then
+            echo "::error title=R2 bucket listing failed::Cloudflare did not accept the R2 bucket listing request."
+            exit 1
+          fi
+          if printf '%s' "$buckets_json" | python3 -c 'import json, sys; name=sys.argv[1]; payload=json.load(sys.stdin); raise SystemExit(0 if any(item.get("name") == name for item in payload.get("result", [])) else 1)' "$bucket_name"; then
+            echo "R2 attachment bucket is current: ${bucket_name}"
+            exit 0
+          fi
+
+          create_payload=$(python3 - "$bucket_name" <<'PY'
+          import json
+          import sys
+          print(json.dumps({"name": sys.argv[1]}))
+          PY
+          )
+          create_json=$(curl --fail-with-body --silent --show-error --request POST \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$create_payload" "$api")
+          if ! printf '%s' "$create_json" | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("success") is True else 1)'; then
+            echo "::error title=R2 bucket creation failed::Cloudflare could not create the configured attachment bucket."
+            exit 1
+          fi
+          echo "Created R2 attachment bucket: ${bucket_name}"
+
       - name: Ensure remote D1 provider identity schema
         shell: bash
         env:
