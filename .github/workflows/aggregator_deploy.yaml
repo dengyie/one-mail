@@ -91,26 +91,40 @@ jobs:
           SCP_OPTS=(-O -P "$PORT" -o StrictHostKeyChecking=yes)
           SSH_OPTS=(-p "$PORT" -o StrictHostKeyChecking=yes)
 
+          REMOTE_STAGE=$(ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
+          # The stage path is intentionally expanded by the runner into each
+          # scp destination; the remote shell receives it as a literal path.
+          # shellcheck disable=SC2029
           scp "${SCP_OPTS[@]}" /tmp/one-mail-aggregator.tgz \
-            "$USER@$PXED_SSH_HOST:/tmp/one-mail-aggregator.tgz"
+            "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/aggregator.tgz"
+          # shellcheck disable=SC2029
           scp "${SCP_OPTS[@]}" deploy/nginx/one-mail-frontend.conf \
-            "$USER@$PXED_SSH_HOST:/tmp/one-mail-frontend.conf"
+            "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/one-mail-frontend.conf"
+          # shellcheck disable=SC2029
+          scp "${SCP_OPTS[@]}" deploy/pxed-local-config.sh \
+            "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/pxed-local-config.sh"
+          # shellcheck disable=SC2029
           printf '%s' "$ATTACHMENT_STORAGE_TOKEN" | \
             ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" \
-            'umask 077; cat > /tmp/one-mail-attachment-storage.token; chmod 0600 /tmp/one-mail-attachment-storage.token'
+            "umask 077; cat > '$REMOTE_STAGE/attachment-storage.token'; chmod 0600 '$REMOTE_STAGE/attachment-storage.token'"
 
-          ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" 'bash -s' <<'REMOTE'
+          # shellcheck disable=SC2029
+          ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
           set -euo pipefail
-          trap 'rm -f /tmp/one-mail-attachment-storage.token' EXIT
+          trap 'rm -rf "$REMOTE_STAGE"' EXIT
+          source "$REMOTE_STAGE/pxed-local-config.sh"
           BASE=/opt/one-mail-agg
           AGG="$BASE/aggregator"
+          HELPER="$BASE/.pxed-local-config.sh"
           STAGE="$BASE/.aggregator-stage.$$"
           BACKUP="$BASE/.aggregator-backup-current"
           SUPERVISOR=/personal/pxed/supervisord.conf
           SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
-          NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
+          SUPERVISOR_AGG_CONF_LOCAL="$BASE/supervisor-one-mail-agg.conf"
           NGINX_MAIN=/personal/pxed/nginx/nginx.conf
           NGINX_PREFIX=/personal/pxed/nginx/
+          NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
+          NGINX_CONF_LOCAL=/opt/one-mail-frontend/one-mail-frontend.conf
           exec 9>/tmp/one-mail-nginx-deploy.lock
           flock 9
 
@@ -119,6 +133,15 @@ jobs:
             source=$2
             if [ -e "$source" ] || [ -L "$source" ]; then
               mv "$source" "$BACKUP/runtime/$name"
+              : > "$BACKUP/runtime/$name.present"
+            fi
+          }
+
+          save_runtime_copy() {
+            name=$1
+            source=$2
+            if [ -e "$source" ] || [ -L "$source" ]; then
+              cp -L -p "$source" "$BACKUP/runtime/$name"
               : > "$BACKUP/runtime/$name.present"
             fi
           }
@@ -133,19 +156,28 @@ jobs:
             fi
           }
 
-          restore_supervisor_config() {
-            if [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.present" ]; then
-              truncate -s "$(cat "$BACKUP/runtime/supervisor-one-mail-agg.conf.size")" "$SUPERVISOR_AGG_CONF"
+          restore_managed_config() {
+            name=$1
+            target=$2
+            if [ -f "$BACKUP/runtime/$name.present" ]; then
+              pxed_restore_local_config "$BACKUP/runtime/$name" "$target" 0644
             else
-              rm -f "$SUPERVISOR_AGG_CONF"
+              pxed_atomic_install_local_config /dev/null "$target" 0644
             fi
+          }
+
+          restore_supervisor_config() {
+            restore_managed_config supervisor-one-mail-agg.conf "$SUPERVISOR_AGG_CONF_LOCAL"
+          }
+
+          restore_nginx_config() {
+            restore_managed_config nginx-frontend.conf "$NGINX_CONF_LOCAL"
           }
 
           restore_previous() {
             status=$?
             set +e
             rollback_failed=0
-            rm -f /tmp/one-mail-attachment-storage.token
             if [ "$status" -eq 0 ]; then
               rm -rf "$STAGE"
               return
@@ -168,8 +200,8 @@ jobs:
                 restore_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh" || rollback_failed=1
                 restore_runtime_file attachment-storage.token "$BASE/attachment-storage.token" || rollback_failed=1
                 restore_supervisor_config || rollback_failed=1
-                if [ -f "$BACKUP/runtime/nginx-reload-attempted" ]; then
-                  restore_runtime_file nginx-frontend.conf "$NGINX_CONF" || rollback_failed=1
+                if [ -f "$BACKUP/runtime/nginx-config-update-started" ]; then
+                  restore_nginx_config || rollback_failed=1
                   nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX" || rollback_failed=1
                   nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX" || rollback_failed=1
                 fi
@@ -204,6 +236,7 @@ jobs:
             echo "An unfinished deployment backup exists; refusing to overwrite it" >&2
             exit 1
           fi
+          install -m 0700 "$REMOTE_STAGE/pxed-local-config.sh" "$HELPER"
           rm -rf "$STAGE"
           mkdir -p "$STAGE" "$BACKUP"
           chmod 0700 "$BACKUP"
@@ -217,13 +250,10 @@ jobs:
           save_runtime_file agg-loop.sh "$BASE/agg-loop.sh"
           save_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh"
           save_runtime_file attachment-storage.token "$BASE/attachment-storage.token"
-          if [ -e "$SUPERVISOR_AGG_CONF" ]; then
-            stat -c '%s' "$SUPERVISOR_AGG_CONF" > "$BACKUP/runtime/supervisor-one-mail-agg.conf.size"
-            : > "$BACKUP/runtime/supervisor-one-mail-agg.conf.present"
-          fi
-          save_runtime_file nginx-frontend.conf "$NGINX_CONF"
+          save_runtime_copy supervisor-one-mail-agg.conf "$SUPERVISOR_AGG_CONF"
+          save_runtime_copy nginx-frontend.conf "$NGINX_CONF"
           : > "$BACKUP/runtime/snapshot-complete"
-          tar xzf /tmp/one-mail-aggregator.tgz -C "$STAGE"
+          tar xzf "$REMOTE_STAGE/aggregator.tgz" -C "$STAGE"
           test -f "$STAGE/pyproject.toml"
           test -d "$STAGE/src/one_mail_agg"
           test -f "$STAGE/deploy/attachment-storage.sh"
@@ -251,18 +281,23 @@ jobs:
           "$AGG/.venv/bin/python" -c \
             'import one_mail_agg.mutation_jobs, one_mail_agg.mutation_main; print("mutation worker import OK")'
 
-          install -m 0600 /tmp/one-mail-attachment-storage.token "$BASE/attachment-storage.token"
+          install -m 0600 "$REMOTE_STAGE/attachment-storage.token" "$BASE/attachment-storage.token"
           install -m 0755 "$AGG/deploy/attachment-storage.sh" "$BASE/attachment-storage.sh"
-          if ! grep -q '^\[program:one-mail-attachment-storage\]$' "$SUPERVISOR_AGG_CONF" 2>/dev/null; then
-            if [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.present" ]; then
-              printf '\n' >> "$SUPERVISOR_AGG_CONF"
-            fi
-            cat "$AGG/deploy/one-mail-attachment-storage.supervisor.conf" >> "$SUPERVISOR_AGG_CONF"
+          pxed_ensure_local_config_link "$SUPERVISOR_AGG_CONF" "$SUPERVISOR_AGG_CONF_LOCAL" 0644
+          if ! grep -q '^\[program:one-mail-attachment-storage\]$' "$SUPERVISOR_AGG_CONF_LOCAL" 2>/dev/null; then
+            SUPERVISOR_STAGE="$SUPERVISOR_AGG_CONF_LOCAL.deploy.$$"
+            cp "$SUPERVISOR_AGG_CONF_LOCAL" "$SUPERVISOR_STAGE"
+            printf '\n' >> "$SUPERVISOR_STAGE"
+            cat "$AGG/deploy/one-mail-attachment-storage.supervisor.conf" >> "$SUPERVISOR_STAGE"
+            chmod 0644 "$SUPERVISOR_STAGE"
+            mv -f "$SUPERVISOR_STAGE" "$SUPERVISOR_AGG_CONF_LOCAL"
           fi
-          chmod 0644 "$SUPERVISOR_AGG_CONF"
+          chmod 0644 "$SUPERVISOR_AGG_CONF_LOCAL"
           install -d -m 0700 /opt/one-mail-attachments
-          test -f /tmp/one-mail-frontend.conf
-          install -m 0644 /tmp/one-mail-frontend.conf "$NGINX_CONF"
+          test -f "$REMOTE_STAGE/one-mail-frontend.conf"
+          pxed_ensure_local_config_link "$NGINX_CONF" "$NGINX_CONF_LOCAL" 0644
+          : > "$BACKUP/runtime/nginx-config-update-started"
+          pxed_atomic_install_local_config "$REMOTE_STAGE/one-mail-frontend.conf" "$NGINX_CONF_LOCAL" 0644
           nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
           : > "$BACKUP/runtime/nginx-reload-attempted"
           nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
@@ -275,9 +310,7 @@ jobs:
             *) echo "attachment storage failed to reach RUNNING" >&2; exit 1 ;;
           esac
 
-          rm -f /tmp/one-mail-aggregator.tgz
-          rm -f /tmp/one-mail-frontend.conf
-          rm -f /tmp/one-mail-attachment-storage.token
+          rm -rf "$REMOTE_STAGE"
           trap - EXIT
           rm -rf "$STAGE"
           REMOTE
@@ -404,12 +437,18 @@ jobs:
           BASE=/opt/one-mail-agg
           AGG="$BASE/aggregator"
           BACKUP="$BASE/.aggregator-backup-current"
+          HELPER="$BASE/.pxed-local-config.sh"
           SUPERVISOR=/personal/pxed/supervisord.conf
           SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
+          SUPERVISOR_AGG_CONF_LOCAL="$BASE/supervisor-one-mail-agg.conf"
+          NGINX_MAIN=/personal/pxed/nginx/nginx.conf
+          NGINX_PREFIX=/personal/pxed/nginx/
           if [ ! -d "$BACKUP" ]; then
             echo "No staged deployment backup; the install step already restored its source"
+            rm -f "$HELPER"
             exit 0
           fi
+          source "$HELPER"
           for path in src tests deploy pyproject.toml README.md; do
             marker_path=${path//\//_}
             if [ -f "$BACKUP/runtime/managed-$marker_path.touched" ]; then
@@ -436,20 +475,21 @@ jobs:
                 fi
               fi
             done
-            if [ ! -f "$BACKUP/runtime/backend-ready" ] && [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.size" ]; then
-              truncate -s "$(cat "$BACKUP/runtime/supervisor-one-mail-agg.conf.size")" /personal/pxed/supervisor-one-mail-agg.conf
-            fi
-            if [ ! -f "$BACKUP/runtime/backend-ready" ] && [ -f "$BACKUP/runtime/nginx-reload-attempted" ]; then
-              NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
-              NGINX_MAIN=/personal/pxed/nginx/nginx.conf
-              NGINX_PREFIX=/personal/pxed/nginx/
-              if [ -f "$BACKUP/runtime/nginx-frontend.conf.present" ]; then
-                mv "$BACKUP/runtime/nginx-frontend.conf" "$NGINX_CONF"
+            if [ ! -f "$BACKUP/runtime/backend-ready" ]; then
+              if [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.present" ]; then
+                pxed_restore_local_config "$BACKUP/runtime/supervisor-one-mail-agg.conf" "$SUPERVISOR_AGG_CONF_LOCAL" 0644
               else
-                rm -f "$NGINX_CONF"
+                pxed_atomic_install_local_config /dev/null "$SUPERVISOR_AGG_CONF_LOCAL" 0644
               fi
-              nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
-              nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
+              if [ -f "$BACKUP/runtime/nginx-config-update-started" ]; then
+                if [ -f "$BACKUP/runtime/nginx-frontend.conf.present" ]; then
+                  pxed_restore_local_config "$BACKUP/runtime/nginx-frontend.conf" /opt/one-mail-frontend/one-mail-frontend.conf 0644
+                else
+                  pxed_atomic_install_local_config /dev/null /opt/one-mail-frontend/one-mail-frontend.conf 0644
+                fi
+                nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
+                nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
+              fi
             fi
             supervisorctl -c "$SUPERVISOR" reread
             supervisorctl -c "$SUPERVISOR" update
@@ -462,6 +502,7 @@ jobs:
             fi
           fi
           rm -rf "$BACKUP"
+          rm -f "$HELPER"
           REMOTE
 
       - name: Finalize successful deployment
@@ -477,4 +518,5 @@ jobs:
           USER="${PXED_SSH_USER:-root}"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" 'bash -s' <<'REMOTE'
           rm -rf /opt/one-mail-agg/.aggregator-backup-current
+          rm -f /opt/one-mail-agg/.pxed-local-config.sh
           REMOTE

@@ -20,9 +20,10 @@ pxed 这台 VPS 不以 systemd 为 PID 1、也不开 cron，聚合器由 **super
 附件不使用 Cloudflare R2。部署包还包含一个仅监听 `127.0.0.1:39001` 的本地对象服务：
 
 1. GitHub Secret `ATTACHMENT_STORAGE_TOKEN` 由部署 workflow 写入 `/opt/one-mail-agg/attachment-storage.token`（权限 `0600`）。
-2. `one-mail-attachment-storage.supervisor.conf` 的 program 段由 workflow 合并进已被 `/personal/pxed/supervisord.conf` include 的 `/personal/pxed/supervisor-one-mail-agg.conf`，数据落在 `/opt/one-mail-attachments`。
-3. nginx 的 `/_one_mail_attachment_storage/` 只代理到该本地端口；Worker 使用同一个 Bearer token 访问，浏览器不会接触存储服务。
-4. Worker 配置 `ATTACHMENT_STORAGE_URL=https://inbox.mangoqwq.com/_one_mail_attachment_storage`，单文件上限 30 MiB。
+2. VPS 本地 `/opt/one-mail-agg/supervisor-one-mail-agg.conf` 保存聚合器与附件服务的 Supervisor program 配置；`/personal/pxed/supervisor-one-mail-agg.conf` 是指向它的 include 链接。附件数据落在 VPS 本地 `/opt/one-mail-attachments`。
+3. Nginx 配置内容保存在 VPS 本地 `/opt/one-mail-frontend/one-mail-frontend.conf`；`/personal/pxed/nginx/conf.d/one-mail-frontend.conf` 是 Nginx include 链接。部署更新先在本地盘暂存，再替换配置，避免依赖 `/personal` 的 NFS 用户配额。
+4. nginx 的 `/_one_mail_attachment_storage/` 只代理到该本地端口；Worker 使用同一个 Bearer token 访问，浏览器不会接触存储服务。
+5. Worker 配置 `ATTACHMENT_STORAGE_URL=https://inbox.mangoqwq.com/_one_mail_attachment_storage`，单文件上限 30 MiB。
 
 检查：
 
