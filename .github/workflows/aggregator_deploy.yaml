@@ -107,7 +107,7 @@ jobs:
           STAGE="$BASE/.aggregator-stage.$$"
           BACKUP="$BASE/.aggregator-backup-current"
           SUPERVISOR=/personal/pxed/supervisord.conf
-          STORAGE_CONF=/personal/pxed/one-mail-attachment-storage.supervisor.conf
+          SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
           NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
           NGINX_MAIN=/personal/pxed/nginx/nginx.conf
           NGINX_PREFIX=/personal/pxed/nginx/
@@ -130,6 +130,14 @@ jobs:
               mv "$BACKUP/runtime/$name" "$target"
             else
               rm -f "$target"
+            fi
+          }
+
+          restore_supervisor_config() {
+            if [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.present" ]; then
+              truncate -s "$(cat "$BACKUP/runtime/supervisor-one-mail-agg.conf.size")" "$SUPERVISOR_AGG_CONF"
+            else
+              rm -f "$SUPERVISOR_AGG_CONF"
             fi
           }
 
@@ -159,7 +167,7 @@ jobs:
               if [ ! -f "$BACKUP/runtime/backend-ready" ]; then
                 restore_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh" || rollback_failed=1
                 restore_runtime_file attachment-storage.token "$BASE/attachment-storage.token" || rollback_failed=1
-                restore_runtime_file storage-supervisor.conf "$STORAGE_CONF" || rollback_failed=1
+                restore_supervisor_config || rollback_failed=1
                 if [ -f "$BACKUP/runtime/nginx-reload-attempted" ]; then
                   restore_runtime_file nginx-frontend.conf "$NGINX_CONF" || rollback_failed=1
                   nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX" || rollback_failed=1
@@ -209,7 +217,10 @@ jobs:
           save_runtime_file agg-loop.sh "$BASE/agg-loop.sh"
           save_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh"
           save_runtime_file attachment-storage.token "$BASE/attachment-storage.token"
-          save_runtime_file storage-supervisor.conf "$STORAGE_CONF"
+          if [ -e "$SUPERVISOR_AGG_CONF" ]; then
+            stat -c '%s' "$SUPERVISOR_AGG_CONF" > "$BACKUP/runtime/supervisor-one-mail-agg.conf.size"
+            : > "$BACKUP/runtime/supervisor-one-mail-agg.conf.present"
+          fi
           save_runtime_file nginx-frontend.conf "$NGINX_CONF"
           : > "$BACKUP/runtime/snapshot-complete"
           tar xzf /tmp/one-mail-aggregator.tgz -C "$STAGE"
@@ -242,7 +253,13 @@ jobs:
 
           install -m 0600 /tmp/one-mail-attachment-storage.token "$BASE/attachment-storage.token"
           install -m 0755 "$AGG/deploy/attachment-storage.sh" "$BASE/attachment-storage.sh"
-          install -m 0644 "$AGG/deploy/one-mail-attachment-storage.supervisor.conf" "$STORAGE_CONF"
+          if ! grep -q '^\[program:one-mail-attachment-storage\]$' "$SUPERVISOR_AGG_CONF" 2>/dev/null; then
+            if [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.present" ]; then
+              printf '\n' >> "$SUPERVISOR_AGG_CONF"
+            fi
+            cat "$AGG/deploy/one-mail-attachment-storage.supervisor.conf" >> "$SUPERVISOR_AGG_CONF"
+          fi
+          chmod 0644 "$SUPERVISOR_AGG_CONF"
           install -d -m 0700 /opt/one-mail-attachments
           test -f /tmp/one-mail-frontend.conf
           install -m 0644 /tmp/one-mail-frontend.conf "$NGINX_CONF"
@@ -388,7 +405,7 @@ jobs:
           AGG="$BASE/aggregator"
           BACKUP="$BASE/.aggregator-backup-current"
           SUPERVISOR=/personal/pxed/supervisord.conf
-          STORAGE_CONF=/personal/pxed/one-mail-attachment-storage.supervisor.conf
+          SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
           if [ ! -d "$BACKUP" ]; then
             echo "No staged deployment backup; the install step already restored its source"
             exit 0
@@ -405,12 +422,11 @@ jobs:
             fi
           done
           if [ -f "$BACKUP/runtime/snapshot-complete" ]; then
-            for name in agg-loop.sh attachment-storage.sh attachment-storage.token storage-supervisor.conf; do
+            for name in agg-loop.sh attachment-storage.sh attachment-storage.token; do
               case "$name" in
                 agg-loop.sh) target="$BASE/agg-loop.sh" ;;
                 attachment-storage.sh) target="$BASE/attachment-storage.sh" ;;
                 attachment-storage.token) target="$BASE/attachment-storage.token" ;;
-                storage-supervisor.conf) target=/personal/pxed/one-mail-attachment-storage.supervisor.conf ;;
               esac
               if [ ! -f "$BACKUP/runtime/backend-ready" ] || [ "$name" = "agg-loop.sh" ]; then
                 if [ -f "$BACKUP/runtime/$name.present" ]; then
@@ -420,6 +436,9 @@ jobs:
                 fi
               fi
             done
+            if [ ! -f "$BACKUP/runtime/backend-ready" ] && [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.size" ]; then
+              truncate -s "$(cat "$BACKUP/runtime/supervisor-one-mail-agg.conf.size")" /personal/pxed/supervisor-one-mail-agg.conf
+            fi
             if [ ! -f "$BACKUP/runtime/backend-ready" ] && [ -f "$BACKUP/runtime/nginx-reload-attempted" ]; then
               NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
               NGINX_MAIN=/personal/pxed/nginx/nginx.conf
