@@ -20,7 +20,7 @@ pxed 这台 VPS 不以 systemd 为 PID 1、也不开 cron，聚合器由 **super
 附件不使用 Cloudflare R2。部署包还包含一个仅监听 `127.0.0.1:39001` 的本地对象服务：
 
 1. GitHub Secret `ATTACHMENT_STORAGE_TOKEN` 由部署 workflow 写入 `/opt/one-mail-agg/attachment-storage.token`（权限 `0600`）。
-2. `one-mail-attachment-storage.supervisor.conf` 由 workflow 纳入 supervisord，数据落在 `/opt/one-mail-attachments`。
+2. `one-mail-attachment-storage.supervisor.conf` 的 program 段由 workflow 合并进已被 `/personal/pxed/supervisord.conf` include 的 `/personal/pxed/supervisor-one-mail-agg.conf`，数据落在 `/opt/one-mail-attachments`。
 3. nginx 的 `/_one_mail_attachment_storage/` 只代理到该本地端口；Worker 使用同一个 Bearer token 访问，浏览器不会接触存储服务。
 4. Worker 配置 `ATTACHMENT_STORAGE_URL=https://inbox.mangoqwq.com/_one_mail_attachment_storage`，单文件上限 30 MiB。
 
