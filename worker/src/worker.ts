@@ -285,7 +285,7 @@ app.use('/admin/*', async (c, next) => {
 	const hasAccessToken = !!c.req.raw.headers.get("x-user-access-token");
 	const lang = c.req.raw.headers.get("x-lang") || c.env.DEFAULT_LANG;
 
-	// 解析 x-user-access-token（verify 抛错 -> null，decideAdminAuth 按 R2 处理）
+	// 解析 x-user-access-token（verify 抛错 -> null，交由 decideAdminAuth 处理）
 	let accessTokenPayload: { exp?: number; user_role?: unknown; user_id?: unknown; user_email?: unknown } | null = null;
 	if (hasAccessToken) {
 		try {

@@ -74,7 +74,5 @@ export async function ensureMailMutationSchema(db: D1Database): Promise<void> {
         await db.batch(LEGACY_REBUILD_STATEMENTS.map((sql) => db.prepare(sql)));
     }
 
-    for (const sql of MUTATION_INDEX_STATEMENTS) {
-        await db.prepare(sql).run();
-    }
+    await db.batch(MUTATION_INDEX_STATEMENTS.map(sql => db.prepare(sql)));
 }

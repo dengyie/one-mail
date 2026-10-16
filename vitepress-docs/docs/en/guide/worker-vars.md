@@ -7,15 +7,14 @@
 
 ## Unified inbox attachments
 
-Attachment downloads require a private R2 binding on the Worker that owns the corresponding D1 database:
+Unified inbox attachments are stored on the existing pxed VPS local disk; Cloudflare R2 is not used. The Worker accesses the private storage service through a fixed HTTPS proxy, while browsers only call the authenticated Worker download endpoint:
 
 ```toml
-[[r2_buckets]]
-binding = "ATTACHMENTS"
-bucket_name = "one-mail-attachments"
+[vars]
+ATTACHMENT_STORAGE_URL = "https://inbox.mangoqwq.com/_one_mail_attachment_storage"
 ```
 
-The per-file limit is 30 MiB. Before deployment, `BACKEND_TOML` must retain every existing D1/KV/DO/send_email binding and include `ATTACHMENTS`; the deployment workflow blocks before remote D1 migrations when that binding is missing.
+The VPS service listens on `127.0.0.1:39001`, is supervised by supervisord, and stores files under `/opt/one-mail-attachments`. `ATTACHMENT_STORAGE_TOKEN` exists only as a GitHub Secret, a Worker Secret, and a `0600` file on the VPS. The per-file limit is 30 MiB; the Backend workflow waits for the VPS storage health check before publishing the Worker.
 
 ## Required Variables
 

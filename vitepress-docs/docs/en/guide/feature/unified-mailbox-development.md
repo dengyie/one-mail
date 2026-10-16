@@ -52,7 +52,7 @@ The accurate current product description is therefore “unified inbox aggregato
 | Reply/forward/compose | Missing for external accounts | Existing send mainly serves one-mail/SMTP configuration |
 | Folders/labels | Incomplete | INBOX is the practical default; row lacks folder semantics |
 | Threads/conversations | Missing | No thread/message-reference model |
-| Attachment download | Available | Aggregated and native attachments are stored in private R2; the unified API streams downloads after row-scope checks, while legacy/oversized rows remain metadata-only |
+| Attachment download | Available | Aggregated and native attachments are stored in the private VPS storage service; the unified API streams downloads after row-scope checks, while legacy/oversized rows remain metadata-only |
 | Full HTML rendering | Degraded | Unified detail primarily displays text |
 | Full-text search | Basic | `LIKE` over a small set of fields |
 | Real-time receive | Available (IMAP IDLE) | Long-lived IDLE listeners push supported accounts within seconds; POP3 / graph fall back to 60s polling |
@@ -80,7 +80,7 @@ Vue unified workspace
 Worker Unified API (auth, scope, commands, job status)
         │
         ├── D1: unified index, threads, mutation logs, cursors
-        ├── R2: attachments and optional raw MIME
+        ├── VPS local storage: attachments and optional raw MIME
         └── Queue/tasks: asynchronous writes and retries
                 │
                 ▼
@@ -217,20 +217,20 @@ The frontend should offer manual refresh, last-sync time, incremental update not
 External attachments should flow through:
 
 ```text
-provider → aggregator → R2
+provider → aggregator → VPS storage
                     ↘ D1 metadata
 ```
 
-Store filename, MIME type, size, R2 key, checksum, and email ownership. Downloads must enforce scope, use short-lived URLs or a Worker proxy, and never expose provider credentials.
+Store filename, MIME type, size, storage key, checksum, and email ownership. Downloads must enforce scope, use a Worker proxy, and never expose provider credentials.
 
 The implementation publishes attachment bytes and the email row as two idempotent
 steps. The aggregator first calls `PUT
 /admin/unified/attachments/:accountId/:emailId/:attachmentId` (or
 `PUT /shard/attachments/...`), then posts `POST /admin/unified/ingest`. The Worker
-derives a private R2 key from the account, email, and opaque attachment ID. The
+derives a private VPS storage key from the account, email, and opaque attachment ID. The
 browser only calls `GET /api/unified/emails/:id/attachments/:attachmentId`; it
-never submits or receives an R2 object URL. Configure the `ATTACHMENTS` R2 binding
-alongside the D1-owning Worker. Uploaded objects enter `attachment_gc` with a
+never submits or receives a storage object URL. Configure `ATTACHMENT_STORAGE_URL`
+and the matching Worker secret alongside the D1-owning Worker. Uploaded objects enter `attachment_gc` with a
 grace period and are released after ingest; failed publishes are removed by the
 retention job. Uploads and downloads enforce a 30 MiB per-file limit while
 streaming and canceling oversized bodies. Download requests are rate-limited by
@@ -248,7 +248,7 @@ Complete POP3 host/port/SSL and folder configuration; add connection test, sync-
 
 ### Phase 1: unified message index
 
-Add source identity and folder/message headers; build folder mapping; complete Gmail/Outlook OAuth UI; store attachments in R2; implement FTS or equivalent search; converge native and external list/detail views.
+Add source identity and folder/message headers; build folder mapping; complete Gmail/Outlook OAuth UI; store attachments in VPS storage; implement FTS or equivalent search; converge native and external list/detail views.
 
 **Acceptance:** users can search by account, folder, attachment, sender, and date; attachments open without returning to the provider; expired OAuth clearly requests reauthorization.
 
@@ -293,7 +293,7 @@ A new provider or schema migration requires corresponding tests and real-entry v
 - Accounts that support IMAP IDLE now receive mail in real time through long-lived listeners; accounts without IDLE (POP3 / graph) still rely on the 60s fallback poll, so verification-code latency for those remains seconds-to-minutes.
 - POP3 cannot provide complete folder, read-state, or thread semantics.
 - Existing D1 rows lack complete source identity and cannot be safely re-threaded without a migration policy.
-- Attachment support must not be advertised as complete while R2 is unbound and only metadata is stored.
+- Attachment support must not be advertised as complete while the VPS storage service is unavailable and only metadata is stored.
 - Native and external mail still have separate UI/API paths and should converge incrementally.
 - Public or multi-user deployment should eventually move credentials to a safer secret-management design and define rotation procedures.
 - Production must verify that the live domain, Worker API, aggregator configuration, frontend build, and documentation describe the same version.

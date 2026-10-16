@@ -12,7 +12,7 @@ export type UnifiedAttachment = {
     name: string;
     size: number;
     mimeType: string;
-    r2_key?: string;
+    storage_key?: string;
 };
 
 export const safeAttachmentId = (value: unknown): value is string =>
@@ -53,7 +53,7 @@ export const parseAttachments = (value: unknown): UnifiedAttachment[] => {
             name: safeAttachmentName(row.name),
             size,
             mimeType: safeMimeType(row.mimeType),
-            ...(typeof row.r2_key === "string" && row.r2_key.length > 0 ? { r2_key: row.r2_key } : {}),
+            ...(typeof row.storage_key === "string" && row.storage_key.length > 0 ? { storage_key: row.storage_key } : {}),
         }];
     });
 };
@@ -68,9 +68,10 @@ export const publicAttachmentJson = (value: unknown): string => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return null;
         const row = { ...(item as Record<string, unknown>) };
         const size = Number(row.size);
-        const downloadable = safeAttachmentKey(row.r2_key)
+        const downloadable = safeAttachmentKey(row.storage_key)
             && safeAttachmentId(row.id)
             && Number.isSafeInteger(size) && size >= 0 && size <= MAX_ATTACHMENT_BYTES;
+        delete row.storage_key;
         delete row.r2_key;
         delete row._content;
         delete row._attachment_payloads;
@@ -95,6 +96,7 @@ export const materializeAttachmentKeys = async (
             throw new Error("invalid attachment metadata");
         }
         const row = { ...(item as Record<string, unknown>) };
+        delete row.storage_key;
         delete row.r2_key;
         delete row._content;
         delete row._attachment_payloads;
@@ -116,7 +118,7 @@ export const materializeAttachmentKeys = async (
                 throw new Error("invalid attachment size");
             }
             row.size = size;
-            row.r2_key = await attachmentKey(accountId, emailId, row.id);
+            row.storage_key = await attachmentKey(accountId, emailId, row.id);
         }
         rows.push(row);
     }
@@ -148,9 +150,9 @@ export const attachmentGcInsert = async (env: Bindings, key: string): Promise<bo
     if (!env.DB) return true;
     const now = Date.now();
     const result = await env.DB.prepare(
-        `INSERT INTO attachment_gc (r2_key, created_at, updated_at)
+        `INSERT INTO attachment_gc (storage_key, created_at, updated_at)
          VALUES (?, ?, ?)
-         ON CONFLICT(r2_key) DO UPDATE SET
+         ON CONFLICT(storage_key) DO UPDATE SET
            updated_at = excluded.updated_at,
            attempts = 0,
            last_error = NULL
@@ -168,7 +170,7 @@ export const releaseAttachmentGc = async (env: Bindings, keys: string[], emailId
     // statement. A read followed by an unconditional delete can race retention:
     // retention may remove the row and enqueue GC between those two requests.
     await env.DB.prepare(`DELETE FROM attachment_gc
-        WHERE r2_key IN (SELECT value FROM json_each(?))
+        WHERE storage_key IN (SELECT value FROM json_each(?))
           AND EXISTS (
             SELECT 1 FROM emails, json_each(
               CASE WHEN json_valid(emails.attachments_json)
@@ -176,7 +178,7 @@ export const releaseAttachmentGc = async (env: Bindings, keys: string[], emailId
                    THEN emails.attachments_json ELSE '[]' END
             )
             WHERE emails.id IN (SELECT value FROM json_each(?))
-              AND json_extract(json_each.value, '$.r2_key') = attachment_gc.r2_key
+              AND json_extract(json_each.value, '$.storage_key') = attachment_gc.storage_key
           )`)
         .bind(JSON.stringify(unique), JSON.stringify(uniqueEmailIds)).run();
 };

@@ -9,6 +9,7 @@ import {
     safeAttachmentName,
     safeMimeType,
 } from "./attachments.ts";
+import { uploadAttachmentObject } from "./storage_client.ts";
 
 export interface UnifiedEmailRow {
     id: string; source: string; account_id: string | null;
@@ -95,7 +96,10 @@ export async function saveUnifiedEmail(
     const parsed = await commonParseMail({ rawEmail });
     const row = buildUnifiedEmailRow(parsed, toAddress, fromAddress, Date.now(), unifiedId || crypto.randomUUID());
     const uploadedKeys: string[] = [];
-    if (c.env.ATTACHMENTS && parsed?.attachments?.length) {
+    if (parsed?.attachments?.length) {
+        if (!c.env.ATTACHMENT_STORAGE_URL || !c.env.ATTACHMENT_STORAGE_TOKEN) {
+            throw new Error("attachment storage is not configured");
+        }
         const storedAttachments = [];
         for (let index = 0; index < parsed.attachments.length; index += 1) {
             const attachment = parsed.attachments[index];
@@ -114,12 +118,9 @@ export async function saveUnifiedEmail(
             if (!(await attachmentGcInsert(c.env, key))) {
                 throw new Error("native attachment cleanup in progress; retry delivery");
             }
-            await c.env.ATTACHMENTS.put(key, content, {
-                httpMetadata: { contentType: mimeType },
-                customMetadata: { name },
-            });
+            await uploadAttachmentObject(c.env, key, content, content.byteLength, mimeType, name);
             uploadedKeys.push(key);
-            storedAttachments.push({ id, name, size: content.byteLength, mimeType, r2_key: key });
+            storedAttachments.push({ id, name, size: content.byteLength, mimeType, storage_key: key });
         }
         row.attachments_json = JSON.stringify(storedAttachments);
         row.has_attachments = storedAttachments.length > 0 ? 1 : 0;

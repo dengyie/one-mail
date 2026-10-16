@@ -6,6 +6,22 @@ import {
   purgeOldEmailBodies,
 } from "./retention.ts";
 
+const storageConfig = { ATTACHMENT_STORAGE_URL: "https://storage.example", ATTACHMENT_STORAGE_TOKEN: "t".repeat(32) };
+let deleteSink = null;
+let deleteError = null;
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async (url, init = {}) => {
+  if (init.method === "DELETE") {
+    if (deleteError) throw deleteError;
+    deleteSink?.push(String(url).split("/").pop());
+  }
+  return new Response(null, { status: 204 });
+};
+test.afterEach(() => { deleteSink = null; deleteError = null; });
+test.after(() => { globalThis.fetch = originalFetch; });
+const storageEnv = DB => ({ DB, ...storageConfig });
+const key = suffix => `unified/${String(suffix).padEnd(43, "a").slice(0, 43)}`;
+
 test("cutoffMs subtracts N days in ms", () => {
   const now = 1700000000000;
   assert.equal(cutoffMs(90, now), now - 90 * 24 * 60 * 60 * 1000);
@@ -52,15 +68,13 @@ test("body purge stops after the configured batch budget", async () => {
   assert.equal(db.calls.length, 2);
 });
 
-test("retention commits DB deletion before R2 cleanup and keeps failed GC rows", async () => {
+test("retention commits DB deletion before storage cleanup and keeps failed GC rows", async () => {
   const db = fakeDb({
-    rows: [{ id: "mail-1", attachments_json: JSON.stringify([{ r2_key: "attachment-1" }]) }],
+    rows: [{ id: "mail-1", attachments_json: JSON.stringify([{ storage_key: key("1") }]) }],
     changes: 1,
   });
-  const bucket = {
-    delete: async () => { throw new Error("temporary R2 outage"); },
-  };
-  const result = await cleanupReadEmails({ DB: db, ATTACHMENTS: bucket }, 90, 1, 1);
+  deleteError = new Error("temporary storage outage");
+  const result = await cleanupReadEmails(storageEnv(db), 90, 1, 1);
   assert.deepEqual(result, { deleted: 1, limited: true });
   assert.ok(db.calls.some(call => /json_each/.test(call.sql)));
   assert.ok(db.calls.some(call => /attachment_gc/.test(call.sql)));
@@ -89,8 +103,8 @@ test("retention drains a durable GC row even when no email is newly eligible", a
         bind(...params) {
           calls.push({ sql, params });
           return {
-            all: async () => /SELECT r2_key, updated_at FROM attachment_gc/.test(sql)
-              ? { results: deletedGc ? [] : [{ r2_key: "attachment-retry", updated_at: Date.now() - 2 * 60 * 60 * 1000 }] }
+            all: async () => /SELECT storage_key, updated_at FROM attachment_gc/.test(sql)
+              ? { results: deletedGc ? [] : [{ storage_key: key("retry"), updated_at: Date.now() - 2 * 60 * 60 * 1000 }] }
               : { results: [] },
             first: async () => null,
             run: async () => {
@@ -104,11 +118,12 @@ test("retention drains a durable GC row even when no email is newly eligible", a
     batch: async () => [],
   };
   const deleted = [];
-  await cleanupReadEmails({ DB: db, ATTACHMENTS: { delete: async key => deleted.push(key) } }, 90, 1, 1);
-  assert.deepEqual(deleted, ["attachment-retry"]);
-  assert.ok(calls.some(call => /SELECT r2_key, updated_at FROM attachment_gc/.test(call.sql)));
-  assert.equal(calls.find(call => /SELECT r2_key, updated_at FROM attachment_gc/.test(call.sql)).params[0] < Date.now(), true);
-  assert.match(calls.find(call => /SELECT r2_key, updated_at FROM attachment_gc/.test(call.sql)).sql, /updated_at <= \?/);
+  deleteSink = deleted;
+  await cleanupReadEmails(storageEnv(db), 90, 1, 1);
+  assert.deepEqual(deleted, [key("retry").slice(8)]);
+  assert.ok(calls.some(call => /SELECT storage_key, updated_at FROM attachment_gc/.test(call.sql)));
+  assert.equal(calls.find(call => /SELECT storage_key, updated_at FROM attachment_gc/.test(call.sql)).params[0] < Date.now(), true);
+  assert.match(calls.find(call => /SELECT storage_key, updated_at FROM attachment_gc/.test(call.sql)).sql, /updated_at <= \?/);
 });
 
 /**
@@ -127,10 +142,10 @@ function gcDb({ gcKeys, referencedKeys }) {
           return {
             all: async () => {
               if (/FROM attachment_gc/.test(sql)) {
-                return { results: gcKeys.map(r2_key => ({ r2_key, updated_at: Date.now() - 2 * 60 * 60 * 1000 })) };
+                return { results: gcKeys.map(storage_key => ({ storage_key, updated_at: Date.now() - 2 * 60 * 60 * 1000 })) };
               }
               if (/json_each/.test(sql)) {
-                return { results: referencedKeys.map(r2_key => ({ r2_key })) };
+                return { results: referencedKeys.map(storage_key => ({ storage_key })) };
               }
               return { results: [] };
             },
@@ -149,11 +164,12 @@ function gcDb({ gcKeys, referencedKeys }) {
 }
 
 test("attachment GC checks email references once per batch, not once per row", async () => {
-  const gcKeys = Array.from({ length: 120 }, (_, i) => `attachment-${i}`);
+  const gcKeys = Array.from({ length: 120 }, (_, i) => key(String(i)));
   const { db, calls } = gcDb({ gcKeys, referencedKeys: [] });
   const deleted = [];
+  deleteSink = deleted;
   await cleanupReadEmails(
-    { DB: db, ATTACHMENTS: { delete: async key => deleted.push(key) } },
+    storageEnv(db),
     90, 1, 1,
   );
   const referenceScans = calls.filter(call => /json_each/.test(call.sql));
@@ -163,18 +179,19 @@ test("attachment GC checks email references once per batch, not once per row", a
   assert.equal(deleted.length, gcKeys.length);
 });
 
-test("attachment GC keeps R2 objects that a batched scan still finds referenced", async () => {
+test("attachment GC keeps referenced storage objects", async () => {
   const { db, deletedGc } = gcDb({
-    gcKeys: ["a-1", "a-2", "a-3"],
-    referencedKeys: ["a-2"],
+    gcKeys: [key("1"), key("2"), key("3")],
+    referencedKeys: [key("2")],
   });
   const deleted = [];
+  deleteSink = deleted;
   await cleanupReadEmails(
-    { DB: db, ATTACHMENTS: { delete: async key => deleted.push(key) } },
+    storageEnv(db),
     90, 1, 1,
   );
-  assert.deepEqual(deleted, ["a-1", "a-3"]);
+  assert.deepEqual(deleted, [key("1").slice(8), key("3").slice(8)]);
   // Every GC row is retired either way: a live object makes the request stale,
   // a deleted object has nothing left to clean up.
-  assert.deepEqual(deletedGc, ["a-1", "a-2", "a-3"]);
+  assert.deepEqual(deletedGc, [key("1"), key("2"), key("3")]);
 });

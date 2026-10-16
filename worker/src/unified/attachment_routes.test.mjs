@@ -4,6 +4,9 @@ import { Hono } from "hono";
 import { attachmentKey } from "./attachments.ts";
 import { attachmentDownloadRateLimit, downloadAttachment, uploadAttachment } from "./attachment_routes.ts";
 
+const token = "t".repeat(32);
+const storageEnv = { ATTACHMENT_STORAGE_URL: "https://storage.example/_one_mail_attachment_storage", ATTACHMENT_STORAGE_TOKEN: token };
+
 function appFor(handler, method, path) {
   const app = new Hono();
   app.use("/*", async (c, next) => {
@@ -14,51 +17,131 @@ function appFor(handler, method, path) {
   return app;
 }
 
-test("download rechecks attachment membership and returns safe content headers", async () => {
+test("download rechecks attachment membership and proxies safe content headers", async () => {
   const key = await attachmentKey("account-a", "mail-a", "att-1");
   const app = appFor(downloadAttachment, "get", "/emails/:id/attachments/:attachmentId");
   const env = {
-    DB: { prepare: () => ({ bind: () => ({ first: async () => ({ account_id: "account-a", attachments_json: JSON.stringify([{ id: "att-1", name: "报告.txt", size: 2, mimeType: "text/plain", r2_key: key }]) }) }) }) },
-    ATTACHMENTS: { get: async requested => requested === key ? { body: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("ok")); c.close(); } }), size: 2, httpMetadata: { contentType: "text/plain" } } : null },
+    ...storageEnv,
+    DB: { prepare: () => ({ bind: () => ({ first: async () => ({ account_id: "account-a", attachments_json: JSON.stringify([{ id: "att-1", name: "报告.txt", size: 2, mimeType: "text/plain", storage_key: key }]) }) }) }) },
   };
-  const response = await app.request("/emails/mail-a/attachments/att-1", {}, env);
-  assert.equal(response.status, 200);
-  assert.equal(await response.text(), "ok");
-  assert.match(response.headers.get("content-disposition"), /filename\*=UTF-8''/);
-  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    assert.match(String(url), new RegExp(`/unified/${key.slice(8)}$`));
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${token}`);
+    return new Response("ok", { headers: { "content-length": "2", "content-type": "text/plain" } });
+  };
+  try {
+    const response = await app.request("/emails/mail-a/attachments/att-1", {}, env);
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "ok");
+    assert.match(response.headers.get("content-disposition"), /filename\*=UTF-8''/);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test("upload is bounded and returns the deterministic object key", async () => {
-  const writes = [];
+test("upload is bounded and returns the deterministic storage key", async () => {
+  const requests = [];
   const app = appFor(uploadAttachment, "put", "/attachments/:accountId/:emailId/:attachmentId");
   const env = {
-    DB: { prepare: sql => ({ bind: (...params) => ({ run: async () => { writes.push({ sql, params }); return { meta: { changes: 1 } }; } }) }) },
-    ATTACHMENTS: { put: async (key, body) => { writes.push({ key, body }); writes.push({ uploaded: await new Response(body).bytes() }); } },
+    ...storageEnv,
+    DB: { prepare: sql => ({ bind: (...params) => ({ run: async () => { requests.push({ sql, params }); return { meta: { changes: 1 } }; } }) }) },
   };
-  const response = await app.request("/attachments/account-a/mail-a/att-1", { method: "PUT", headers: { "content-length": "2", "x-one-mail-name": "x.txt", "x-one-mail-mime-type": "text/plain" }, body: "ok" }, env);
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).r2_key, await attachmentKey("account-a", "mail-a", "att-1"));
-  assert.equal(writes.find(entry => entry.body)?.body instanceof ReadableStream, true);
-  assert.deepEqual(writes.find(entry => entry.uploaded)?.uploaded, new Uint8Array([111, 107]));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url, init, body: await new Response(init.body).bytes() });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const response = await app.request("/attachments/account-a/mail-a/att-1", { method: "PUT", headers: { "content-length": "2", "x-one-mail-name": "x.txt", "x-one-mail-mime-type": "text/plain" }, body: "ok" }, env);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).storage_key, await attachmentKey("account-a", "mail-a", "att-1"));
+    const upload = requests.find(entry => entry.body);
+    assert.deepEqual(upload.body, new Uint8Array([111, 107]));
+    assert.equal(new Headers(upload.init.headers).get("content-length"), "2");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test("upload cancels and rejects a chunked body that exceeds the limit", async () => {
-  let putCalled = false;
+test("upload rejects bodies without content-length before storage access", async () => {
+  let fetchCalled = false;
+  const app = appFor(uploadAttachment, "put", "/attachments/:accountId/:emailId/:attachmentId");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { fetchCalled = true; return new Response(null, { status: 204 }); };
+  try {
+    const response = await app.request("/attachments/account-a/mail-a/att-1", { method: "PUT", body: new Uint8Array([1]) }, { ...storageEnv, DB: { prepare: () => ({ bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) }) } });
+    assert.equal(response.status, 411);
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("upload rejects a body that exceeds the declared content length before storage access", async () => {
+  const env = {
+    ...storageEnv,
+    DB: { prepare: () => ({ bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) }) },
+  };
+  const context = {
+    env,
+    req: {
+      raw: {
+        headers: new Headers({ "content-length": "1" }),
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([111, 107]));
+            controller.close();
+          },
+        }),
+        signal: new AbortController().signal,
+      },
+      param(name) {
+        return ({ accountId: "account-a", emailId: "mail-a", attachmentId: "att-1" })[name];
+      },
+    },
+    json(body, status) {
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    await new Response(init.body).arrayBuffer();
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const response = await uploadAttachment(context);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "content-length mismatch" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("upload rejects a generic 200 fallback response from a missing storage proxy", async () => {
   const app = appFor(uploadAttachment, "put", "/attachments/:accountId/:emailId/:attachmentId");
   const env = {
-    DB: { prepare: sql => ({ bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) }) },
-    ATTACHMENTS: { put: async (_key, body) => { putCalled = true; await new Response(body).bytes(); } },
+    ...storageEnv,
+    DB: { prepare: () => ({ bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) }) },
   };
-  const oversized = new ReadableStream({ start(controller) {
-    controller.enqueue(new Uint8Array(30 * 1024 * 1024));
-    controller.enqueue(new Uint8Array([1]));
-    controller.close();
-  } });
-  const response = await app.request("/attachments/account-a/mail-a/att-1", {
-    method: "PUT", body: oversized, duplex: "half", headers: { "x-one-mail-mime-type": "application/octet-stream" },
-  }, env);
-  assert.equal(response.status, 413);
-  assert.equal(putCalled, true);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("<!doctype html>", {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  });
+  try {
+    const response = await app.request("/attachments/account-a/mail-a/att-1", {
+      method: "PUT",
+      headers: { "content-length": "2" },
+      body: "ok",
+    }, env);
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("retry-after"), "30");
+    assert.deepEqual(await response.json(), { error: "attachment storage unavailable" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("attachment download rate limit is keyed to the authenticated principal", async () => {
@@ -75,4 +158,28 @@ test("attachment download rate limit is keyed to the authenticated principal", a
   assert.equal(limited.status, 429);
   assert.match(rateKey, /user:user-7/);
   assert.equal(limited.headers.get("retry-after"), "60");
+});
+
+test("download stream enforces the storage byte limit even with a forged content length", async () => {
+  const key = await attachmentKey("account-a", "mail-a", "att-1");
+  const app = appFor(downloadAttachment, "get", "/emails/:id/attachments/:attachmentId");
+  const env = {
+    ...storageEnv,
+    DB: { prepare: () => ({ bind: () => ({ first: async () => ({ account_id: "account-a", attachments_json: JSON.stringify([{ id: "att-1", size: 1, name: "x", mimeType: "text/plain", storage_key: key }]) }) }) }) },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(30 * 1024 * 1024));
+      controller.enqueue(new Uint8Array(1));
+      controller.close();
+    },
+  }), { headers: { "content-length": String(30 * 1024 * 1024) } });
+  try {
+    const response = await app.request("/emails/mail-a/attachments/att-1", {}, env);
+    assert.equal(response.status, 200);
+    await assert.rejects(() => response.arrayBuffer());
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

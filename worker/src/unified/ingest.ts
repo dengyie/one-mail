@@ -396,11 +396,11 @@ export async function insertEmails(c: Context<HonoCustomType>, emails: Record<st
     // may have been ignored because a row already exists with older metadata;
     // its newly uploaded objects must remain queued for orphan cleanup.
     const rowsWithAttachments = emails.filter(email =>
-        parseAttachments(email.attachments_json).some(attachment => !!attachment.r2_key));
+        parseAttachments(email.attachments_json).some(attachment => !!attachment.storage_key));
     if (rowsWithAttachments.length) {
         const uploadedKeys = rowsWithAttachments.flatMap(email =>
             parseAttachments(email.attachments_json).flatMap(attachment =>
-                attachment.r2_key ? [attachment.r2_key] : []));
+                attachment.storage_key ? [attachment.storage_key] : []));
         await releaseAttachmentGc(c.env, uploadedKeys,
             rowsWithAttachments.map(email => nullableText(email.id)).filter((id): id is string => !!id));
     }

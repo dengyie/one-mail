@@ -7,15 +7,14 @@
 
 ## 统一收件箱附件
 
-统一收件箱附件需要在拥有对应 D1 的 Worker 配置私有 R2 binding：
+统一收件箱附件保存到现有 pxed VPS 的本地磁盘，不使用 Cloudflare R2。Worker 通过固定 HTTPS 代理地址访问存储服务，浏览器只访问 Worker 的鉴权下载接口：
 
 ```toml
-[[r2_buckets]]
-binding = "ATTACHMENTS"
-bucket_name = "one-mail-attachments"
+[vars]
+ATTACHMENT_STORAGE_URL = "https://inbox.mangoqwq.com/_one_mail_attachment_storage"
 ```
 
-附件单文件上限为 30 MiB。部署前必须确认 `BACKEND_TOML` secret 保留所有既有 D1/KV/DO/send_email binding，并包含 `ATTACHMENTS`；部署 workflow 会在远程 D1 迁移前阻止缺少该 binding 的配置。
+VPS 存储服务监听 `127.0.0.1:39001`，由 supervisord 托管，数据目录为 `/opt/one-mail-attachments`。`ATTACHMENT_STORAGE_TOKEN` 只放在 GitHub Secret、Worker Secret 和 VPS 上的 `0600` 文件中。单文件上限为 30 MiB；Backend workflow 会先等待 VPS 存储健康，再发布 Worker。
 
 ## 必填变量
 

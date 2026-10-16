@@ -72,7 +72,7 @@ Gmail / Outlook / QQ / 163 / 自定义 IMAP 邮箱 / one-mail 地址
 | 回复、转发、新建 | 外部账号无 | 现有发送能力主要服务 one-mail 地址/SMTP 配置 |
 | 文件夹/标签 | 不完整 | 实际常用路径以 INBOX 为主，统一行没有 folder/label 语义 |
 | 线程/会话 | 无 | 没有 thread/message-reference 模型 |
-| 附件下载 | 已有 | 聚合器与 Email Routing 附件写入私有 R2；统一 API 按邮件权限流式下载，旧数据/超限附件仅显示元数据 |
+| 附件下载 | 已有 | 聚合器与 Email Routing 附件写入VPS 本地存储；统一 API 按邮件权限流式下载，旧数据/超限附件仅显示元数据 |
 | HTML 邮件完整渲染 | 降级 | UnifiedInboxDetail 目前主要显示纯文本 |
 | 全文搜索 | 基础 | `LIKE` 搜索 subject/from/text，缺少 FTS 和高级条件 |
 | 实时收件 | 已具备（IMAP IDLE） | 支持的账号由常驻 IDLE 监听线程秒级推送到位；POP3 / graph 等账号 60s 兜底轮询 |
@@ -110,7 +110,7 @@ Vue 统一工作台
 Worker Unified API（鉴权、作用域、命令、任务状态）
       │
       ├── D1：统一索引、线程、操作日志、同步游标
-      ├── R2：附件和可选 raw MIME
+      ├── VPS 本地存储：附件和可选 raw MIME
       └── Queue/Task：异步写操作与重试
               │
               ▼
@@ -402,22 +402,22 @@ POST /api/unified/drafts/:id/send
 外部邮件附件不能只保存文件名、大小和 MIME。目标链路：
 
 ```text
-provider → aggregator → R2
+provider → aggregator → VPS storage
                     ↘ D1 attachment metadata
 ```
 
 D1 保存：
 
 ```text
-attachment_id, email_id, filename, mime_type, size, r2_key, checksum
+attachment_id, email_id, filename, mime_type, size, storage_key, checksum
 ```
 
 当前实现把附件对象写入与邮件 ingest 分成两个幂等步骤：聚合器先调用
 `PUT /admin/unified/attachments/:accountId/:emailId/:attachmentId`（分片为
 `PUT /shard/attachments/...`），再提交 `POST /admin/unified/ingest`。Worker
-根据账号、邮件和不透明附件 ID 计算私有 R2 key；浏览器只调用
-`GET /api/unified/emails/:id/attachments/:attachmentId`，不会提交或获得 R2
-对象地址。`ATTACHMENTS` R2 binding 必须和拥有该 D1 的 Worker 同库配置。
+根据账号、邮件和不透明附件 ID 计算VPS 本地存储 key；浏览器只调用
+`GET /api/unified/emails/:id/attachments/:attachmentId`，不会提交或获得 VPS storage
+对象地址。`ATTACHMENT_STORAGE_URL` 必须指向已部署的 VPS 存储代理，Worker 只保存私有 storage key。
 上传对象会进入带宽限期的 `attachment_gc`，ingest 成功后释放；失败对象由
 retention 定时任务清理。单个附件上限为 30 MiB，下载和上传都会在流式读取时
 取消超限请求；下载还会按用户、API key 或管理员客户端身份限频。
@@ -465,7 +465,7 @@ retention 定时任务清理。单个附件上限为 30 MiB，下载和上传都
 - `emails` 增加源端身份、folder、Message-ID、attachment 标识；
 - 建立 folder 映射；
 - 完成 Gmail/Outlook OAuth 前端授权；
-- 附件上传 R2 并提供下载；
+- 附件上传 VPS storage 并提供下载；
 - 全文搜索或 FTS5；
 - 统一临时邮箱和外部邮箱列表/详情展示。
 
@@ -563,7 +563,7 @@ git diff --check
 - 支持 IMAP IDLE 的账号已由常驻监听线程实时收信；POP3 / graph 等无 IDLE 的账号仍是 60s 兜底轮询，验证码场景对这类账号仍有秒级到分钟级延迟；
 - POP3 无法提供完整文件夹、已读和线程语义；
 - 既有 D1 行缺少完整源端身份，迁移前不能假定历史数据可无损归并；
-- R2 未绑定时附件能力不可宣称为已完成；
+- VPS storage 未部署时附件能力不可宣称为已完成；
 - 统一收件箱和临时邮箱仍有两套 UI/API，需要渐进式收敛，不能一次性删除旧接口；
 - 外部账号凭据当前按既有部署模型管理，未来多人/公开部署应迁移到 Wrangler Secrets 或更安全的凭据服务，并制定密钥轮换方案；
 - 线上部署必须确认域名指向当前 Worker/API 和最新前端构建，避免源码、文档和线上行为不一致。

@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v6
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -119,6 +119,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Checkout nginx configuration
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v6
+        with:
+          sparse-checkout: deploy/nginx/one-mail-frontend.conf
+          sparse-checkout-cone: false
+
       - name: Download Frontend Artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -166,7 +172,7 @@ jobs:
           } > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Upload & Extract Frontend dist on pxed
+      - name: Upload frontend and nginx configuration on pxed
         env:
           PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
           PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
@@ -175,7 +181,46 @@ jobs:
           PORT="${PXED_SSH_PORT:-22}"
           USER="${PXED_SSH_USER:-root}"
           scp -O -P "$PORT" -o StrictHostKeyChecking=yes /tmp/one-mail-fe-dist.tgz "$USER@$PXED_SSH_HOST:/tmp/one-mail-fe-dist.tgz"
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" "rm -rf /opt/one-mail-frontend/dist && mkdir -p /opt/one-mail-frontend/dist && tar xzf /tmp/one-mail-fe-dist.tgz -C /opt/one-mail-frontend/dist"
+          scp -O -P "$PORT" -o StrictHostKeyChecking=yes deploy/nginx/one-mail-frontend.conf "$USER@$PXED_SSH_HOST:/tmp/one-mail-frontend.conf"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          FRONTEND=/opt/one-mail-frontend
+          DIST="$FRONTEND/dist"
+          STAGE="$FRONTEND/.dist.deploy.$$"
+          DIST_BACKUP="$FRONTEND/.dist.before-last-deploy.$$"
+          CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
+          CONF_BACKUP="$CONF.before-last-deploy.$$"
+          restore_previous() {
+            rm -rf "$STAGE"
+            if [ -d "$DIST_BACKUP" ]; then
+              rm -rf "$DIST"
+              mv "$DIST_BACKUP" "$DIST"
+            fi
+            if [ -f "$CONF_BACKUP" ]; then
+              cp "$CONF_BACKUP" "$CONF"
+            else
+              rm -f "$CONF"
+            fi
+          }
+          trap 'status=$?; if [ "$status" -ne 0 ]; then restore_previous; fi; exit "$status"' EXIT
+          mkdir -p "$FRONTEND"
+          rm -rf "$STAGE"
+          mkdir "$STAGE"
+          tar xzf /tmp/one-mail-fe-dist.tgz -C "$STAGE"
+          if [ -d "$DIST" ]; then mv "$DIST" "$DIST_BACKUP"; fi
+          mv "$STAGE" "$DIST"
+          if [ -f "$CONF" ]; then cp "$CONF" "$CONF_BACKUP"; fi
+          install -m 0644 /tmp/one-mail-frontend.conf "$CONF"
+          if ! nginx -t -c /personal/pxed/nginx/nginx.conf -p /personal/pxed/nginx/; then
+            exit 1
+          fi
+          if ! nginx -s reload -c /personal/pxed/nginx/nginx.conf -p /personal/pxed/nginx/; then
+            exit 1
+          fi
+          rm -rf "$DIST_BACKUP" "$CONF_BACKUP"
+          rm -f /tmp/one-mail-fe-dist.tgz /tmp/one-mail-frontend.conf
+          trap - EXIT
+          REMOTE
 
       - name: Health Check
         run: |
