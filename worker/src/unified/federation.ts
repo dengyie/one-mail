@@ -32,6 +32,7 @@ import { UNIFIED_EMAIL_ORDER, boundedEmailFilter } from "./unified_sql.ts";
 import { listFolders } from "./folders.ts";
 import { extractVerifCode } from "./verifcode.ts";
 import { stripHtmlToText } from "./extra_endpoints.ts";
+import { safeAttachmentId } from "./attachments.ts";
 
 export { hasRemoteShards, loadShardMap };
 
@@ -363,6 +364,7 @@ export const downloadRemoteAttachment = async (
     location: RemoteEmailLocation,
 ): Promise<Response> => {
     const attachmentId = c.req.param("attachmentId") || "";
+    if (!safeAttachmentId(attachmentId)) return c.json({ error: "invalid attachment identity" }, 400);
     const emailId = location.emailId;
     const path = `/shard/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`;
     const result = await fetchShardStream(shard, path, {

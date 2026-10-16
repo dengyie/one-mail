@@ -45,7 +45,7 @@ import {
     getMaxUnifiedPageSize,
 } from "../quota.ts";
 import { attachmentDownloadRateLimit, downloadAttachment, uploadAttachment } from "./attachment_routes.ts";
-import { publicAttachmentJson } from "./attachments.ts";
+import { publicAttachmentJson, safeAttachmentId } from "./attachments.ts";
 
 const api = new Hono<HonoCustomType>();
 
@@ -244,6 +244,9 @@ const getEmail = async (c: Context<HonoCustomType>) => {
 };
 
 const getAttachment = async (c: Context<HonoCustomType>) => {
+    if (!safeAttachmentId(c.req.param("attachmentId"))) {
+        return c.json({ error: "invalid attachment identity" }, 400);
+    }
     const map = await loadShardMap(c.env);
     const exclude = excludeRemoteSql(map);
     const row = await c.env.DB.prepare(`SELECT source, account_id, to_addr, attachments_json FROM emails WHERE id = ? AND ${exclude.sql}`)

@@ -92,6 +92,13 @@ jobs:
           SSH_OPTS=(-p "$PORT" -o StrictHostKeyChecking=yes)
 
           REMOTE_STAGE=$(ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
+          cleanup_remote_stage() {
+            if [ -n "${REMOTE_STAGE:-}" ]; then
+              # shellcheck disable=SC2029 # Expand the mktemp path locally, then pass it as a literal to the pinned host.
+              ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
+            fi
+          }
+          trap cleanup_remote_stage EXIT
           # The stage path is intentionally expanded by the runner into each
           # scp destination; the remote shell receives it as a literal path.
           # shellcheck disable=SC2029
@@ -175,12 +182,12 @@ jobs:
           }
 
           restore_previous() {
-            status=$?
+            status=${1:-$?}
             set +e
             rollback_failed=0
             if [ "$status" -eq 0 ]; then
-              rm -rf "$STAGE"
-              return
+              rm -rf "$STAGE" "$REMOTE_STAGE"
+              return 0
             fi
             echo "Aggregator deployment failed; restoring the previous managed source" >&2
             for path in src tests deploy pyproject.toml README.md; do
@@ -221,10 +228,10 @@ jobs:
             else
               echo "Rollback was incomplete; preserving $BACKUP for recovery" >&2
             fi
-            rm -rf "$STAGE"
-            exit "$status"
+            rm -rf "$STAGE" "$REMOTE_STAGE"
+            return "$status"
           }
-          trap restore_previous EXIT
+          trap 'status=$?; if [ "$status" -ne 0 ]; then restore_previous "$status" || true; else rm -rf "$STAGE" "$REMOTE_STAGE"; fi; exit "$status"' EXIT
 
           test -f "$BASE/config.json"
           test -x "$AGG/.venv/bin/python"
@@ -343,7 +350,7 @@ jobs:
             echo "workflow_dispatch: backend ordering check skipped"
             exit 0
           fi
-          changed=$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA")
+          changed=$(git diff-tree -m --no-commit-id --name-only -r "$GITHUB_SHA")
           if ! printf '%s\n' "$changed" | grep -Eq '^(worker/|db/|packages/shared/|package\.json$|pnpm-lock\.yaml$|\.github/workflows/backend_deploy\.yaml$)'; then
             echo "This commit does not change the Worker deployment; restarting aggregator now"
             exit 0

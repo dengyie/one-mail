@@ -175,6 +175,132 @@ test("remote unsupported response survives; network and 5xx are not false misses
     });
 });
 
+test("federated attachment download streams the owning shard response and preserves safe headers", async () => {
+    const { app, env } = gateway(db());
+    const calls = [];
+    await withFetch(async (url, init) => {
+        calls.push({ url, init });
+        if (url.endsWith("/shard/emails/mail-a")) {
+            return Response.json({ id: "mail-a", account_id: "mine", source: "imap_gmail" });
+        }
+        return new Response(new Uint8Array([1, 2, 3]), {
+            status: 200,
+            headers: {
+                "content-type": "text/plain",
+                "content-disposition": "attachment; filename*=UTF-8''report.txt",
+                "content-length": "3",
+                "cache-control": "private, no-store",
+                "x-content-type-options": "nosniff",
+            },
+        });
+    }, async () => {
+        const response = await app.request(
+            "https://gateway.invalid/api/unified/emails/mail-a/attachments/att-1",
+            { headers }, env,
+        );
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.bytes(), new Uint8Array([1, 2, 3]));
+        assert.equal(response.headers.get("content-disposition"), "attachment; filename*=UTF-8''report.txt");
+        assert.equal(response.headers.get("content-length"), "3");
+        assert.equal(calls.length, 2);
+        const scope = JSON.parse(decodeURIComponent(calls[1].init.headers["x-one-mail-shard-scope"]));
+        assert.deepEqual(scope, { account_ids: ["mine"], sources: null });
+    });
+});
+
+for (const [status, expected] of [[404, 404], [403, 403], [503, 503]]) test(
+    `federated attachment download maps shard ${status} to gateway ${expected}`, async () => {
+    const { app, env } = gateway(db());
+    await withFetch(async url => url.endsWith("/shard/emails/mail-a")
+        ? Response.json({ id: "mail-a", account_id: "mine", source: "imap_gmail" })
+        : new Response("unavailable", { status }), async () => {
+        const response = await app.request(
+            "https://gateway.invalid/api/unified/emails/mail-a/attachments/att-1",
+            { headers }, env,
+        );
+        assert.equal(response.status, expected);
+        const body = await response.json();
+        if (status === 404) assert.deepEqual(body, { error: "attachment not found" });
+        if (status === 403) assert.deepEqual(body, { error: "forbidden" });
+        if (status === 503) assert.deepEqual(body, { error: "shard unavailable", degraded: ["s1"] });
+    });
+});
+
+test("duplicate remote attachment owners fail closed before fetching the object", async () => {
+    const registry = {
+        ...map,
+        shards: [
+            map.shards[0],
+            { ...map.shards[0], id: "s2", base_url: "https://shard-2.invalid" },
+        ],
+        accounts: { mine: "s1", other: "s2" },
+    };
+    const { app, env } = gateway(db({ owned: ["mine", "other"] }), registry);
+    let attachmentFetches = 0;
+    await withFetch(async url => {
+        if (url.includes("/attachments/")) attachmentFetches++;
+        return Response.json({ id: "mail-a", account_id: url.includes("shard-2") ? "other" : "mine", source: "imap_gmail" });
+    }, async () => {
+        const response = await app.request(
+            "https://gateway.invalid/api/unified/emails/mail-a/attachments/att-1",
+            { headers }, env,
+        );
+        assert.equal(response.status, 409);
+        assert.deepEqual(await response.json(), { error: "duplicate email owners" });
+        assert.equal(attachmentFetches, 0);
+    });
+});
+
+test("federated attachment download rejects an oversized shard body before streaming", async () => {
+    const { app, env } = gateway(db());
+    await withFetch(async url => url.endsWith("/shard/emails/mail-a")
+        ? Response.json({ id: "mail-a", account_id: "mine", source: "imap_gmail" })
+        : new Response(null, { status: 200, headers: { "content-length": String(32 * 1024 * 1024 + 1) } }), async () => {
+        const response = await app.request(
+            "https://gateway.invalid/api/unified/emails/mail-a/attachments/att-1",
+            { headers }, env,
+        );
+        assert.equal(response.status, 503);
+        assert.deepEqual(await response.json(), { error: "shard unavailable", degraded: ["s1"] });
+    });
+});
+
+test("federated attachment download rejects an invalid attachment id before shard access", async () => {
+    const { app, env } = gateway(db());
+    let calls = 0;
+    await withFetch(async () => {
+        calls++;
+        return Response.json({ id: "mail-a", account_id: "mine", source: "imap_gmail" });
+    }, async () => {
+        const response = await app.request(
+            "https://gateway.invalid/api/unified/emails/mail-a/attachments/not%2Fsafe",
+            { headers }, env,
+        );
+        assert.equal(response.status, 400);
+        assert.deepEqual(await response.json(), { error: "invalid attachment identity" });
+        assert.equal(calls, 0);
+    });
+});
+
+test("downstream cancellation propagates to a federated attachment shard stream", async () => {
+    const { app, env } = gateway(db());
+    let cancelled = false;
+    await withFetch(async url => url.endsWith("/shard/emails/mail-a")
+        ? Response.json({ id: "mail-a", account_id: "mine", source: "imap_gmail" })
+        : new Response(new ReadableStream({
+            start(controller) { controller.enqueue(new Uint8Array([1])); },
+            cancel() { cancelled = true; },
+        })), async () => {
+        const response = await app.request(
+            "https://gateway.invalid/api/unified/emails/mail-a/attachments/att-1",
+            { headers }, env,
+        );
+        await response.body.cancel("client disconnected");
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(cancelled, true);
+    });
+});
+
 test("degraded pagination exposes incomplete results without count or cursor advancement", async () => {
     const registry = { ...map, accounts: { mine2: "s2" }, shards: [...map.shards, { ...map.shards[0], id: "s2", base_url: "https://failed.invalid" }] };
     await withFetch(async url => new URL(url).host === "failed.invalid" ? new Response("down", { status: 503 }) : Response.json({ results: [{ id: "a", received_at: 100 }], count: 1 }), async () => {

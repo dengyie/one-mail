@@ -132,6 +132,8 @@ VPS 存储服务监听 `127.0.0.1:39001`，由 supervisord 托管，数据目录
 | `SHARD_MODE` | 文本/JSON | 分片 Worker 设置为 `1`，仅提供 `/shard/*` 数据接口，不提供用户登录或发信接口 | `1` |
 | `SHARD_ID` | 文本 | 本实例的分片标识；主站默认 `primary` | `shard1` |
 | `SHARD_TOKEN` | Secret | 分片间 Bearer 凭据；每个分片独立配置，至少 32 字节随机值 | 使用 `wrangler secret put SHARD_TOKEN` |
+| `ATTACHMENT_STORAGE_URL` | URL | 此 D1 所有者使用的 VPS 私有附件存储 HTTPS 地址 | `https://inbox.mangoqwq.com/_one_mail_attachment_storage` |
+| `ATTACHMENT_STORAGE_TOKEN` | Secret | 与 VPS 附件存储服务共享的 Bearer token；每个分片 Worker 都要单独配置 | 使用 `wrangler secret put ATTACHMENT_STORAGE_TOKEN` |
 
 主站 KV 的 `one-mail:shard-map` 保存版本 `v:1`、`shards`（`id/base_url/token`）和 `accounts`（账号 ID 到分片 ID）。缺失或合法空表保持全本地路径；读取失败或无效配置会拒绝请求，不能当作空表继续删除元数据。`base_url` 必须是 HTTPS origin，不能含路径、查询或用户信息。不要把真实 token 写入文档或 Git。
 
