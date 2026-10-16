@@ -92,6 +92,9 @@ jobs:
           SSH_OPTS=(-p "$PORT" -o StrictHostKeyChecking=yes)
 
           REMOTE_STAGE=$(ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
+          # The stage path is intentionally expanded by the runner into each
+          # scp destination; the remote shell receives it as a literal path.
+          # shellcheck disable=SC2029
           scp "${SCP_OPTS[@]}" /tmp/one-mail-aggregator.tgz \
             "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/aggregator.tgz"
           scp "${SCP_OPTS[@]}" deploy/nginx/one-mail-frontend.conf \
