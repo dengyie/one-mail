@@ -97,14 +97,18 @@ jobs:
           # shellcheck disable=SC2029
           scp "${SCP_OPTS[@]}" /tmp/one-mail-aggregator.tgz \
             "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/aggregator.tgz"
+          # shellcheck disable=SC2029
           scp "${SCP_OPTS[@]}" deploy/nginx/one-mail-frontend.conf \
             "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/one-mail-frontend.conf"
+          # shellcheck disable=SC2029
           scp "${SCP_OPTS[@]}" deploy/pxed-local-config.sh \
             "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/pxed-local-config.sh"
+          # shellcheck disable=SC2029
           printf '%s' "$ATTACHMENT_STORAGE_TOKEN" | \
             ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" \
             "umask 077; cat > '$REMOTE_STAGE/attachment-storage.token'; chmod 0600 '$REMOTE_STAGE/attachment-storage.token'"
 
+          # shellcheck disable=SC2029
           ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
           set -euo pipefail
           trap 'rm -rf "$REMOTE_STAGE"' EXIT
