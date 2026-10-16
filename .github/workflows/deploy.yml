@@ -125,7 +125,9 @@ jobs:
       - name: Checkout nginx configuration
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v6
         with:
-          sparse-checkout: deploy/nginx/one-mail-frontend.conf
+          sparse-checkout: |
+            deploy/nginx/one-mail-frontend.conf
+            deploy/pxed-local-config.sh
           sparse-checkout-cone: false
 
       - name: Download Frontend Artifact
@@ -184,6 +186,12 @@ jobs:
           PORT="${PXED_SSH_PORT:-22}"
           USER="${PXED_SSH_USER:-root}"
           REMOTE_STAGE=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
+          cleanup_remote_stage() {
+            if [ -n "${REMOTE_STAGE:-}" ]; then
+              ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
+            fi
+          }
+          trap cleanup_remote_stage EXIT
           scp -O -P "$PORT" -o StrictHostKeyChecking=yes /tmp/one-mail-fe-dist.tgz "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/frontend.tgz"
           scp -O -P "$PORT" -o StrictHostKeyChecking=yes deploy/nginx/one-mail-frontend.conf "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/one-mail-frontend.conf"
           scp -O -P "$PORT" -o StrictHostKeyChecking=yes deploy/pxed-local-config.sh "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/pxed-local-config.sh"

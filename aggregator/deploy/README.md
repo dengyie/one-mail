@@ -23,13 +23,14 @@ pxed 这台 VPS 不以 systemd 为 PID 1、也不开 cron，聚合器由 **super
 2. VPS 本地 `/opt/one-mail-agg/supervisor-one-mail-agg.conf` 保存聚合器与附件服务的 Supervisor program 配置；`/personal/pxed/supervisor-one-mail-agg.conf` 是指向它的 include 链接。附件数据落在 VPS 本地 `/opt/one-mail-attachments`。
 3. Nginx 配置内容保存在 VPS 本地 `/opt/one-mail-frontend/one-mail-frontend.conf`；`/personal/pxed/nginx/conf.d/one-mail-frontend.conf` 是 Nginx include 链接。部署更新先在本地盘暂存，再替换配置，避免依赖 `/personal` 的 NFS 用户配额。
 4. nginx 的 `/_one_mail_attachment_storage/` 只代理到该本地端口；Worker 使用同一个 Bearer token 访问，浏览器不会接触存储服务。
-5. Worker 配置 `ATTACHMENT_STORAGE_URL=https://inbox.mangoqwq.com/_one_mail_attachment_storage`，单文件上限 30 MiB。
+5. 主库和每个启用的分片 Worker 都配置 `ATTACHMENT_STORAGE_URL=https://inbox.mangoqwq.com/_one_mail_attachment_storage` 和独立安装的 `ATTACHMENT_STORAGE_TOKEN`。分片模板示例包含该配置；存储服务单文件上限 30 MiB，并默认保留 512 MiB VPS 磁盘空间。
 
 检查：
 
 ```bash
 supervisorctl -c /personal/pxed/supervisord.conf status one-mail-attachment-storage
 curl -H "Authorization: Bearer <token>" https://inbox.mangoqwq.com/_one_mail_attachment_storage/health
+df -h /opt/one-mail-attachments
 ```
 
 > 仓库内曾误存 `one-mail-agg.service`/`one-mail-agg.timer`（systemd unit），但 pxed 从未用 systemd 跑过它们（已 `disabled` 并删除），仅 supervisord 路径是真实生效的。unit 文件已从仓库移除，勿再用 systemd 部署。

@@ -52,6 +52,7 @@ app.use('/*', cors({
 			'x-one-mail-client',
 		],
 	allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+	exposeHeaders: ['Content-Disposition'],
 }));
 // error handler
 app.onError(handleApiError);
@@ -417,6 +418,7 @@ export default {
 						'x-one-mail-client',
 					],
 					allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+					exposeHeaders: ['Content-Disposition'],
 				}));
 				shardOnly.route('/', shardApi);
 				shardOnly.get('/', health_check);

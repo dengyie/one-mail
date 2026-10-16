@@ -25,9 +25,11 @@ ENABLE_USER_DELETE_EMAIL = false
 ENABLE_AUTO_REPLY = false
 SHARD_MODE = "1"
 SHARD_ID = "shard1"
+ATTACHMENT_STORAGE_URL = "https://inbox.mangoqwq.com/_one_mail_attachment_storage"
 # After deploy:
 #   printf '%s' "$SHARD_TOKEN" | wrangler secret put SHARD_TOKEN --config wrangler.shard1.toml
 #   printf '%s' "$JWT_SECRET" | wrangler secret put JWT_SECRET --config wrangler.shard1.toml
+#   printf '%s' "$ATTACHMENT_STORAGE_TOKEN" | wrangler secret put ATTACHMENT_STORAGE_TOKEN --config wrangler.shard1.toml
 
 [[d1_databases]]
 binding = "DB"

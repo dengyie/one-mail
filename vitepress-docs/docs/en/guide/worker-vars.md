@@ -138,6 +138,8 @@ The VPS service listens on `127.0.0.1:39001`, is supervised by supervisord, and 
 | `SHARD_MODE` | Text/JSON | Set to `1` on a shard Worker to serve only `/shard/*` data endpoints, without user login or outbound mail APIs | `1` |
 | `SHARD_ID` | Text | Instance shard identity; the primary defaults to `primary` | `shard1` |
 | `SHARD_TOKEN` | Secret | Separate inter-shard Bearer credential per shard, with at least 32 random bytes | Use `wrangler secret put SHARD_TOKEN` |
+| `ATTACHMENT_STORAGE_URL` | URL | HTTPS URL of the private VPS attachment storage proxy used by this D1 owner | `https://inbox.mangoqwq.com/_one_mail_attachment_storage` |
+| `ATTACHMENT_STORAGE_TOKEN` | Secret | Bearer token shared with the VPS attachment storage service; configure separately on every shard Worker | Use `wrangler secret put ATTACHMENT_STORAGE_TOKEN` |
 
 The primary KV key `one-mail:shard-map` stores version `v:1`, `shards` (`id/base_url/token`), and `accounts` (account ID to shard ID). A missing or valid empty map preserves local routing. A read failure or invalid map rejects the request rather than continuing metadata deletion as if routing were local. `base_url` must be an HTTPS origin without a path, query, or user information. Never store real tokens in documentation or Git.
 

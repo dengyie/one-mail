@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hmac
 import os
 import re
+import shutil
 import stat
 import tempfile
 import threading
@@ -17,6 +19,7 @@ from pathlib import Path
 MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024
 STORAGE_KEY_RE = re.compile(r"^/unified/[A-Za-z0-9_-]{43}$")
 MAX_ACTIVE_REQUESTS = 64
+DEFAULT_MIN_FREE_BYTES = 512 * 1024 * 1024
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -27,6 +30,9 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, server_address, handler_class):
         self._request_slots = threading.BoundedSemaphore(MAX_ACTIVE_REQUESTS)
+        self._upload_reservation_lock = threading.Lock()
+        self._reserved_upload_bytes = 0
+        self.min_free_bytes = 0
         super().__init__(server_address, handler_class)
 
     def get_request(self):
@@ -56,6 +62,30 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self._request_slots.release()
+
+    def reserve_upload(self, size: int) -> bool:
+        with self._upload_reservation_lock:
+            try:
+                free = shutil.disk_usage(self.storage_root).free  # type: ignore[attr-defined]
+            except OSError:
+                return False
+            available = free - self._reserved_upload_bytes - size
+            if available < self.min_free_bytes:
+                return False
+            self._reserved_upload_bytes += size
+            return True
+
+    def release_upload(self, size: int) -> None:
+        with self._upload_reservation_lock:
+            self._reserved_upload_bytes = max(0, self._reserved_upload_bytes - size)
+
+    def storage_healthy(self) -> bool:
+        with self._upload_reservation_lock:
+            try:
+                free = shutil.disk_usage(self.storage_root).free  # type: ignore[attr-defined]
+            except OSError:
+                return False
+            return free - self._reserved_upload_bytes >= self.min_free_bytes
 
 
 class StorageHandler(BaseHTTPRequestHandler):
@@ -91,7 +121,8 @@ class StorageHandler(BaseHTTPRequestHandler):
             return None
         key = self.path.removeprefix("/unified/")
         root = self.storage_root / "unified"
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Resolve paths without touching disk; PUT creates directories inside
+        # the guarded block that maps capacity failures to HTTP 507.
         candidate = root / key
         if candidate.parent != root:
             return None
@@ -102,11 +133,14 @@ class StorageHandler(BaseHTTPRequestHandler):
             if not self._authorized():
                 self._send_error(HTTPStatus.UNAUTHORIZED)
                 return
-            self.send_response(HTTPStatus.OK)
+            healthy = self.server.storage_healthy()  # type: ignore[attr-defined]
+            body = b'{"ok":true}' if healthy else b'{"ok":false}'
+            self.send_response(HTTPStatus.OK if healthy else HTTPStatus.INSUFFICIENT_STORAGE)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", "11")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(b'{"ok":true}')
+            self.wfile.write(body)
             return
         if not self._authorized():
             self._send_error(HTTPStatus.UNAUTHORIZED)
@@ -153,9 +187,14 @@ class StorageHandler(BaseHTTPRequestHandler):
         if size < 0 or size > MAX_ATTACHMENT_BYTES:
             self._send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(prefix=".upload-", dir=path.parent)
+        server = self.server  # type: ignore[assignment]
+        if not server.reserve_upload(size):  # type: ignore[attr-defined]
+            self._send_error(HTTPStatus.INSUFFICIENT_STORAGE)
+            return
+        temporary = None
         try:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=".upload-", dir=path.parent)
             remaining = size
             with os.fdopen(fd, "wb") as stream:
                 while remaining:
@@ -176,11 +215,18 @@ class StorageHandler(BaseHTTPRequestHandler):
             self.close_connection = True
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             return
+        except OSError as error:
+            if error.errno in (errno.ENOSPC, errno.EDQUOT):
+                self._send_error(HTTPStatus.INSUFFICIENT_STORAGE)
+            else:
+                self._send_error(HTTPStatus.SERVICE_UNAVAILABLE)
         finally:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+            server.release_upload(size)  # type: ignore[attr-defined]
 
     def do_DELETE(self) -> None:
         if not self._authorized():
@@ -205,7 +251,10 @@ def main() -> None:
     parser.add_argument("--token-file", required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=39001)
+    parser.add_argument("--min-free-bytes", type=int, default=DEFAULT_MIN_FREE_BYTES)
     args = parser.parse_args()
+    if args.min_free_bytes < 0:
+        raise SystemExit("--min-free-bytes must be non-negative")
     root = Path(args.root).resolve()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(root, 0o700)
@@ -215,6 +264,7 @@ def main() -> None:
     server = BoundedThreadingHTTPServer((args.host, args.port), StorageHandler)
     server.storage_root = root  # type: ignore[attr-defined]
     server.storage_token = token  # type: ignore[attr-defined]
+    server.min_free_bytes = args.min_free_bytes
     try:
         server.serve_forever(poll_interval=0.5)
     finally:
