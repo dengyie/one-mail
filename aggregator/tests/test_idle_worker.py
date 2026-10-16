@@ -251,11 +251,126 @@ def test_unsupported_idle_is_remembered_and_worker_exits(tmp_path):
     worker = ImapIdleWorker(
         _config(tmp_path), acc, SyncState(str(tmp_path / "state.json")),
         client_factory=lambda _a: client,
+        enable_noop_fallback=False,
     )
     worker.run()
 
     assert _idle_unsupported[acc.id] == _idle_fingerprint(acc)
     assert client.logged_out is True
+
+
+def test_noop_fallback_mode_runs_noop_and_syncs(tmp_path, monkeypatch):
+    class _NoIdleClient:
+        def __init__(self):
+            self.noops = 0
+            self.folders_selected = []
+            self.logged_out = False
+
+        def has_capability(self, name):
+            return False
+
+        def select_folder(self, folder, readonly=True):
+            self.folders_selected.append(folder)
+
+        def noop(self):
+            self.noops += 1
+
+        def logout(self):
+            self.logged_out = True
+
+    client = _NoIdleClient()
+    acc = _qq_account()
+    syncs = []
+
+    worker = ImapIdleWorker(
+        _config(tmp_path), acc, SyncState(str(tmp_path / "state.json")),
+        client_factory=lambda _a: client,
+        enable_noop_fallback=True,
+        noop_poll_interval_seconds=0.01,
+    )
+
+    def fake_do_sync(cl):
+        syncs.append(len(syncs))
+        if len(syncs) >= 2:
+            worker.stop()
+        return {"synced": 1, "dropped": 0}
+
+    worker.do_sync = fake_do_sync
+    worker.run()
+
+    assert client.noops >= 1
+    assert "INBOX" in client.folders_selected
+    assert len(syncs) >= 2
+    assert acc.id not in _idle_unsupported
+
+
+def test_noop_fallback_mode_handles_connection_loss_and_reconnects(tmp_path, monkeypatch):
+    clients = []
+
+    class _BrokenNoIdleClient:
+        def __init__(self, fail_noop: bool):
+            self.fail_noop = fail_noop
+            self.logged_out = False
+            self.noops = 0
+
+        def has_capability(self, name):
+            return False
+
+        def select_folder(self, folder, readonly=True):
+            pass
+
+        def noop(self):
+            if self.fail_noop:
+                raise ConnectionResetError("connection reset by peer")
+            self.noops += 1
+
+        def logout(self):
+            self.logged_out = True
+
+    def factory(_acc):
+        c = _BrokenNoIdleClient(fail_noop=(len(clients) == 0))
+        clients.append(c)
+        return c
+
+    acc = _qq_account()
+    worker = ImapIdleWorker(
+        _config(tmp_path), acc, SyncState(str(tmp_path / "state.json")),
+        client_factory=factory,
+        enable_noop_fallback=True,
+        noop_poll_interval_seconds=0.01,
+    )
+    monkeypatch.setattr(idle_mod, "_reconnect_backoff", lambda _errs: 0.01)
+
+    sync_calls = []
+    def fake_do_sync(cl):
+        sync_calls.append(len(sync_calls))
+        if len(clients) >= 2 and len(sync_calls) >= 3:
+            worker.stop()
+        return {"synced": 0, "dropped": 0}
+
+    worker.do_sync = fake_do_sync
+    worker.run()
+
+    assert len(clients) >= 2
+    assert clients[0].logged_out is True
+    assert clients[1].noops >= 1
+
+
+def test_noop_poll_interval_honors_account_config(tmp_path):
+    acc = _qq_account(poll_interval=25)
+    worker = ImapIdleWorker(
+        _config(tmp_path), acc, SyncState(str(tmp_path / "state.json")),
+        enable_noop_fallback=True,
+    )
+    assert worker.noop_poll_interval_seconds == 25
+
+    # Out of 10~60 range reverts to safe default 30
+    acc_invalid = _qq_account(poll_interval=5)
+    worker2 = ImapIdleWorker(
+        _config(tmp_path), acc_invalid, SyncState(str(tmp_path / "state.json")),
+        enable_noop_fallback=True,
+    )
+    assert worker2.noop_poll_interval_seconds == 30
 
 
 def test_ensure_idle_workers_skips_known_unsupported_account(tmp_path, monkeypatch):

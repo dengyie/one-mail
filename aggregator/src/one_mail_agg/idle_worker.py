@@ -81,6 +81,8 @@ class ImapIdleWorker(threading.Thread):
         state: SyncState,
         client_factory: Callable[[AccountConfig], IMAPClient] = default_client_factory,
         idle_refresh_seconds: int = 60,  # 60 秒主动唤醒重进 IDLE，防长连接静默断开与 NAT 老化
+        enable_noop_fallback: bool = True,
+        noop_poll_interval_seconds: int = 30,
     ):
         super().__init__(name=f"idle-{account.id}", daemon=True)
         self.config = config
@@ -88,6 +90,11 @@ class ImapIdleWorker(threading.Thread):
         self.state = state
         self.client_factory = client_factory
         self.idle_refresh_seconds = idle_refresh_seconds
+        self.enable_noop_fallback = enable_noop_fallback
+        if getattr(account, "poll_interval", None) is not None and 10 <= account.poll_interval <= 60:
+            self.noop_poll_interval_seconds = account.poll_interval
+        else:
+            self.noop_poll_interval_seconds = noop_poll_interval_seconds
         self._stop_event = threading.Event()
         self._sync_lock = threading.Lock()
 
@@ -138,53 +145,78 @@ class ImapIdleWorker(threading.Thread):
             try:
                 client = self.client_factory(self.account)
                 _enable_socket_keepalive(client)
-                if not client.has_capability("IDLE"):
-                    _mark_idle_unsupported(self.account)
-                    log.warning("Account %s does not support IDLE; falling back to daemon polling",
-                                self.account.id)
-                    try:
-                        client.logout()
-                    except Exception:
-                        pass
-                    return
+                has_idle = client.has_capability("IDLE")
+                if not has_idle:
+                    if not self.enable_noop_fallback:
+                        _mark_idle_unsupported(self.account)
+                        log.warning("Account %s does not support IDLE; falling back to daemon polling",
+                                    self.account.id)
+                        try:
+                            client.logout()
+                        except Exception:
+                            pass
+                        return
 
-                log.info("Account %s connected for IDLE monitoring", self.account.id)
+                mode_str = "IDLE monitoring" if has_idle else f"long-lived NOOP polling (interval={self.noop_poll_interval_seconds}s)"
+                log.info("Account %s connected for %s", self.account.id, mode_str)
                 try:
                     r = self.do_sync(client)
-                    log.info("Account %s initial IDLE sync complete: synced=%d dropped=%d",
-                             self.account.id, r.get("synced", 0), r.get("dropped", 0))
+                    log.info("Account %s initial %s sync complete: synced=%d dropped=%d",
+                             self.account.id, "IDLE" if has_idle else "NOOP",
+                             r.get("synced", 0), r.get("dropped", 0))
                 except Exception as sync_err:
                     if quota_retry_at(sync_err) is not None:
                         raise
                     self._report_status(sync_err)
-                    log.warning("Account %s initial IDLE sync warning: %s",
+                    log.warning("Account %s initial sync warning: %s",
                                 self.account.id, sync_err)
 
                 folder = self.account.folders[0] if self.account.folders else "INBOX"
                 while not self.is_stopped():
                     if self.state.should_skip_account(self.account.id):
                         break
-                    client.select_folder(folder, readonly=True)
-                    client.idle()
-                    responses = client.idle_check(timeout=self.idle_refresh_seconds)
-                    client.idle_done()
 
-                    if self.is_stopped():
-                        break
+                    if has_idle:
+                        client.select_folder(folder, readonly=True)
+                        client.idle()
+                        responses = client.idle_check(timeout=self.idle_refresh_seconds)
+                        client.idle_done()
 
-                    has_event = bool(responses)
-                    if has_event:
-                        log.info("Account %s received IDLE event from server: %s -> syncing immediately!",
-                                 self.account.id, responses)
+                        if self.is_stopped():
+                            break
 
-                    try:
-                        res = self.do_sync(client)
-                        if has_event or res.get("synced", 0) > 0:
-                            log.info("Account %s instant sync done: synced=%d dropped=%d",
-                                     self.account.id, res.get("synced", 0), res.get("dropped", 0))
-                    except Exception as loop_sync_err:
-                        log.warning("Account %s loop sync error: %s", self.account.id, loop_sync_err)
-                        raise
+                        has_event = bool(responses)
+                        if has_event:
+                            log.info("Account %s received IDLE event from server: %s -> syncing immediately!",
+                                     self.account.id, responses)
+
+                        try:
+                            res = self.do_sync(client)
+                            if has_event or res.get("synced", 0) > 0:
+                                log.info("Account %s instant sync done: synced=%d dropped=%d",
+                                         self.account.id, res.get("synced", 0), res.get("dropped", 0))
+                        except Exception as loop_sync_err:
+                            log.warning("Account %s loop sync error: %s", self.account.id, loop_sync_err)
+                            raise
+                    else:
+                        if self._stop_event.wait(self.noop_poll_interval_seconds):
+                            break
+
+                        client.select_folder(folder, readonly=True)
+                        try:
+                            client.noop()
+                        except Exception as noop_err:
+                            log.warning("Account %s NOOP failed: %s", self.account.id, noop_err)
+                            raise
+
+                        try:
+                            res = self.do_sync(client)
+                            if res.get("synced", 0) > 0:
+                                log.info("Account %s NOOP poll sync done: synced=%d dropped=%d",
+                                         self.account.id, res.get("synced", 0), res.get("dropped", 0))
+                        except Exception as loop_sync_err:
+                            log.warning("Account %s NOOP loop sync error: %s", self.account.id, loop_sync_err)
+                            raise
 
                     consecutive_errors = 0
 
@@ -211,13 +243,13 @@ class ImapIdleWorker(threading.Thread):
                 if consecutive_errors >= _IDLE_FAILURE_THRESHOLD:
                     _mark_idle_cooldown(self.account)
                     log.warning(
-                        "Account %s IDLE repeatedly unstable (%s); falling back to daemon polling "
-                        "for %ds before retrying IDLE",
+                        "Account %s connection repeatedly unstable (%s); falling back to daemon polling "
+                        "for %ds before retrying",
                         self.account.id, e, _IDLE_RETRY_COOLDOWN_SECONDS,
                     )
                     return
 
-                log.warning("Account %s IDLE connection lost (%s), reconnecting in %ds...",
+                log.warning("Account %s connection lost (%s), reconnecting in %ds...",
                             self.account.id, e, backoff)
                 if self._stop_event.wait(backoff):
                     break

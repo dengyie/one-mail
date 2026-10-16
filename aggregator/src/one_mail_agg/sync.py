@@ -83,29 +83,30 @@ def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) 
     for folder in account.folders:
         sel = client.select_folder(folder, readonly=True)
         uidvalidity = int(sel[b"UIDVALIDITY"])
-        if not catalog_attempted:
-            maybe_sync_imap_folder_catalog(client, config, account)
-            catalog_attempted = True
         oversize = []
         msgs = fetch_new_messages(client, account, folder, state, oversize=oversize)
         dropped += len(oversize)
+        if msgs:
+            batch = []
+            for m in msgs:
+                try:
+                    batch.append(normalize_message(
+                        m.raw_bytes, account, folder, uidvalidity,
+                        m.uid, m.internal_date_ms))
+                except Exception as e:
+                    dropped += 1
+                    log.warning("skip imap message uid=%s folder=%s account=%s: %r",
+                                m.uid, folder, account.id, e)
+            if batch:
+                upload_emails(config, batch)
+                total += len(batch)
+            # upload 成功后才推进；set_last_uid_max 同时保留 fetch 层已推进的已知超限 UID。
+            state.set_last_uid_max(account.id, folder, max(m.uid for m in msgs))
+        if not catalog_attempted:
+            maybe_sync_imap_folder_catalog(client, config, account)
+            catalog_attempted = True
         if not msgs:
             continue
-        batch = []
-        for m in msgs:
-            try:
-                batch.append(normalize_message(
-                    m.raw_bytes, account, folder, uidvalidity,
-                    m.uid, m.internal_date_ms))
-            except Exception as e:
-                dropped += 1
-                log.warning("skip imap message uid=%s folder=%s account=%s: %r",
-                            m.uid, folder, account.id, e)
-        if batch:
-            upload_emails(config, batch)
-            total += len(batch)
-        # upload 成功后才推进；set_last_uid_max 同时保留 fetch 层已推进的已知超限 UID。
-        state.set_last_uid_max(account.id, folder, max(m.uid for m in msgs))
     return _account_result(total, dropped, "imap")
 
 
