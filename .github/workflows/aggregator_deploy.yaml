@@ -114,6 +114,8 @@ jobs:
           SUPERVISOR=/personal/pxed/supervisord.conf
           SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
           SUPERVISOR_AGG_CONF_LOCAL="$BASE/supervisor-one-mail-agg.conf"
+          NGINX_MAIN=/personal/pxed/nginx/nginx.conf
+          NGINX_PREFIX=/personal/pxed/nginx/
           NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
           NGINX_CONF_LOCAL=/opt/one-mail-frontend/one-mail-frontend.conf
           NGINX_MAIN=/personal/pxed/nginx/nginx.conf
@@ -471,6 +473,15 @@ jobs:
                 pxed_restore_local_config "$BACKUP/runtime/supervisor-one-mail-agg.conf" "$SUPERVISOR_AGG_CONF_LOCAL" 0644
               else
                 pxed_atomic_install_local_config /dev/null "$SUPERVISOR_AGG_CONF_LOCAL" 0644
+              fi
+              if [ -f "$BACKUP/runtime/nginx-config-update-started" ]; then
+                if [ -f "$BACKUP/runtime/nginx-frontend.conf.present" ]; then
+                  pxed_restore_local_config "$BACKUP/runtime/nginx-frontend.conf" /opt/one-mail-frontend/one-mail-frontend.conf 0644
+                else
+                  pxed_atomic_install_local_config /dev/null /opt/one-mail-frontend/one-mail-frontend.conf 0644
+                fi
+                nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
+                nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
               fi
             fi
             supervisorctl -c "$SUPERVISOR" reread
