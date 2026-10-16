@@ -190,6 +190,8 @@ jobs:
           DIST_BACKUP="$FRONTEND/.dist.before-last-deploy.$$"
           CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
           CONF_BACKUP="$CONF.before-last-deploy.$$"
+          exec 9>/tmp/one-mail-nginx-deploy.lock
+          flock 9
           restore_previous() {
             rm -rf "$STAGE"
             if [ -d "$DIST_BACKUP" ]; then
@@ -197,7 +199,7 @@ jobs:
               mv "$DIST_BACKUP" "$DIST"
             fi
             if [ -f "$CONF_BACKUP" ]; then
-              cp "$CONF_BACKUP" "$CONF"
+              mv "$CONF_BACKUP" "$CONF"
             else
               rm -f "$CONF"
             fi
@@ -209,7 +211,7 @@ jobs:
           tar xzf /tmp/one-mail-fe-dist.tgz -C "$STAGE"
           if [ -d "$DIST" ]; then mv "$DIST" "$DIST_BACKUP"; fi
           mv "$STAGE" "$DIST"
-          if [ -f "$CONF" ]; then cp "$CONF" "$CONF_BACKUP"; fi
+          if [ -f "$CONF" ]; then mv "$CONF" "$CONF_BACKUP"; fi
           install -m 0644 /tmp/one-mail-frontend.conf "$CONF"
           if ! nginx -t -c /personal/pxed/nginx/nginx.conf -p /personal/pxed/nginx/; then
             exit 1

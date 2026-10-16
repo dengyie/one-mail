@@ -111,12 +111,14 @@ jobs:
           NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
           NGINX_MAIN=/personal/pxed/nginx/nginx.conf
           NGINX_PREFIX=/personal/pxed/nginx/
+          exec 9>/tmp/one-mail-nginx-deploy.lock
+          flock 9
 
           save_runtime_file() {
             name=$1
             source=$2
             if [ -e "$source" ] || [ -L "$source" ]; then
-              cp -p "$source" "$BACKUP/runtime/$name"
+              mv "$source" "$BACKUP/runtime/$name"
               : > "$BACKUP/runtime/$name.present"
             fi
           }
@@ -125,7 +127,7 @@ jobs:
             name=$1
             target=$2
             if [ -f "$BACKUP/runtime/$name.present" ]; then
-              cp -p "$BACKUP/runtime/$name" "$target"
+              mv "$BACKUP/runtime/$name" "$target"
             else
               rm -f "$target"
             fi
@@ -412,7 +414,7 @@ jobs:
               esac
               if [ ! -f "$BACKUP/runtime/backend-ready" ] || [ "$name" = "agg-loop.sh" ]; then
                 if [ -f "$BACKUP/runtime/$name.present" ]; then
-                  cp -p "$BACKUP/runtime/$name" "$target"
+                  mv "$BACKUP/runtime/$name" "$target"
                 else
                   rm -f "$target"
                 fi
@@ -423,7 +425,7 @@ jobs:
               NGINX_MAIN=/personal/pxed/nginx/nginx.conf
               NGINX_PREFIX=/personal/pxed/nginx/
               if [ -f "$BACKUP/runtime/nginx-frontend.conf.present" ]; then
-                cp -p "$BACKUP/runtime/nginx-frontend.conf" "$NGINX_CONF"
+                mv "$BACKUP/runtime/nginx-frontend.conf" "$NGINX_CONF"
               else
                 rm -f "$NGINX_CONF"
               fi
