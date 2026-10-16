@@ -118,8 +118,6 @@ jobs:
           NGINX_PREFIX=/personal/pxed/nginx/
           NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
           NGINX_CONF_LOCAL=/opt/one-mail-frontend/one-mail-frontend.conf
-          NGINX_MAIN=/personal/pxed/nginx/nginx.conf
-          NGINX_PREFIX=/personal/pxed/nginx/
           exec 9>/tmp/one-mail-nginx-deploy.lock
           flock 9
 
@@ -436,6 +434,8 @@ jobs:
           SUPERVISOR=/personal/pxed/supervisord.conf
           SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
           SUPERVISOR_AGG_CONF_LOCAL="$BASE/supervisor-one-mail-agg.conf"
+          NGINX_MAIN=/personal/pxed/nginx/nginx.conf
+          NGINX_PREFIX=/personal/pxed/nginx/
           if [ ! -d "$BACKUP" ]; then
             echo "No staged deployment backup; the install step already restored its source"
             rm -f "$HELPER"
@@ -496,7 +496,6 @@ jobs:
           fi
           rm -rf "$BACKUP"
           rm -f "$HELPER"
-          rm -rf "$REMOTE_STAGE"
           REMOTE
 
       - name: Finalize successful deployment
