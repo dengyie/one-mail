@@ -94,6 +94,7 @@ jobs:
           REMOTE_STAGE=$(ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
           cleanup_remote_stage() {
             if [ -n "${REMOTE_STAGE:-}" ]; then
+              # shellcheck disable=SC2029 # Expand the mktemp path locally, then pass it as a literal to the pinned host.
               ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
             fi
           }

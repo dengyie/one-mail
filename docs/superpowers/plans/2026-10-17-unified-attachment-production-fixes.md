@@ -91,4 +91,5 @@
 - [x] 运行 storage server pytest。
 - [x] 运行 Worker unified attachment/federation/shard tests。
 - [x] 运行 Worker typecheck、lint 和 build。
+- [x] 修复 staging cleanup 命令的 ShellCheck SC2029 并重新通过 workflow lint。
 - [x] 检查 `git diff --check`、工作区状态和最终 diff。
