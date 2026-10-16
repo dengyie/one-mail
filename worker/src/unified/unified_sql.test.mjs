@@ -10,15 +10,15 @@ test("unified list marks only structurally valid private attachment keys downloa
   db.prepare("INSERT INTO emails VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     "mail-1", "imap_custom", "account-1", "from", "to", "subject", 1, 1, 0, 0,
     JSON.stringify([
-      { id: "ok", size: 2, r2_key: valid },
-      { id: "bad-key", size: 2, r2_key: "unified/not-a-key" },
-      { id: "bad-size", size: 40 * 1024 * 1024, r2_key: valid },
-      { id: "bad/id", size: 2, r2_key: valid },
+      { id: "ok", size: 2, storage_key: valid },
+      { id: "bad-key", size: 2, storage_key: "unified/not-a-key" },
+      { id: "bad-size", size: 40 * 1024 * 1024, storage_key: valid },
+      { id: "bad/id", size: 2, storage_key: valid },
     ]),
   );
   const row = db.prepare(`${UNIFIED_EMAIL_SELECT} WHERE id = ?`).get("mail-1");
   const attachments = JSON.parse(row.attachments_json);
   assert.deepEqual(attachments.map(item => item.downloadable), [true, false, false, false]);
-  assert.ok(attachments.every(item => !Object.hasOwn(item, "r2_key")));
+  assert.ok(attachments.every(item => !Object.hasOwn(item, "storage_key")));
   db.close();
 });

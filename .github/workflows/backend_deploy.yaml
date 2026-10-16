@@ -95,6 +95,35 @@ jobs:
           fi
           printf '%s\n' "$WRANGLER_TOML_CONTENT" > worker/wrangler.toml
           chmod 600 worker/wrangler.toml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import tomllib
+          path = Path("worker/wrangler.toml")
+          text = path.read_text(encoding="utf-8")
+          if re.search(r'(?m)^ATTACHMENT_STORAGE_URL\s*=', text):
+              text = re.sub(r'(?m)^ATTACHMENT_STORAGE_URL\s*=\s*.*$', 'ATTACHMENT_STORAGE_URL = "https://inbox.mangoqwq.com/_one_mail_attachment_storage"', text)
+          else:
+              text = text.replace("[vars]\n", '[vars]\nATTACHMENT_STORAGE_URL = "https://inbox.mangoqwq.com/_one_mail_attachment_storage"\n', 1)
+          lines = text.splitlines(keepends=True)
+          without_attachment_r2 = []
+          index = 0
+          while index < len(lines):
+              if lines[index].strip() != "[[r2_buckets]]":
+                  without_attachment_r2.append(lines[index])
+                  index += 1
+                  continue
+              end = index + 1
+              while end < len(lines) and not lines[end].lstrip().startswith("["):
+                  end += 1
+              stanza = "".join(lines[index:end])
+              bucket = tomllib.loads(stanza).get("r2_buckets", [{}])[0]
+              if bucket.get("binding") != "ATTACHMENTS":
+                  without_attachment_r2.extend(lines[index:end])
+              index = end
+          text = "".join(without_attachment_r2)
+          path.write_text(text, encoding="utf-8")
+          PY
 
       - name: Validate production Worker bindings
         shell: bash
@@ -116,7 +145,6 @@ jobs:
           required = {
               "D1": {"DB"},
               "KV": {"KV"},
-              "R2": {"ATTACHMENTS"},
               "DO": {"PASSKEY_CHALLENGES", "D1_QUOTA_COORDINATOR", "FLEET_REGISTRY"},
               "send_email": {"SEND_MAIL"},
           }
@@ -125,67 +153,49 @@ jobs:
           if missing:
               print("::error title=Incomplete production Worker configuration::Missing required bindings: " + ", ".join(missing))
               sys.exit(1)
+          if "ATTACHMENTS" in bindings["R2"]:
+              print("::error title=Legacy attachment R2 binding remains::VPS attachment storage is required; remove the ATTACHMENTS R2 binding.")
+              sys.exit(1)
 
-          print("Production Worker config passed required binding checks")
+          storage_url = config.get("vars", {}).get("ATTACHMENT_STORAGE_URL")
+          if not isinstance(storage_url, str) or not storage_url.startswith("https://") or not storage_url.rstrip("/"):
+              print("::error title=Missing attachment storage URL::BACKEND_TOML vars.ATTACHMENT_STORAGE_URL must be an HTTPS URL.")
+              sys.exit(1)
+          print("Production Worker config passed required binding and VPS storage checks")
           PY
 
-      - name: Ensure production R2 attachment bucket
+      - name: Configure Worker attachment storage secret
         shell: bash
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ATTACHMENT_STORAGE_TOKEN: ${{ secrets.ATTACHMENT_STORAGE_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            echo "::error title=Missing Cloudflare credentials::R2 provisioning requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
+            echo "::error title=Missing Cloudflare credentials::Worker secret update requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
             exit 1
           fi
-
-          bucket_name=$(python3 - <<'PY'
-          import re
-          import tomllib
-
-          with open("worker/wrangler.toml", "rb") as config_file:
-              config = tomllib.load(config_file)
-          buckets = [item for item in config.get("r2_buckets", [])
-                     if item.get("binding") == "ATTACHMENTS"]
-          if len(buckets) != 1 or not isinstance(buckets[0].get("bucket_name"), str):
-              raise SystemExit("ATTACHMENTS must define exactly one bucket_name")
-          name = buckets[0]["bucket_name"]
-          if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}[a-z0-9]", name):
-              raise SystemExit("ATTACHMENTS bucket_name has an invalid R2 name")
-          print(name)
-          PY
-          )
-          api="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2/buckets"
-          buckets_json=$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            "$api")
-          if ! printf '%s' "$buckets_json" | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("success") is True else 1)'; then
-            echo "::error title=R2 bucket listing failed::Cloudflare did not accept the R2 bucket listing request."
+          if [ -z "${ATTACHMENT_STORAGE_TOKEN:-}" ] || [ "${#ATTACHMENT_STORAGE_TOKEN}" -lt 32 ]; then
+            echo "::error::Missing ATTACHMENT_STORAGE_TOKEN or token is shorter than 32 characters."
             exit 1
           fi
-          if printf '%s' "$buckets_json" | python3 -c 'import json, sys; name=sys.argv[1]; payload=json.load(sys.stdin); raise SystemExit(0 if any(item.get("name") == name for item in payload.get("result", [])) else 1)' "$bucket_name"; then
-            echo "R2 attachment bucket is current: ${bucket_name}"
-            exit 0
-          fi
-
-          create_payload=$(python3 - "$bucket_name" <<'PY'
-          import json
-          import sys
-          print(json.dumps({"name": sys.argv[1]}))
-          PY
-          )
-          create_json=$(curl --fail-with-body --silent --show-error --request POST \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data "$create_payload" "$api")
-          if ! printf '%s' "$create_json" | python3 -c 'import json, sys; payload=json.load(sys.stdin); raise SystemExit(0 if payload.get("success") is True else 1)'; then
-            echo "::error title=R2 bucket creation failed::Cloudflare could not create the configured attachment bucket."
-            exit 1
-          fi
-          echo "Created R2 attachment bucket: ${bucket_name}"
+          cd worker/
+          for attempt in $(seq 1 30); do
+            health_payload=$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer ${ATTACHMENT_STORAGE_TOKEN}" \
+              https://inbox.mangoqwq.com/_one_mail_attachment_storage/health || true)
+            if [ "$health_payload" = '{"ok":true}' ]; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then
+              echo "::error::VPS attachment storage did not become healthy before Worker deployment."
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "VPS attachment storage is healthy"
+          printf '%s' "$ATTACHMENT_STORAGE_TOKEN" | pnpm exec wrangler secret put ATTACHMENT_STORAGE_TOKEN >/dev/null
 
       - name: Ensure remote D1 provider identity schema
         shell: bash
@@ -284,7 +294,36 @@ jobs:
             exit 1
           fi
           cd worker/
-          trap 'rm -f ../.d1-email-schema.json ../.d1-email-attachment-gc.sql' EXIT
+          trap 'rm -f ../.d1-email-schema.json ../.d1-attachment-gc-schema.json ../.d1-email-attachment-gc.sql' EXIT
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --command "PRAGMA table_info(attachment_gc)" \
+            --json > ../.d1-attachment-gc-schema.json
+          legacy_gc_column=$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("../.d1-attachment-gc-schema.json").read_text())
+          def result_rows(value):
+              if isinstance(value, dict):
+                  rows = value.get("results")
+                  if isinstance(rows, list):
+                      yield rows
+                  for child in value.values():
+                      yield from result_rows(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      yield from result_rows(child)
+          candidates = list(result_rows(payload))
+          if not candidates:
+              raise SystemExit("attachment_gc schema query returned no result set")
+          print("true" if any(row.get("name") == "r2_key" for rows in candidates for row in rows) else "false")
+          PY
+          )
+          if [ "$legacy_gc_column" = "true" ]; then
+            pnpm exec wrangler d1 execute DB --remote --yes \
+              --file ../db/2026-10-17-attachment-storage-key.sql
+            echo "Renamed legacy attachment GC key column to storage_key"
+          fi
           # This migration is idempotent and must run before retention code can
           # access attachment_gc on an existing production database.
           pnpm exec wrangler d1 execute DB \

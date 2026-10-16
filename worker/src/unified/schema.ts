@@ -1,6 +1,10 @@
 import { ensureMailMutationSchema } from "./mutation_schema";
 import { ensureTableColumns } from "../core/db_schema.ts";
-import { ATTACHMENT_DELETE_GC_TRIGGER_SQL } from "./attachment_gc_schema.ts";
+import {
+    ATTACHMENT_DELETE_GC_TRIGGER_SQL,
+    ATTACHMENT_DELETE_GC_TRIGGER_NAME,
+    ensureAttachmentGcStorageKeySchema,
+} from "./attachment_gc_schema.ts";
 
 const PROVIDER_IDENTITY_COLUMNS: Array<[string, string]> = [
     ["provider", "TEXT"],
@@ -85,10 +89,11 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
     ];
     await db.batch(backfills.map(sql => db.prepare(sql)));
 
-    const folderTable = await db.prepare(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mail_account_folders'`,
-    ).first();
-    if (!folderTable) changes.push("mail_account_folders");
+    const existingTables = await db.prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('mail_account_folders', 'attachment_gc')`,
+    ).all<{ name: string }>();
+    const tableNames = new Set(existingTables.results.map(row => row.name));
+    if (!tableNames.has("mail_account_folders")) changes.push("mail_account_folders");
 
     // Folder names are metadata. Provider folders (Graph today, future Gmail
     // adapters) key by provider_folder_id so renames do not create a new row.
@@ -117,13 +122,19 @@ export async function ensureProviderIdentitySchema(db: D1Database): Promise<stri
     // admin initialize/migrate shape-driven even if the deploy migration was
     // skipped in a custom installation.
     await ensureMailMutationSchema(db);
+    // Inspect before CREATE so fresh/current tables do not pay for a
+    // no-op CREATE followed by a second shape query. Legacy tables are
+    // repaired before any dependent index or trigger is created.
+    await ensureAttachmentGcStorageKeySchema(db, tableNames.has("attachment_gc"));
     await db.batch([db.prepare(`CREATE TABLE IF NOT EXISTS attachment_gc (
-        r2_key TEXT PRIMARY KEY,
+        storage_key TEXT PRIMARY KEY,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-    )`), db.prepare(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key)`),
+    )`), db.prepare(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, storage_key)`),
+        db.prepare("DROP TRIGGER IF EXISTS trg_emails_attachment_gc_after_delete"),
+        db.prepare(`DROP TRIGGER IF EXISTS ${ATTACHMENT_DELETE_GC_TRIGGER_NAME}`),
         db.prepare(ATTACHMENT_DELETE_GC_TRIGGER_SQL)]);
 
     return changes;

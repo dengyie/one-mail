@@ -208,7 +208,7 @@ shard.get("/shard/emails/:id", async (c) => {
     return c.json({ ...(row as Record<string, unknown>), attachments_json: publicAttachmentJson((row as Record<string, unknown>).attachments_json) });
 });
 
-shard.get("/shard/emails/:id/attachments/:attachmentId", downloadAttachment);
+shard.get("/shard/emails/:id/attachments/:attachmentId", (c) => downloadAttachment(c));
 shard.put("/shard/attachments/:accountId/:emailId/:attachmentId", uploadAttachment);
 
 shard.post("/shard/emails/:id/read", markRead);

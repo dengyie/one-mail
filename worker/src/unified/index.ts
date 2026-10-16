@@ -246,11 +246,11 @@ const getEmail = async (c: Context<HonoCustomType>) => {
 const getAttachment = async (c: Context<HonoCustomType>) => {
     const map = await loadShardMap(c.env);
     const exclude = excludeRemoteSql(map);
-    const row = await c.env.DB.prepare(`SELECT source, account_id, to_addr FROM emails WHERE id = ? AND ${exclude.sql}`)
+    const row = await c.env.DB.prepare(`SELECT source, account_id, to_addr, attachments_json FROM emails WHERE id = ? AND ${exclude.sql}`)
         .bind(c.req.param("id"), ...exclude.params).first() as { source?: string | null; account_id?: string | null; to_addr?: string | null } | null;
     if (row) {
         if (!(await checkRowAccess(c, row))) return c.json({ error: "forbidden" }, 403);
-        return downloadAttachment(c);
+        return downloadAttachment(c, row as Record<string, unknown>);
     }
     if (!hasRemoteShards(map)) return c.json({ error: "not found" }, 404);
     const owner = await locateRemoteEmailOwner(c, map, `/shard/emails/${encodeURIComponent(c.req.param("id") || "")}`);

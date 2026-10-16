@@ -3,9 +3,13 @@ import copy
 import json
 from urllib.parse import quote
 import requests
+import re
 
 from .config import Config, WorkerDestination
 from .d1_quota import DatabaseQuotaExceeded, database_quota_error
+
+
+STORAGE_KEY_RE = re.compile(r"^unified/[A-Za-z0-9_-]{43}$")
 
 
 class UploadBatchError(RuntimeError):
@@ -116,10 +120,12 @@ def _upload_attachment_payloads(destination: WorkerDestination, rows: list[dict]
             if not attachment_id or not account_id or not email_id:
                 raise ValueError("attachment identity is incomplete")
             if len(content) > 30 * 1024 * 1024:
-                metadata.append({"name": str(payload.get("name") or "attachment"),
-                                 "size": len(content),
-                                 "mimeType": str(payload.get("mimeType") or "application/octet-stream")})
-                continue
+                error = ValueError("attachment exceeds 30 MiB storage limit")
+                raise UploadBatchError(
+                    "attachment", max_retries,
+                    [(f"{destination.id}: attachment {attachment_id}", error)],
+                    {"inserted": 0, "skipped": 0},
+                ) from error
             path = "/attachments/{}/{}/{}".format(
                 quote(account_id, safe=""), quote(email_id, safe=""), quote(attachment_id, safe=""))
             upload_headers = {
@@ -167,9 +173,9 @@ def _upload_attachment_payloads(destination: WorkerDestination, rows: list[dict]
                     [(f"{destination.id}: attachment {attachment_id}", error)],
                     {"inserted": 0, "skipped": 0},
                 ) from error
-            r2_key = reply.get("r2_key") if isinstance(reply, dict) else None
-            if not isinstance(r2_key, str) or not r2_key:
-                error = ValueError("attachment upload acknowledgement missing r2_key")
+            storage_key = reply.get("storage_key") if isinstance(reply, dict) else None
+            if not isinstance(storage_key, str) or not STORAGE_KEY_RE.fullmatch(storage_key):
+                error = ValueError("attachment upload acknowledgement missing valid storage_key")
                 raise UploadBatchError(
                     "attachment", max_retries,
                     [(f"{destination.id}: attachment {attachment_id}", error)],
@@ -177,7 +183,7 @@ def _upload_attachment_payloads(destination: WorkerDestination, rows: list[dict]
                 ) from error
             metadata.append({"id": attachment_id, "name": str(payload.get("name") or "attachment"),
                              "size": len(content), "mimeType": str(payload.get("mimeType") or "application/octet-stream"),
-                             "r2_key": r2_key})
+                             "storage_key": storage_key})
         row["attachments_json"] = json.dumps(metadata, ensure_ascii=False)
         row["has_attachments"] = 1 if metadata else 0
         prepared.append(row)

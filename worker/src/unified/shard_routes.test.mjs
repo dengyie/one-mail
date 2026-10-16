@@ -162,3 +162,36 @@ test("schema initializes all thin tables idempotently and retains D1 cause", asy
     await assert.rejects(initializeShardSchema({ exec: async () => { throw cause; } }), error => error.cause === cause);
     f.sqlite.close();
 });
+
+test("schema repairs the legacy attachment GC locator column", async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    const key = `unified/${"k".repeat(43)}`;
+    sqlite.exec(`CREATE TABLE attachment_gc (
+        r2_key TEXT PRIMARY KEY,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    INSERT INTO attachment_gc(r2_key, created_at, updated_at)
+      VALUES ('${key}', 1, 2);`);
+    const db = {
+        async exec(sql) { sqlite.exec(sql); },
+        prepare(sql) {
+            let args = [];
+            return {
+                bind(...values) { args = values; return this; },
+                async run() { return { meta: { changes: Number(sqlite.prepare(sql).run(...args).changes) } }; },
+                async all() { return { results: sqlite.prepare(sql).all(...args) }; },
+                async first() { return sqlite.prepare(sql).get(...args) ?? null; },
+            };
+        },
+        async batch(statements) { return Promise.all(statements.map(statement => statement.run())); },
+    };
+    await initializeShardSchema(db);
+    assert.deepEqual(sqlite.prepare("PRAGMA table_info(attachment_gc)").all().map(row => row.name), [
+        "storage_key", "attempts", "last_error", "created_at", "updated_at",
+    ]);
+    assert.equal(sqlite.prepare("SELECT storage_key FROM attachment_gc").get().storage_key, key);
+    sqlite.close();
+});

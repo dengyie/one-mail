@@ -421,7 +421,7 @@ const unifiedAuthFetch = (path, options = {}) => unifiedClient.request(path, opt
 
 // Binary responses cannot go through the JSON request wrapper. Keep the same
 // credential snapshot and 401 handling, but return the Blob plus response
-// headers so callers can create a local download without exposing R2 URLs.
+// headers so callers can create a local download without exposing storage URLs.
 const unifiedAuthDownload = async (path, options = {}) => {
     const auth = getUnifiedAuth();
     if (!auth.key) throw new Error('unified api key not set');

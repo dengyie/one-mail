@@ -1,6 +1,10 @@
 import { ensureProviderIdentitySchema } from "./schema.ts";
 import { ACCOUNT_LIFECYCLE_INIT_SQL } from "./account_lifecycle_schema.ts";
-import { ATTACHMENT_DELETE_GC_TRIGGER_SQL } from "./attachment_gc_schema.ts";
+import {
+    ATTACHMENT_DELETE_GC_TRIGGER_SQL,
+    ATTACHMENT_DELETE_GC_TRIGGER_NAME,
+    ensureAttachmentGcStorageKeySchema,
+} from "./attachment_gc_schema.ts";
 
 /**
  * Thin-shard D1: emails + folders + mutation jobs + locks. No users/settings.
@@ -50,13 +54,12 @@ CREATE INDEX IF NOT EXISTS idx_emails_to_read_received ON emails(to_addr, is_rea
 CREATE INDEX IF NOT EXISTS idx_emails_to_star_received ON emails(to_addr, is_starred, received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS attachment_gc (
-    r2_key TEXT PRIMARY KEY,
+    storage_key TEXT PRIMARY KEY,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, r2_key);
 CREATE TABLE IF NOT EXISTS scheduled_locks (
     name TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
@@ -71,7 +74,10 @@ const toExecScript = (sql: string): string =>
 export const initializeShardSchema = async (db: D1Database): Promise<void> => {
     try {
         await db.exec(toExecScript(SHARD_INIT_SQL));
-        await db.exec(ATTACHMENT_DELETE_GC_TRIGGER_SQL);
+        await ensureAttachmentGcStorageKeySchema(db);
+        // The legacy table may still use r2_key. Create dependent indexes and
+        // triggers only after the locator column has been repaired.
+        await db.exec(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, storage_key); DROP TRIGGER IF EXISTS trg_emails_attachment_gc_after_delete; DROP TRIGGER IF EXISTS ${ATTACHMENT_DELETE_GC_TRIGGER_NAME}; ${ATTACHMENT_DELETE_GC_TRIGGER_SQL}`);
         await ensureProviderIdentitySchema(db);
     } catch (cause) {
         throw new Error("Shard schema initialization failed", { cause });

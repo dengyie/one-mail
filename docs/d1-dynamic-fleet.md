@@ -190,7 +190,7 @@ FleetRegistry DO 是拟建控制面，负责低频分配、状态转换和预算
 | route owner、迁移任务、预算 reservation | FleetRegistry DO 持久化；KV 为可重建快照 |
 | 迁移检查点与快照 | pxed 私有持久化目录；与任务 ID 绑定，不包含访问令牌 |
 
-附件引用必须保留 storage locator；跨库搬迁邮件不隐式搬迁 R2 对象。访问附件仍经鉴权；旧存储凭据至少保留到引用清理完成。若现有 raw_ref/attachments_json 无法唯一标识对象所属存储，自动迁移资格检查必须拒绝该邮箱，先补显式 locator 和验收。
+附件引用必须保留 storage locator；跨库搬迁邮件不隐式搬迁 VPS storage 对象。访问附件仍经鉴权；旧存储凭据至少保留到引用清理完成。若现有 raw_ref/attachments_json 无法唯一标识对象所属存储，自动迁移资格检查必须拒绝该邮箱，先补显式 locator 和验收。
 
 ### 4.2 务实的模块边界
 

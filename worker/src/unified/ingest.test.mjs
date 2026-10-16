@@ -341,7 +341,7 @@ test("lifecycle-skipped emails keep provisional attachment GC records", async ()
   });
   const result = await insertEmails({ env: fakeEnv }, [{
     ...batchOf("qq", 1)[0],
-    attachments_json: JSON.stringify([{ id: "att-1", name: "x.txt", size: 1, mimeType: "text/plain", r2_key: "unified/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]),
+    attachments_json: JSON.stringify([{ id: "att-1", name: "x.txt", size: 1, mimeType: "text/plain", storage_key: "unified/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]),
   }]);
   assert.deepEqual(result, { inserted: 0, skipped: 1 });
   assert.deepEqual(gcDeletes, [], "unreferenced objects remain queued for retention GC");
