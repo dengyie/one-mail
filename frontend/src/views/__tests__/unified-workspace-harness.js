@@ -5,7 +5,7 @@ import { afterEach, beforeEach, vi } from 'vitest'
 import { I18N_MESSAGES } from '../../i18n/messages'
 
 const ctx = vi.hoisted(() => ({ state: null, route: null, api: null, messages: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
-vi.mock('../../store', () => ({ useGlobalState: () => ctx.state, MIN_AUTO_REFRESH_INTERVAL: 30 }))
+vi.mock('../../store', () => ({ useGlobalState: () => ctx.state, MIN_AUTO_REFRESH_INTERVAL: 10 }))
 vi.mock('../../api', () => ({ api: new Proxy({}, { get: (_, key) => ctx.api[key] }) }))
 vi.mock('vue-router', () => ({ useRoute: () => ctx.route, useRouter: () => ({
   push: vi.fn(), back: vi.fn(), replace: ({ query }) => { ctx.route.query = query; return Promise.resolve() },
@@ -30,7 +30,7 @@ async function mount(View) {
 const button = (host, text) => [...host.querySelectorAll('button')].find(node => node.textContent.trim() === text)
 
 beforeEach(() => {
-  ctx.state = { userJwt: ref('user-a'), adminAuth: ref(''), unifiedApiKey: ref(''), userSettings: ref({ user_id: 1 }), configAutoRefreshInterval: ref(30), autoLoadRemoteImages: ref(false) }
+  ctx.state = { userJwt: ref('user-a'), adminAuth: ref(''), unifiedApiKey: ref(''), userSettings: ref({ user_id: 1 }), configAutoRefreshInterval: ref(10), autoLoadRemoteImages: ref(false) }
   ctx.route = reactive({ path: '/unified', fullPath: '/unified', query: {}, params: { id: 'mail-a' } })
   ctx.api = {
     getUserSettings: vi.fn().mockResolvedValue(undefined),

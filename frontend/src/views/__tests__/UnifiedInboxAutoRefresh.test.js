@@ -6,10 +6,10 @@ import UnifiedInbox from '../UnifiedInbox.vue'
 const visible = () => Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
 
 describe('unified inbox quiet auto refresh contract', () => {
-  it('enforces the 30-second floor and probes one row without a count', async () => {
+  it('enforces the 10-second floor and probes one row without a count', async () => {
     vi.useFakeTimers(); visible(); ctx.state.configAutoRefreshInterval.value = 5
     await mount(UnifiedInbox)
-    await vi.advanceTimersByTimeAsync(29999)
+    await vi.advanceTimersByTimeAsync(9999)
     expect(ctx.api.unified.listEmails).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1)
     expect(ctx.api.unified.listEmails).toHaveBeenCalledTimes(2)
