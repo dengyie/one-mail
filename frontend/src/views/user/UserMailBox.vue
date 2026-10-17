@@ -4,6 +4,7 @@ import { onMounted, ref, watch } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
 
 import { api } from '../../api'
+import { withCountQuery } from '../../utils'
 import { useGlobalState } from '../../store'
 import MailBox from '../../components/MailBox.vue';
 
@@ -21,12 +22,13 @@ const queryMail = () => {
     mailBoxKey.value = Date.now();
 }
 
-const fetchMailData = async (limit, offset) => {
+const fetchMailData = async (limit, offset, options = {}) => {
     return await api.fetch(
         `/user_api/mails`
         + `?limit=${limit}`
         + `&offset=${offset}`
         + (addressFilter.value ? `&address=${addressFilter.value}` : '')
+        + withCountQuery(options)
     );
 }
 

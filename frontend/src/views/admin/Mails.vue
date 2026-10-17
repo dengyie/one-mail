@@ -4,6 +4,7 @@ import { useScopedI18n } from '@/i18n/app'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
+import { withCountQuery } from '../../utils'
 import MailBox from '../../components/MailBox.vue';
 
 const { adminMailTabAddress } = useGlobalState()
@@ -17,12 +18,13 @@ const queryMail = () => {
     mailBoxKey.value = Date.now();
 }
 
-const fetchMailData = async (limit, offset) => {
+const fetchMailData = async (limit, offset, options = {}) => {
     return await api.fetch(
         `/admin/mails`
         + `?limit=${limit}`
         + `&offset=${offset}`
         + (adminMailTabAddress.value ? `&address=${adminMailTabAddress.value}` : '')
+        + withCountQuery(options)
     );
 }
 

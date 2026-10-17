@@ -1,11 +1,12 @@
 import { Context } from "hono";
 import { handleMailListQuery } from "../common";
+import { wantsLegacyCount } from "../core/count_opt_in.ts";
 import { resolveRawEmailRow } from "../gzip";
 import type { RawMailRow } from "../models";
 
 export default {
     getMails: async (c: Context<HonoCustomType>) => {
-        const { address, limit, offset } = c.req.query();
+        const { address, limit, offset, with_count } = c.req.query();
         const addressQuery = address ? `address = ?` : "";
         const addressParams = address ? [address] : [];
         const filterQuerys = [addressQuery].filter((item) => item).join(" and ");
@@ -14,16 +15,16 @@ export default {
         return await handleMailListQuery(c,
             `SELECT * FROM raw_mails ${finalQuery}`,
             `SELECT count(*) as count FROM raw_mails ${finalQuery}`,
-            filterParams, limit, offset
+            filterParams, limit, offset, undefined, { skipCount: !wantsLegacyCount(with_count) }
         );
     },
     getUnknowMails: async (c: Context<HonoCustomType>) => {
-        const { limit, offset } = c.req.query();
+        const { limit, offset, with_count } = c.req.query();
         return await handleMailListQuery(c,
             `SELECT * FROM raw_mails where address NOT IN (select name from address) `,
             `SELECT count(*) as count FROM raw_mails`
             + ` where address NOT IN (select name from address) `,
-            [], limit, offset
+            [], limit, offset, undefined, { skipCount: !wantsLegacyCount(with_count) }
         );
     },
     getMail: async (c: Context<HonoCustomType>) => {

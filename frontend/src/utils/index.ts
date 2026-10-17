@@ -22,6 +22,14 @@ export const getRouterPathWithLang = (path: string, lang?: string | { value?: st
     return getPathWithLocale(path, normalizedLang);
 }
 
+/**
+ * 列表接口的计数开关。后台轮询不需要分页总数（COUNT(*) 是 D1 rows_read 的主要
+ * 消耗方），传 `withCount: false` 时返回 `&with_count=0`；缺省返回空串，不改变
+ * 各端点历史「缺省即计数」的语义。
+ */
+export const withCountQuery = (options?: { withCount?: boolean }) =>
+    options?.withCount === false ? '&with_count=0' : '';
+
 export const utcToLocalDate = (utcDate: string, useUTCDate: boolean) => {
     const utcDateString = `${utcDate} UTC`;
     if (useUTCDate) {

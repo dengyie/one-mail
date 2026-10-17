@@ -760,7 +760,8 @@ export const handleMailListQuery = async (
     query: string, countQuery: string, params: string[],
     limit: string | number | undefined | null,
     offset: string | number | undefined | null,
-    orderBy?: string
+    orderBy?: string,
+    options: { skipCount?: boolean } = {}
 ): Promise<Response> => {
     const { resolveRawEmailList } = await import('./gzip');
     const msgs = i18n.getMessagesbyContext(c);
@@ -775,7 +776,9 @@ export const handleMailListQuery = async (
         ...params, limit, offset
     ).all<RawMailRow>();
     const resolvedResults = await resolveRawEmailList(results);
-    const count = offset == 0 ? await c.env.DB.prepare(
+    // skipCount 让调用方（如后台轮询）跳过 COUNT(*)；与 handleListQuery 一致，
+    // 跳过的计数返回 null 而不是 0——0 会被读成「邮箱是空的」，事实是「没算」。
+    const count = options.skipCount ? null : offset == 0 ? await c.env.DB.prepare(
         countQuery
     ).bind(...params).first("count") : 0;
     return c.json({ results: resolvedResults, count });

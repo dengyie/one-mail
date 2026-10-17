@@ -57,7 +57,9 @@ const copyAddress = async () => {
 }
 
 // 获取邮件数据
-const fetchMails = async () => {
+// withCount=false 用于后台轮询：COUNT(*) 是 D1 rows_read 的主要消耗方，
+// 而总数在两次轮询之间不会变；返回 null 时保留旧值，不能当成 0（那是「没算」）。
+const fetchMails = async ({ withCount = true } = {}) => {
     const requestId = ++mailRequestSeq;
     if (!settings.value.address) {
         replaceCurrentMail(null);
@@ -65,14 +67,16 @@ const fetchMails = async () => {
         return;
     }
     try {
-        const { results, count } = await api.fetch(`/api/mails?limit=1&offset=${currentPage.value - 1}`)
+        const { results, count } = await api.fetch(`/api/mails?limit=1&offset=${currentPage.value - 1}&with_count=${withCount ? 1 : 0}`)
         const rawMail = results && results.length > 0 ? results[0] : null
         const nextMail = rawMail ? await processItem(rawMail) : null;
         if (requestId !== mailRequestSeq) {
             if (nextMail) revokeProcessedItemUrls(nextMail);
             return;
         }
-        totalCount.value = count > 0 ? count : 0;
+        if (typeof count === 'number' && Number.isFinite(count) && count >= 0) {
+            totalCount.value = count;
+        }
         replaceCurrentMail(nextMail);
     } catch (error) {
         if (requestId !== mailRequestSeq) return;
@@ -96,13 +100,14 @@ const deleteMail = async () => {
 }
 
 // 刷新邮件
-const refreshMails = async () => {
+// background=true 是自动轮询路径：不算总数，也不弹成功提示（每 10s 弹一次太吵）。
+const refreshMails = async ({ background = false } = {}) => {
     if (loading.value) return
     currentPage.value = 1
     showAccountSettingsCard.value = false
     currentAutoRefreshInterval.value = Number(configAutoRefreshInterval.value) || 10
-    await fetchMails()
-    message.success(t('refreshSuccess'))
+    await fetchMails({ withCount: !background })
+    if (!background) message.success(t('refreshSuccess'))
 }
 
 // 分页控制
@@ -138,6 +143,15 @@ watch(() => settings.value.address, (address, previousAddress) => {
     if (address) void fetchMails()
 })
 
+const onVisibilityChange = () => {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') return
+    // 回到前台：立即补齐后台暂停期间可能积压的新邮件，并复位倒计时。
+    if (isFirstPage.value) {
+        currentAutoRefreshInterval.value = Number(configAutoRefreshInterval.value) || 10
+        void refreshMails({ background: true })
+    }
+}
+
 onMounted(async () => {
     await api.getSettings()
     simpleMounted = true
@@ -145,20 +159,29 @@ onMounted(async () => {
 
     // 启动自动刷新
     timer.value = setInterval(async () => {
+        // 隐藏标签页不轮询：省 D1 rows_read，也避免用户没在看时的无效请求。
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
         if (!isFirstPage.value) {
             currentAutoRefreshInterval.value = Number(configAutoRefreshInterval.value) || 10
             return
         }
 
         if (--currentAutoRefreshInterval.value <= 0) {
-            await refreshMails()
+            await refreshMails({ background: true })
         }
     }, 1000)
+
+    if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', onVisibilityChange)
+    }
 })
 
 onBeforeUnmount(() => {
     mailRequestSeq += 1;
     clearInterval(timer.value);
+    if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
     replaceCurrentMail(null);
 })
 </script>
@@ -177,7 +200,7 @@ onBeforeUnmount(() => {
                     <AddressSelect :showCopy="false" size="small" />
                 </div>
                 <n-flex justify="center">
-                    <n-button @click="refreshMails" :loading="loading" type="primary" tertiary size="small">
+                    <n-button @click="refreshMails()" :loading="loading" type="primary" tertiary size="small">
                         <template #icon>
                             <n-icon>
                                 <RefreshFilled />
