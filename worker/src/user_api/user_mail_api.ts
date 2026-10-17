@@ -2,11 +2,12 @@ import { Context } from "hono";
 import i18n from "../i18n";
 import { handleMailListQuery } from "../common";
 import { getBooleanValue } from "../utils";
+import { wantsLegacyCount } from "../core/count_opt_in.ts";
 
 export default {
     getMails: async (c: Context<HonoCustomType>) => {
         const { user_id } = c.get("userPayload");
-        const { address, limit, offset } = c.req.query();
+        const { address, limit, offset, with_count } = c.req.query();
         const filterQuerys = [`ua.user_id = ?`];
         const filterParams = [String(user_id)];
         if (address) {
@@ -20,7 +21,8 @@ export default {
         return await handleMailListQuery(c,
             `SELECT rm.*${fromQuery}`,
             `SELECT count(*) as count${fromQuery}`,
-            filterParams, limit, offset, 'rm.id desc'
+            filterParams, limit, offset, 'rm.id desc',
+            { skipCount: !wantsLegacyCount(with_count) }
         );
     },
     deleteMail: async (c: Context<HonoCustomType>) => {

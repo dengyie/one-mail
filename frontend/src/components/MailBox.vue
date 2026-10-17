@@ -167,6 +167,8 @@ const setupAutoRefresh = async (autoRefresh) => {
   if (autoRefresh) {
     clearInterval(timer.value);
     timer.value = setInterval(async () => {
+      // 隐藏标签页不轮询：省 D1 rows_read，也避免用户没在看时的无效请求。
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (loading.value) return;
       autoRefreshInterval.value--;
       if (autoRefreshInterval.value <= 0) {
@@ -191,12 +193,14 @@ watch([page, pageSize], async ([page, pageSize], [oldPage, oldPageSize]) => {
 })
 
 let refreshRequestSeq = 0;
-const refresh = async () => {
+const refresh = async ({ background = false } = {}) => {
   const requestId = ++refreshRequestSeq;
   loading.value = true;
   try {
+    // 后台自动刷新不请求总数：COUNT(*) 是 D1 rows_read 的大头，且分页总数在
+    // 两次后台刷新之间不会变；返回的 count 为 null 时下方守卫会保留旧值。
     const { results, count: totalCount } = await props.fetchMailData(
-      pageSize.value, (page.value - 1) * pageSize.value
+      pageSize.value, (page.value - 1) * pageSize.value, { withCount: !background }
     );
     const nextData = await Promise.all(results.map(async (item) => {
       item.checked = false;
@@ -210,7 +214,9 @@ const refresh = async () => {
     curMail.value = null;
     rawData.value = nextData;
     previousData.forEach(revokeProcessedItemUrls);
-    if (typeof totalCount === 'number' && Number.isFinite(totalCount) && totalCount >= 0) {
+    // 服务端只在 offset 0 时算总数：翻到第 2 页后 count 为 0/null，若覆盖会
+    // 把分页器/「下一条」误判成到底。首页以外的刷新一律保留首页拿到的总数。
+    if (page.value === 1 && typeof totalCount === 'number' && Number.isFinite(totalCount) && totalCount >= 0) {
       count.value = totalCount;
     }
     if (!isMobile.value && !mailListView.value && data.value.length > 0) {
@@ -229,7 +235,7 @@ const refresh = async () => {
 
 const backFirstPageAndRefresh = async () => {
   page.value = 1;
-  await refresh();
+  await refresh({ background: true });
 }
 
 const clickRow = async (row) => {
@@ -359,9 +365,21 @@ const multiActionDownload = async () => {
 
 let isFirstMount = true;
 
+const onVisibilityChange = () => {
+  if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+  // 回到前台：立即拉最新数据（后台暂停期间可能已积压新邮件），并复位倒计时。
+  if (autoRefresh.value) {
+    setupAutoRefresh(true);
+    refresh();
+  }
+};
+
 onMounted(async () => {
   await refresh();
   isFirstMount = false;
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
 });
 
 onActivated(async () => {
@@ -382,6 +400,9 @@ onDeactivated(() => {
 onBeforeUnmount(() => {
   refreshRequestSeq += 1;
   clearInterval(timer.value);
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  }
   for (const item of rawData.value) {
     revokeProcessedItemUrls(item);
   }

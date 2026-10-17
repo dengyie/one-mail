@@ -7,6 +7,7 @@ import { useRoute } from 'vue-router'
 import { useGlobalState } from '../store'
 import { api } from '../api'
 import { useIsMobile } from '../utils/composables'
+import { withCountQuery } from '../utils'
 import { FullscreenExitOutlined } from '@vicons/material'
 import UserLogin from './user/UserLogin.vue'
 import AddressBar from './index/AddressBar.vue'
@@ -25,13 +26,13 @@ const isLoggedIn = computed(() => Boolean(userJwt.value || jwt.value))
 
 const { t } = useScopedI18n('views.Index')
 
-const fetchMailData = async (limit, offset) => {
+const fetchMailData = async (limit, offset, options = {}) => {
   if (mailIdQuery.value > 0) {
     const singleMail = await api.fetch(`/api/mail/${mailIdQuery.value}`)
     if (singleMail) return { results: [singleMail], count: 1 }
     return { results: [], count: 0 }
   }
-  return await api.fetch(`/api/mails?limit=${limit}&offset=${offset}`)
+  return await api.fetch(`/api/mails?limit=${limit}&offset=${offset}${withCountQuery(options)}`)
 }
 
 const deleteMail = async (curMailId) => {

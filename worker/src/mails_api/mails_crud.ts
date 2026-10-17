@@ -5,6 +5,7 @@ import { getBooleanValue } from '../utils';
 import { deleteAddressWithData, updateAddressUpdatedAt } from '../common'
 import { resolveRawEmailList, resolveRawEmailRow } from '../gzip'
 import { listRawMails, countRawMails, getRawMail } from '../core/mail-list.ts'
+import { wantsLegacyCount } from '../core/count_opt_in.ts'
 import { getSendBalanceState } from './send_balance';
 
 const listMails = async (c: Context<HonoCustomType>) => {
@@ -12,7 +13,7 @@ const listMails = async (c: Context<HonoCustomType>) => {
     if (!address) {
         return c.json({ "error": "No address" }, 400)
     }
-    const { limit, offset } = c.req.query();
+    const { limit, offset, with_count } = c.req.query();
     if (Number.parseInt(offset) <= 0) updateAddressUpdatedAt(c, address);
     // limit/offset 校验与 common.handleMailListQuery 原逻辑逐字等价
     const msgs = i18n.getMessagesbyContext(c);
@@ -20,9 +21,12 @@ const listMails = async (c: Context<HonoCustomType>) => {
     const off = typeof offset === "string" ? parseInt(offset) : offset;
     if (!lim || lim < 0 || lim > 100) return c.text(msgs.InvalidLimitMsg, 400);
     if (typeof off !== "number" || !Number.isInteger(off) || off < 0) return c.text(msgs.InvalidOffsetMsg, 400);
+    // 缺省计数（历史契约）；后台轮询显式传 with_count=0 时跳过 COUNT(*)，返回
+    // null 而不是 0，避免前端把「没算」读成「空邮箱」。
+    const withCount = wantsLegacyCount(with_count);
     const rows = await listRawMails(c, address, { limit: lim, offset: off });
     const results = await resolveRawEmailList(rows);
-    const count = off === 0 ? await countRawMails(c, address) : 0;
+    const count = off === 0 ? (withCount ? await countRawMails(c, address) : null) : 0;
     return c.json({ results, count });
 };
 

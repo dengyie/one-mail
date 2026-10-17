@@ -10,3 +10,12 @@
  */
 export const wantsEmailCount = (raw: string | number | null | undefined): boolean =>
     raw === "1" || raw === 1 || raw === "true";
+
+/**
+ * 历史列表端点（`/api/mails`、`/admin/mails`、`/admin/mails_unknow`、
+ * `/user_api/mails`）的契约是「缺省即计数」，不能直接套用上面的 opt-in 语义，
+ * 否则所有既有调用方会突然失去分页总数。只有显式传入 `with_count=0/false`
+ * 时才跳过 COUNT(*)；未传（undefined/null）与传空串都按缺省处理。
+ */
+export const wantsLegacyCount = (raw: string | number | null | undefined): boolean =>
+    raw === undefined || raw === null ? true : wantsEmailCount(raw);
