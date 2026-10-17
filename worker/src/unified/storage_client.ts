@@ -149,12 +149,52 @@ export const downloadAttachmentObject = async (
 ): Promise<{ body: ReadableStream<Uint8Array>; size: number }> => {
     const response = await storageRequest(env, key, { method: "GET", signal });
     const size = Number(response.headers.get("content-length") || "-1");
-    if (!response.body || !Number.isSafeInteger(size) || size < 0 || size > MAX_ATTACHMENT_BYTES) {
+    const source = response.body;
+    if (!source || !Number.isSafeInteger(size) || size < 0 || size > MAX_ATTACHMENT_BYTES) {
         await response.body?.cancel().catch(() => undefined);
         throw new AttachmentStorageError("attachment unavailable");
     }
+    const reader = source.getReader();
+    let total = 0;
+    let released = false;
+    const release = (): void => {
+        if (released) return;
+        released = true;
+        try { reader.releaseLock(); } catch { /* already released */ }
+    };
+    const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            try {
+                const part = await reader.read();
+                if (part.done) {
+                    release();
+                    if (total !== size) {
+                        controller.error(new AttachmentStorageError("attachment unavailable"));
+                        return;
+                    }
+                    controller.close();
+                    return;
+                }
+                total += part.value.byteLength;
+                if (total > size) {
+                    await reader.cancel().catch(() => undefined);
+                    release();
+                    controller.error(new AttachmentStorageError("attachment unavailable"));
+                    return;
+                }
+                controller.enqueue(part.value);
+            } catch (error) {
+                release();
+                controller.error(error);
+            }
+        },
+        async cancel(reason) {
+            await reader.cancel(reason).catch(() => undefined);
+            release();
+        },
+    });
     return {
-        body: response.body,
+        body,
         size,
     };
 };
