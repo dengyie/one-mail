@@ -183,3 +183,49 @@ test("download stream enforces the storage byte limit even with a forged content
     globalThis.fetch = originalFetch;
   }
 });
+
+test("download stream rejects a truncated storage response", async () => {
+  const key = await attachmentKey("account-a", "mail-a", "att-1");
+  const app = appFor(downloadAttachment, "get", "/emails/:id/attachments/:attachmentId");
+  const env = {
+    ...storageEnv,
+    DB: { prepare: () => ({ bind: () => ({ first: async () => ({ account_id: "account-a", attachments_json: JSON.stringify([{ id: "att-1", size: 5, name: "x", mimeType: "text/plain", storage_key: key }]) }) }) }) },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1, 2]));
+      controller.close();
+    },
+  }), { headers: { "content-length": "5" } });
+  try {
+    const response = await app.request("/emails/mail-a/attachments/att-1", {}, env);
+    assert.equal(response.status, 200);
+    await assert.rejects(() => response.arrayBuffer(), /attachment unavailable/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("download stream rejects a storage response longer than its declared length", async () => {
+  const key = await attachmentKey("account-a", "mail-a", "att-1");
+  const app = appFor(downloadAttachment, "get", "/emails/:id/attachments/:attachmentId");
+  const env = {
+    ...storageEnv,
+    DB: { prepare: () => ({ bind: () => ({ first: async () => ({ account_id: "account-a", attachments_json: JSON.stringify([{ id: "att-1", size: 2, name: "x", mimeType: "text/plain", storage_key: key }]) }) }) }) },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1, 2, 3]));
+      controller.close();
+    },
+  }), { headers: { "content-length": "2" } });
+  try {
+    const response = await app.request("/emails/mail-a/attachments/att-1", {}, env);
+    assert.equal(response.status, 200);
+    await assert.rejects(() => response.arrayBuffer(), /attachment unavailable/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
