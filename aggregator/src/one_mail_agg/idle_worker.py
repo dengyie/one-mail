@@ -21,6 +21,9 @@ _IDLE_RETRY_COOLDOWN_SECONDS = 60
 _active_idle_workers: dict[str, "ImapIdleWorker"] = {}
 _idle_unsupported: dict[str, tuple] = {}
 _idle_retry_after: dict[str, tuple[tuple, float]] = {}
+# 每个账号当前 IDLE worker 正在同步的目录集。folders 变更（如新增垃圾邮件箱）后必须重建
+# worker——线程在 __init__ 冻结了 account 快照，do_sync 只会同步启动时的那些目录。
+_active_idle_folders: dict[str, tuple[str, ...]] = {}
 _lock = threading.Lock()
 
 
@@ -31,6 +34,10 @@ def _idle_fingerprint(acc: AccountConfig) -> tuple:
         bool(acc.use_ssl),
         str(acc.username or "").strip().lower(),
     )
+
+
+def _folder_key(acc: AccountConfig) -> tuple[str, ...]:
+    return tuple(str(folder).strip() for folder in (acc.folders or []))
 
 
 def _mark_idle_unsupported(acc: AccountConfig) -> None:
@@ -304,6 +311,7 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
             if aid not in current_ids or worker.is_stopped() or not worker.is_alive():
                 worker.stop()
                 _active_idle_workers.pop(aid, None)
+                _active_idle_folders.pop(aid, None)
 
         for registry in (_idle_unsupported, _idle_retry_after):
             for aid in list(registry):
@@ -315,6 +323,7 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                 active = _active_idle_workers.get(acc.id)
                 if active is not None:
                     active.stop()
+                _active_idle_folders.pop(acc.id, None)
                 continue
             if acc.source == "graph_outlook" or acc.protocol == "pop3":
                 continue
@@ -343,8 +352,19 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                 else:
                     _idle_retry_after.pop(acc.id, None)
 
-            if acc.id not in _active_idle_workers or not _active_idle_workers[acc.id].is_alive():
+            folders = _folder_key(acc)
+            previous_folders = _active_idle_folders.get(acc.id)
+            if previous_folders is not None and previous_folders != folders:
+                stale = _active_idle_workers.pop(acc.id, None)
+                if stale is not None:
+                    stale.stop()
+                log.info("account %s sync folders changed %s -> %s; restarting IDLE worker",
+                         acc.id, previous_folders, folders)
+
+            worker = _active_idle_workers.get(acc.id)
+            if worker is None or not worker.is_alive():
                 worker = ImapIdleWorker(config, acc, state,
                                         client_factory=_resolve_client_factory(acc, config))
                 worker.start()
                 _active_idle_workers[acc.id] = worker
+            _active_idle_folders[acc.id] = folders

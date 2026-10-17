@@ -807,3 +807,70 @@ def test_shard_later_chunk_failure_preserves_sync_state_until_safe_retry(
         assert state.get_last_uid(account.id, "INBOX") == 102
     else:
         assert state.get_pop3_seen(account.id, "INBOX") == {"UL-1", "UL-2"}
+
+
+# ---------- 新增垃圾邮件目录后：单目录失败隔离 ----------
+
+def _multi_folder_acc():
+    return AccountConfig(id="multi", source="imap_163", host="imap.163.com", port=993,
+                         username="x@163.com", password="pw", folders=["INBOX", "垃圾邮件"],
+                         protocol="imap", oauth=None)
+
+
+class _FolderFailingClient(_ImapEmpty):
+    """指定目录 SELECT 失败，其余正常（空收件箱）。"""
+
+    def __init__(self, failing, error):
+        super().__init__()
+        self._failing = failing
+        self._error = error
+        self.selected = []
+
+    def select_folder(self, folder, readonly=True):
+        self.selected.append(folder)
+        if folder == self._failing:
+            raise self._error
+        return {b"UIDVALIDITY": 1}
+
+
+def test_sync_imap_isolates_secondary_folder_failure(monkeypatch, tmp_path):
+    """次要目录（垃圾邮件箱）SELECT 失败只跳过该目录，INBOX 照常、整账号不报错。"""
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _multi_folder_acc()
+    cfg = _cfg([acc])
+    _stub_upload(monkeypatch)
+    client = _FolderFailingClient("垃圾邮件", IMAPClientError("no such folder: 垃圾邮件"))
+
+    result = sync_mod.sync_imap(client, cfg, acc, state)
+
+    assert client.selected[0] == "INBOX"
+    assert "垃圾邮件" in client.selected
+    assert result["synced"] == 0
+    assert result["protocol"] == "imap"
+
+
+def test_sync_imap_inbox_failure_still_propagates(monkeypatch, tmp_path):
+    """INBOX 失败语义不能变：auto 单目录账号仍可能安全降级 POP3，必须照旧上抛。"""
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _multi_folder_acc()
+    cfg = _cfg([acc])
+    _stub_upload(monkeypatch)
+    client = _FolderFailingClient("INBOX", IMAPClientError("Unsafe Login"))
+
+    with pytest.raises(IMAPClientError):
+        sync_mod.sync_imap(client, cfg, acc, state)
+
+
+def test_sync_imap_secondary_folder_quota_error_propagates(monkeypatch, tmp_path):
+    """次要目录遇到 D1 写入配额耗尽必须上抛，交给上层暂停账号而非空转重试。"""
+    from one_mail_agg.d1_quota import DatabaseQuotaExceeded
+
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _multi_folder_acc()
+    cfg = _cfg([acc])
+    _stub_upload(monkeypatch)
+    client = _FolderFailingClient(
+        "垃圾邮件", DatabaseQuotaExceeded("D1_DAILY_WRITE_LIMIT", 1_900_000_000.0))
+
+    with pytest.raises(DatabaseQuotaExceeded):
+        sync_mod.sync_imap(client, cfg, acc, state)
