@@ -6,7 +6,10 @@ import {
 
 // 所有视图自动刷新的频率上限（最小间隔秒数）。D1 免费额度按 rows_read 计费，
 // 轮询间隔过短会让每次列表 + COUNT(*) 的读取随邮箱规模线性烧掉配额。
-export const MIN_AUTO_REFRESH_INTERVAL = 30;
+// 统一收件箱的自动刷新已改为「单行探测」：无 COUNT(*)、走 order cursor 索引只读
+// 约 2 行，且标签页隐藏时直接短路。2026-10-18 实测 30s→10s 只增加约 0.7% 日额度，
+// 故下限下调到 10s，让新邮件更接近实时到达界面。
+export const MIN_AUTO_REFRESH_INTERVAL = 10;
 
 export const useGlobalState = createGlobalState(
     () => {
@@ -116,6 +119,16 @@ export const useGlobalState = createGlobalState(
         const configAutoRefreshInterval = useStorage("configAutoRefreshInterval", MIN_AUTO_REFRESH_INTERVAL);
         // 历史默认值（60s→10s 快速轮询、外观设置允许 5s）都会打爆 D1 rows_read 免费额度，
         // 统一抬升到下限；已存储的更大值保持不变。
+        // 2026-10-18 下限从 30s 下调到 10s：旧的 30 只是当时的强制下限/滑块最低值，
+        // 用户无法选择更快，因此不视作用户有意设置，一次性对齐到新下限；版本标记保证
+        // 只迁移一次，之后用户手动改回 30 不会被反复改写。
+        const autoRefreshFloorV2 = useLocalStorage('configAutoRefreshInterval_floorV2', false);
+        if (!autoRefreshFloorV2.value) {
+            if (Number(configAutoRefreshInterval.value) === 30) {
+                configAutoRefreshInterval.value = MIN_AUTO_REFRESH_INTERVAL;
+            }
+            autoRefreshFloorV2.value = true;
+        }
         if (configAutoRefreshInterval.value < MIN_AUTO_REFRESH_INTERVAL) {
             configAutoRefreshInterval.value = MIN_AUTO_REFRESH_INTERVAL;
         }
