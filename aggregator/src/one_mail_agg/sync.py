@@ -7,7 +7,7 @@ from .config import Config, AccountConfig
 from .state import SyncState
 from .imap_base import fetch_new_messages
 from .normalize import normalize_message
-from .uploader import upload_emails
+from .uploader import upload_emails, quota_retry_at
 from .pop3_source import connect_pop3, fetch_new_pop3_messages, uidl_to_key
 from .proxy_client import (
     ProxiedIMAPClient,
@@ -80,33 +80,43 @@ def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) 
     total = 0
     dropped = 0
     catalog_attempted = False
-    for folder in account.folders:
-        sel = client.select_folder(folder, readonly=True)
-        uidvalidity = int(sel[b"UIDVALIDITY"])
-        oversize = []
-        msgs = fetch_new_messages(client, account, folder, state, oversize=oversize)
-        dropped += len(oversize)
-        if msgs:
-            batch = []
-            for m in msgs:
-                try:
-                    batch.append(normalize_message(
-                        m.raw_bytes, account, folder, uidvalidity,
-                        m.uid, m.internal_date_ms))
-                except Exception as e:
-                    dropped += 1
-                    log.warning("skip imap message uid=%s folder=%s account=%s: %r",
-                                m.uid, folder, account.id, e)
-            if batch:
-                upload_emails(config, batch)
-                total += len(batch)
-            # upload 成功后才推进；set_last_uid_max 同时保留 fetch 层已推进的已知超限 UID。
-            state.set_last_uid_max(account.id, folder, max(m.uid for m in msgs))
+    for index, folder in enumerate(account.folders):
+        try:
+            sel = client.select_folder(folder, readonly=True)
+            uidvalidity = int(sel[b"UIDVALIDITY"])
+            oversize = []
+            msgs = fetch_new_messages(client, account, folder, state, oversize=oversize)
+            dropped += len(oversize)
+            if msgs:
+                batch = []
+                for m in msgs:
+                    try:
+                        batch.append(normalize_message(
+                            m.raw_bytes, account, folder, uidvalidity,
+                            m.uid, m.internal_date_ms))
+                    except Exception as e:
+                        dropped += 1
+                        log.warning("skip imap message uid=%s folder=%s account=%s: %r",
+                                    m.uid, folder, account.id, e)
+                if batch:
+                    upload_emails(config, batch)
+                    total += len(batch)
+                # upload 成功后才推进；set_last_uid_max 同时保留 fetch 层已推进的已知超限 UID。
+                state.set_last_uid_max(account.id, folder, max(m.uid for m in msgs))
+        except Exception as error:
+            # 次要目录（如新接入的垃圾邮件箱，永远追加在 folders[0] 之后）失败只跳过该目录，
+            # 已同步目录的水位不回退，失败目录下一轮重试——接入新目录不该拖垮整账号。
+            # 例外一：D1 写入配额耗尽必须上抛，让上层暂停账号而非空转重试。
+            # 例外二：主目录（folders[0]，聚合器对其建立 IDLE）失败语义保持不变——账号
+            # 健康状态由它承载，auto 单目录账号还可能要安全降级 POP3，必须照旧上抛。
+            if quota_retry_at(error) is not None or index == 0:
+                raise
+            log.warning("imap folder sync failed account=%s folder=%s: %r",
+                        account.id, folder, error)
+            continue
         if not catalog_attempted:
             maybe_sync_imap_folder_catalog(client, config, account)
             catalog_attempted = True
-        if not msgs:
-            continue
     return _account_result(total, dropped, "imap")
 
 

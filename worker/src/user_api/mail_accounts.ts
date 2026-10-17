@@ -8,6 +8,7 @@ import { unsupportedMailAccountAction, mergeRotatedRefreshToken } from "../unifi
 import { hasRemoteShards, loadShardMap, purgeShardAccounts } from "../unified/federation.ts";
 import { ensureAccountLifecycleTable, lifecycleUpsert } from "../unified/account_lifecycle_schema.ts";
 import { discoverMailConfig } from "../core/mail_auto_discovery";
+import { safeFolders, withSpamFolders } from "./mail_folders";
 import { validateMailAccountCreateTarget } from "./mail_target_policy";
 
 // 每用户最多可接入的外部邮箱数（全局默认）。外部邮箱不消耗 mangoqwq 域名地址配额
@@ -89,22 +90,6 @@ interface MailAccountRow {
     last_error: string | null;
     created_at: number;
 }
-
-/** 解析 folders_json，畸形值兜底为 ["INBOX"]——绝不让单条坏数据 500 掉整列。 */
-export const safeFolders = (raw: string | null): string[] => {
-    if (typeof raw !== "string" || !raw.trim()) return ["INBOX"];
-    try {
-        const value: unknown = JSON.parse(raw);
-        if (!Array.isArray(value)) return ["INBOX"];
-        const folders = value
-            .filter((folder): folder is string => typeof folder === "string")
-            .map((folder) => folder.trim())
-            .filter(Boolean);
-        return folders.length ? folders : ["INBOX"];
-    } catch {
-        return ["INBOX"];
-    }
-};
 
 /** 对外返回时剔除一切凭据字段（cred_enc / oauth_enc / 解密值）。 */
 const safeRow = (r: MailAccountRow) => ({
@@ -553,6 +538,23 @@ const UserMailAccountsModule = {
                     pop3_use_stls, can_send, smtp_host, smtp_port, smtp_ssl, proxy_policy
              FROM user_mail_accounts WHERE enabled = 1`
         ).all<MailAccountRow>();
+        // 垃圾邮件目录（folder_type='spam'）一次读全表按账号分组：该表仅数十行，
+        // 避免每账号一次查询。目录可能尚未初始化（新库/未跑 migration）——缺失只
+        // 意味着退化为仅 INBOX，绝不能让凭据导出 500。
+        const spamByAccount = new Map<string, string[]>();
+        try {
+            const { results: spamRows } = await c.env.DB.prepare(
+                `SELECT mail_account_id, canonical_name FROM mail_account_folders
+                  WHERE folder_type = 'spam' AND canonical_name IS NOT NULL`
+            ).all<{ mail_account_id: string; canonical_name: string }>();
+            for (const row of spamRows || []) {
+                const list = spamByAccount.get(row.mail_account_id) ?? [];
+                list.push(row.canonical_name);
+                spamByAccount.set(row.mail_account_id, list);
+            }
+        } catch (e) {
+            console.error("load spam folders for aggregator export failed", e);
+        }
         const out = [];
         for (const r of results || []) {
             let password: string;
@@ -598,7 +600,8 @@ const UserMailAccountsModule = {
                     protocol: r.protocol,
                     // Export must use the same defensive parser as the user-facing
                     // listing. A corrupt row must not make the whole batch 500.
-                    folders: safeFolders(r.folders_json),
+                    folders: withSpamFolders(safeFolders(r.folders_json),
+                                             spamByAccount.get(r.id) ?? []),
                     use_ssl: r.use_ssl == null ? true : r.use_ssl === 1,
                     pop3_host: r.pop3_host || null,
                     pop3_port: r.pop3_port ?? null,

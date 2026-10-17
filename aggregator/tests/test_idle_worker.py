@@ -27,6 +27,7 @@ def _reset_idle_registries():
         idle_mod._active_idle_workers.clear()
         idle_mod._idle_unsupported.clear()
         idle_mod._idle_retry_after.clear()
+        idle_mod._active_idle_folders.clear()
     yield
     with idle_mod._lock:
         for worker in idle_mod._active_idle_workers.values():
@@ -37,6 +38,7 @@ def _reset_idle_registries():
         idle_mod._active_idle_workers.clear()
         idle_mod._idle_unsupported.clear()
         idle_mod._idle_retry_after.clear()
+        idle_mod._active_idle_folders.clear()
 
 
 def _config(tmp_path):
@@ -555,3 +557,35 @@ def test_resolve_client_factory_msa_failure_logs_reauth(caplog):
     joined = "\n".join(rec.getMessage() for rec in caplog.records)
     assert "重新授权" in joined
     assert "outlook.office365.com" in str(acc.host.lower()) or "outlook" in joined
+
+
+def test_folders_change_restarts_idle_worker(tmp_path, monkeypatch):
+    """新增目录（如垃圾邮件箱）后必须重建 IDLE worker：线程冻结了启动时的 account 快照，
+    不重建就只会一直同步旧目录。"""
+    started, stopped = [], []
+
+    class _FakeWorker:
+        def __init__(self, config, account, state, client_factory): self.account = account
+        def start(self): started.append(self.account.id)
+        def is_alive(self): return True
+        def is_stopped(self): return False
+        def stop(self): stopped.append(self.account.id)
+
+    monkeypatch.setattr(idle_mod, "ImapIdleWorker", _FakeWorker)
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+
+    ensure_idle_workers(config, state, [_qq_account(folders=["INBOX"])])
+    first = _active_idle_workers["test-qq"]
+    assert started == ["test-qq"]
+
+    # 目录未变：复用同一个 worker，不重建
+    ensure_idle_workers(config, state, [_qq_account(folders=["INBOX"])])
+    assert started == ["test-qq"]
+    assert _active_idle_workers["test-qq"] is first
+
+    # 新增垃圾邮件箱：停掉旧 worker 并用新目录重建
+    ensure_idle_workers(config, state, [_qq_account(folders=["INBOX", "Junk"])])
+    assert started == ["test-qq", "test-qq"]
+    assert stopped == ["test-qq"]
+    assert _active_idle_workers["test-qq"] is not first
