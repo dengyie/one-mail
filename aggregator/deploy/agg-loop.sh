@@ -16,5 +16,13 @@ PY=/opt/one-mail-agg/aggregator/.venv/bin/python
 CONFIG=/opt/one-mail-agg/config.json
 TS() { date "+%Y-%m-%d %H:%M:%S"; }
 
+# Route outbound HTTP/HTTPS requests to Cloudflare Worker & OAuth endpoints via local Mihomo proxy
+export HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7897}"
+export HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:7897}"
+export http_proxy="${http_proxy:-http://127.0.0.1:7897}"
+export https_proxy="${https_proxy:-http://127.0.0.1:7897}"
+export NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}"
+export no_proxy="${no_proxy:-127.0.0.1,localhost}"
+
 echo "[$(TS)] one-mail-agg daemon start: IMAP IDLE realtime + 60s fallback poll + 5s mutation drain" >> "$LOG"
 exec "$PY" -m one_mail_agg.main "$CONFIG" --daemon >> "$LOG" 2>&1

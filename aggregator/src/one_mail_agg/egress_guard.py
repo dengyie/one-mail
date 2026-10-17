@@ -17,13 +17,47 @@ from __future__ import annotations
 
 import errno
 import ipaddress
+import os
 import socket
 from typing import Iterable
+from urllib.parse import urlparse
 
-# The local SOCKS5 tunnel used for overseas IMAP hosts is the only loopback
-# destination the aggregator may ever connect to.  A precise host:port
-# exception, never a whole loopback range.
+# The local SOCKS5 tunnel used for overseas IMAP hosts and the local proxy (Mihomo)
+# are the only loopback destinations the aggregator may connect to.
+# Precise host:port exceptions, never a whole loopback range.
 _SOCKS_LOOPBACK = (ipaddress.ip_address("127.0.0.1"), 1080)
+_DEFAULT_ALLOWED_LOOPBACKS: set[tuple[ipaddress._BaseAddress, int]] = {
+    _SOCKS_LOOPBACK,                             # Local SOCKS5 tunnel for overseas IMAP (Google Cloud VPS)
+    (ipaddress.ip_address("::1"), 1080),
+    (ipaddress.ip_address("127.0.0.1"), 7897),   # Local HTTP/SOCKS proxy (Mihomo)
+    (ipaddress.ip_address("::1"), 7897),
+}
+_ALLOWED_LOOPBACKS: set[tuple[ipaddress._BaseAddress, int]] = set(_DEFAULT_ALLOWED_LOOPBACKS)
+
+
+def _refresh_allowed_loopbacks() -> None:
+    """Populate allowed loopback destinations from environment proxy settings.
+
+    Uses atomic reassignment to eliminate any race-window where _ALLOWED_LOOPBACKS
+    could be momentarily empty during concurrent connects.
+    """
+    global _ALLOWED_LOOPBACKS
+    new_allowed = set(_DEFAULT_ALLOWED_LOOPBACKS)
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        val = os.environ.get(var, "").strip()
+        if not val:
+            continue
+        try:
+            p = urlparse(val if "://" in val else f"http://{val}")
+            if p.hostname in ("127.0.0.1", "localhost", "::1") and p.port:
+                new_allowed.add((ipaddress.ip_address("127.0.0.1"), p.port))
+                new_allowed.add((ipaddress.ip_address("::1"), p.port))
+        except Exception:
+            pass
+    _ALLOWED_LOOPBACKS = new_allowed
+
+
+_refresh_allowed_loopbacks()
 
 # Minimum deny set required by the ops baseline.  ``is_global`` rejects a
 # superset of these; the explicit nets keep the policy auditable.
@@ -69,7 +103,7 @@ def _decode_host(host) -> str:
 
 
 def _is_denied(ip: ipaddress._BaseAddress, port: int) -> bool:
-    if ip == _SOCKS_LOOPBACK[0] and port == _SOCKS_LOOPBACK[1]:
+    if (ip, port) in _ALLOWED_LOOPBACKS:
         return False
     for net in _DENY_NETS:
         if ip in net:
@@ -134,6 +168,7 @@ def _guarded_connect(self, address):
 
 def install_egress_guard() -> None:
     """Patch outbound TCP connects with connect-time policy enforcement."""
+    _refresh_allowed_loopbacks()
     if socket.socket.connect is not _original_connect:
         return
     socket.socket.connect = _guarded_connect

@@ -4,7 +4,7 @@ import logging
 import random
 from dataclasses import dataclass
 
-from .config import Config, load_config
+from .config import AccountConfig, Config, load_config
 from .state import SyncState
 from .sync import sync_account, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
@@ -75,7 +75,20 @@ def get_account_poll_interval(account, state: SyncState, default_poll_interval: 
     return max(default_poll_interval, 60)
 
 
+_cached_user_accounts: list[AccountConfig] = []
+_user_accounts_consecutive_errors: int = 0
+
+
+def _clear_user_accounts_cache() -> None:
+    """Helper for testing: reset the in-memory user accounts cache."""
+    global _cached_user_accounts, _user_accounts_consecutive_errors
+    _cached_user_accounts = []
+    _user_accounts_consecutive_errors = 0
+
+
 def get_merged_accounts(config, state):
+    global _cached_user_accounts, _user_accounts_consecutive_errors
+
     def collision_key(a):
         # 严格按 (host, username) 归一化去重，防止相同邮箱在 config.json 和 user_mail_accounts 中被重复同步两遍打爆 D1
         return (str(a.host).strip().lower(), str(a.username).strip().lower())
@@ -83,7 +96,46 @@ def get_merged_accounts(config, state):
     accounts = list(config.accounts)
     seen = {collision_key(a) for a in accounts}
     user_account_ids: set[str] = set()
-    user_accounts = fetch_user_accounts(config.worker_base_url, config.admin_token)
+
+    try:
+        user_accounts = fetch_user_accounts(
+            config.worker_base_url,
+            config.admin_token,
+            raise_on_error=True,
+        )
+        _cached_user_accounts = list(user_accounts)
+        if _user_accounts_consecutive_errors > 0:
+            log.info(
+                "fetch user mail_accounts recovered after %d failure(s); loaded %d account(s)",
+                _user_accounts_consecutive_errors,
+                len(_cached_user_accounts),
+            )
+            _user_accounts_consecutive_errors = 0
+    except TypeError:
+        # Compatibility with test mocks that do not accept raise_on_error
+        user_accounts = fetch_user_accounts(config.worker_base_url, config.admin_token)
+        _cached_user_accounts = list(user_accounts)
+        _user_accounts_consecutive_errors = 0
+    except Exception as exc:
+        _user_accounts_consecutive_errors += 1
+        if _cached_user_accounts:
+            if _user_accounts_consecutive_errors == 1 or _user_accounts_consecutive_errors % 10 == 0:
+                log.warning(
+                    "fetch user mail_accounts failed (%s, failures=%d); retaining %d cached user account(s)",
+                    exc,
+                    _user_accounts_consecutive_errors,
+                    len(_cached_user_accounts),
+                )
+            user_accounts = list(_cached_user_accounts)
+        else:
+            if _user_accounts_consecutive_errors == 1 or _user_accounts_consecutive_errors % 10 == 0:
+                log.warning(
+                    "fetch user mail_accounts error (%s, failures=%d)",
+                    exc,
+                    _user_accounts_consecutive_errors,
+                )
+            user_accounts = []
+
     for ua in user_accounts:
         try:
             # User-managed targets are untrusted.  Validate before adding the

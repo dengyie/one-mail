@@ -40,19 +40,49 @@ def test_loopback_denied_except_socks_tunnel(guarded):
         _connect("127.0.0.1", 9999)
     with pytest.raises(EgressBlockedError):
         _connect("127.0.0.1", 1)
-    # Local SOCKS5 tunnel: the only precise loopback exception.  Nothing may
-    # be listening in the test environment; a plain network error is fine,
+    # Local SOCKS5 tunnel (1080) and Mihomo proxy (7897): allowed loopback exceptions (v4 and v6).
+    # Nothing may be listening in the test environment; a plain network error is fine,
     # an egress-policy rejection is not.
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1.0)
-    try:
-        s.connect(("127.0.0.1", 1080))
-    except EgressBlockedError:
-        pytest.fail("local SOCKS tunnel port was rejected by egress policy")
-    except OSError:
-        pass
-    finally:
-        s.close()
+    for allowed_port in (1080, 7897):
+        for host in ("127.0.0.1", "::1"):
+            family = socket.AF_INET6 if ":" in host else socket.AF_INET
+            try:
+                s = socket.socket(family, socket.SOCK_STREAM)
+            except OSError:
+                continue  # IPv6 not supported in some CI environments
+            s.settimeout(1.0)
+            try:
+                s.connect((host, allowed_port))
+            except EgressBlockedError:
+                pytest.fail(f"allowed loopback {host}:{allowed_port} was rejected by egress policy")
+            except OSError:
+                pass
+            finally:
+                s.close()
+
+
+def test_loopback_proxy_from_env_allowed(guarded, monkeypatch):
+    import one_mail_agg.egress_guard as eg
+    monkeypatch.setenv("HTTP_PROXY", "http://localhost:8888")
+    eg._refresh_allowed_loopbacks()
+    for host in ("127.0.0.1", "::1"):
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        try:
+            s = socket.socket(family, socket.SOCK_STREAM)
+        except OSError:
+            continue
+        s.settimeout(1.0)
+        try:
+            s.connect((host, 8888))
+        except EgressBlockedError:
+            pytest.fail(f"env-configured proxy {host}:8888 was rejected by egress policy")
+        except OSError:
+            pass
+        finally:
+            s.close()
+    # Unconfigured port remains blocked
+    with pytest.raises(EgressBlockedError):
+        _connect("127.0.0.1", 8889)
 
 
 @pytest.mark.parametrize(
