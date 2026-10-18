@@ -630,3 +630,152 @@ def test_do_sync_reports_clean_status_when_all_folders_sync(tmp_path, monkeypatc
     worker.do_sync(MagicMock())
 
     assert reports == [("test-qq", None)]
+
+
+def test_idle_session_recycling_smoothly_reconnects(tmp_path):
+    """当连接达到最大周期或最长寿命时，主动平滑重建连接（client.logout -> 重连），
+    防止上游（如腾讯 QQ 邮箱）在长连接老化后静默注销推信广播。"""
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _qq_account()
+
+    created_clients = []
+
+    class _MockClient:
+        def __init__(self, idx):
+            self.idx = idx
+            self.logged_out = False
+        def has_capability(self, cap):
+            return True
+        def select_folder(self, folder, readonly=True):
+            return {b"UIDVALIDITY": 1}
+        def idle(self):
+            pass
+        def idle_check(self, timeout=None):
+            return []  # timeout tick
+        def idle_done(self):
+            pass
+        def logout(self):
+            self.logged_out = True
+
+    def factory(_acc):
+        c = _MockClient(len(created_clients))
+        created_clients.append(c)
+        return c
+
+    worker = ImapIdleWorker(
+        config=config,
+        account=acc,
+        state=state,
+        client_factory=factory,
+        idle_refresh_seconds=1,
+        max_session_cycles=2,  # 2 次循环后必须置换
+    )
+    worker.do_sync = lambda _c, **k: {"synced": 0, "dropped": 0}
+
+    # 模拟运行到第 3 个循环后停止
+    cycle_counter = 0
+    orig_do_sync = worker.do_sync
+    def count_sync(_c, **k):
+        nonlocal cycle_counter
+        cycle_counter += 1
+        if cycle_counter >= 4:
+            worker.stop()
+        return orig_do_sync(_c, **k)
+    worker.do_sync = count_sync
+
+    worker.start()
+    worker.join(timeout=3)
+    worker.stop()
+
+    # 验证至少创建了 2 个独立的 client 连接，且第 1 个 client 已经平滑 logout
+    assert len(created_clients) >= 2
+    assert created_clients[0].logged_out is True
+
+
+def test_netease_163_safe_noop_polling_interval(tmp_path):
+    """网易 163/126 邮箱由于严格的频控与流量保护，NOOP 轮询周期必须保持在安全下限（>= 300s），
+    杜绝短频轮询消耗流量导致被封。"""
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+
+    acc_163 = AccountConfig(
+        id="test-163",
+        source="imap_163",
+        host="imap.163.com",
+        port=993,
+        username="test@163.com",
+        password="pwd",
+        folders=["INBOX"],
+        use_ssl=True,
+    )
+
+    worker = ImapIdleWorker(
+        config=config,
+        account=acc_163,
+        state=state,
+        noop_poll_interval_seconds=30,  # 即使传入 30s
+    )
+    assert worker.noop_poll_interval_seconds >= 300
+
+
+def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path):
+    """在 IDLE 维持心跳超时时，主收件箱每个周期检查，次要目录（如 Junk）每隔若干周期检查一次；
+    收到真实事件时立即同步全部目录。"""
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _qq_account(folders=["INBOX", "Junk"])
+
+    sync_history = []
+
+    class _MockClient:
+        def __init__(self):
+            self.tick = 0
+        def has_capability(self, cap):
+            return True
+        def select_folder(self, folder, readonly=True):
+            return {b"UIDVALIDITY": 1}
+        def idle(self):
+            pass
+        def idle_check(self, timeout=None):
+            self.tick += 1
+            if self.tick == 2:
+                return [(b"1", b"EXISTS")]  # 第 2 次触发真实事件
+            return []  # 其他次为超时
+        def idle_done(self):
+            pass
+        def logout(self):
+            pass
+
+    worker = ImapIdleWorker(
+        config=config,
+        account=acc,
+        state=state,
+        client_factory=lambda _a: _MockClient(),
+        idle_refresh_seconds=1,
+    )
+
+    def mock_sync(_c, folders=None):
+        sync_history.append(list(folders) if folders is not None else list(acc.folders))
+        if len(sync_history) >= 5:
+            worker.stop()
+        return {"synced": 0, "dropped": 0}
+
+    worker.do_sync = mock_sync
+
+    worker.start()
+    worker.join(timeout=3)
+    worker.stop()
+
+    # 期望序列：
+    # 0: initial sync (folders=["INBOX", "Junk"])
+    # 1: cycle 0 timeout (cycles_since_connect=0 % 3 == 0) -> ["INBOX", "Junk"]
+    # 2: cycle 1 has_event=True -> ["INBOX", "Junk"]
+    # 3: cycle 2 timeout (cycles_since_connect=2 % 3 != 0) -> ["INBOX"]
+    # 4: cycle 3 timeout (cycles_since_connect=3 % 3 == 0) -> ["INBOX", "Junk"]
+    assert sync_history[0] == ["INBOX", "Junk"]
+    assert sync_history[1] == ["INBOX", "Junk"]
+    assert sync_history[2] == ["INBOX", "Junk"]
+    assert sync_history[3] == ["INBOX"]
+    assert sync_history[4] == ["INBOX", "Junk"]
+

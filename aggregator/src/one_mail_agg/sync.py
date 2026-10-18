@@ -92,12 +92,20 @@ def sync_warning(result: dict) -> str | None:
     return "folder sync failed this round: " + ", ".join(str(f) for f in failed)
 
 
-def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) -> dict:
+def sync_imap(
+    client,
+    config: Config,
+    account: AccountConfig,
+    state: SyncState,
+    folders: list[str] | tuple[str, ...] | None = None,
+) -> dict:
     total = 0
     dropped = 0
     catalog_attempted = False
     failed_folders: list[str] = []
-    for index, folder in enumerate(account.folders):
+    target_folders = folders if folders is not None else account.folders
+    primary_folder = account.folders[0] if account.folders else None
+    for index, folder in enumerate(target_folders):
         try:
             sel = client.select_folder(folder, readonly=True)
             uidvalidity = int(sel[b"UIDVALIDITY"])
@@ -126,7 +134,8 @@ def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) 
             # 例外一：D1 写入配额耗尽必须上抛，让上层暂停账号而非空转重试。
             # 例外二：主目录（folders[0]，聚合器对其建立 IDLE）失败语义保持不变——账号
             # 健康状态由它承载，auto 单目录账号还可能要安全降级 POP3，必须照旧上抛。
-            if quota_retry_at(error) is not None or index == 0:
+            is_primary = (folder == primary_folder) if primary_folder is not None else (index == 0)
+            if quota_retry_at(error) is not None or is_primary:
                 raise
             failed_folders.append(folder)
             log.warning("imap folder sync failed account=%s folder=%s: %r",
