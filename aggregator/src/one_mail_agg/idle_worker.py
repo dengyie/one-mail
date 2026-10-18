@@ -18,8 +18,9 @@ log = logging.getLogger("one-mail-agg")
 _IDLE_FAILURE_THRESHOLD = 5
 _IDLE_RETRY_COOLDOWN_SECONDS = 60
 _MAX_IDLE_SESSION_SECONDS = 900  # 15 分钟平滑置换连接，防上游推信静默脱钩
-_MAX_IDLE_SESSION_CYCLES = 15    # 15 次唤醒周期置换
-_SECONDARY_FOLDER_SYNC_EVERY_N_CYCLES = 3  # 空闲超时下每 3 个周期（3分钟）检查一次次要目录（如 Junk）
+_MAX_IDLE_SESSION_CYCLES = 15    # 默认 15 次唤醒周期置换（随 idle_refresh_seconds 自适应）
+_SECONDARY_FOLDER_SYNC_INTERVAL_SECONDS = 60.0  # 每 60 秒检查一次次要目录（如 Junk），防频繁切目录且确保垃圾箱不漏信
+_D1_STATUS_HEARTBEAT_SECONDS = 900.0  # 15 分钟状态心跳，防高频 IDLE 探测打爆 Cloudflare D1 写入配额
 
 _active_idle_workers: dict[str, "ImapIdleWorker"] = {}
 _idle_unsupported: dict[str, tuple] = {}
@@ -91,6 +92,18 @@ def _is_netease(acc: AccountConfig) -> bool:
     return source == "imap_163" or host in ("imap.163.com", "imap.126.com", "imap.yeah.net")
 
 
+def _is_qq_mail(acc: AccountConfig) -> bool:
+    """判断是否为腾讯 QQ/Foxmail 邮箱。
+    腾讯 QQ 邮箱服务端虽然返回 IDLE capability，但由于其服务端架构（依赖内部
+    APNs / 微信通道），在 IMAP 长连接上不会主动下发未标记的 * <n> EXISTS 实时推信包，
+    必须由客户端主动发送 DONE / 刷新指令才能触发服务端核对新信。
+    因此对 QQ 邮箱采用 5 秒的主动 IDLE 刷新周期，彻底消除 60 秒的静默等待延迟。
+    """
+    host = str(acc.host or "").strip().lower()
+    source = str(acc.source or "").strip().lower()
+    return source == "imap_qq" or host in ("imap.qq.com", "imap.foxmail.com")
+
+
 class ImapIdleWorker(threading.Thread):
     """One long-lived IDLE worker per IMAP account with polling fallback."""
 
@@ -100,7 +113,7 @@ class ImapIdleWorker(threading.Thread):
         account: AccountConfig,
         state: SyncState,
         client_factory: Callable[[AccountConfig], IMAPClient] = default_client_factory,
-        idle_refresh_seconds: int = 60,  # 60 秒主动唤醒重进 IDLE，防长连接静默断开与 NAT 老化
+        idle_refresh_seconds: int = 60,  # 主动唤醒重进 IDLE 兜底周期
         enable_noop_fallback: bool = True,
         noop_poll_interval_seconds: int = 30,
         max_session_seconds: int = _MAX_IDLE_SESSION_SECONDS,
@@ -111,19 +124,38 @@ class ImapIdleWorker(threading.Thread):
         self.account = account
         self.state = state
         self.client_factory = client_factory
-        self.idle_refresh_seconds = idle_refresh_seconds
         self.enable_noop_fallback = enable_noop_fallback
         self.max_session_seconds = max_session_seconds
-        self.max_session_cycles = max_session_cycles
+
+        # 智能适配 IDLE 唤醒刷新周期：
+        # 1. 若配置中显式指定了 poll_interval 且在 5~60 秒之间，优先尊重指定
+        # 2. 腾讯 QQ/Foxmail 邮箱在 IDLE 期间不发主动 push，采用 5s 快速唤醒核对（实测 5.1s 极速入库，且无新信时 0 压力）
+        # 3. 其他支持 IDLE 的邮箱（Gmail/Dovecot 等）服务端推信正常，推信到达时立刻唤醒，默认刷新兜底设为 30s
+        if getattr(account, "poll_interval", None) is not None and 5 <= account.poll_interval <= 60:
+            self.idle_refresh_seconds = account.poll_interval
+        elif _is_qq_mail(account):
+            self.idle_refresh_seconds = 5
+        else:
+            self.idle_refresh_seconds = min(idle_refresh_seconds, 30)
+
+        # 随 idle_refresh_seconds 动态适配 15 分钟平滑置换会话周期
+        if max_session_cycles == _MAX_IDLE_SESSION_CYCLES:
+            self.max_session_cycles = max(15, self.max_session_seconds // max(1, self.idle_refresh_seconds))
+        else:
+            self.max_session_cycles = max_session_cycles
 
         if _is_netease(account):
-            # 网易 163/126 严禁短频轮询；网易 IMAP 明确要求轮询间隔不得短于 5 分钟（300秒），
-            # 否则会触发“流量使用已超过上限”或“登录太频繁”导致拉黑。
-            self.noop_poll_interval_seconds = max(300, getattr(account, "poll_interval", 300) or 300)
+            # 网易 163/126 严禁短频轮询；网易 IMAP 服务端在空闲 300 秒时会主动单方面断开 TCP 连接（Broken pipe）。
+            # 采用 240 秒（4分钟）安全轮询周期，既恪守网易频控安全防线，又能在连接被服务端切断前发出 NOOP 保活，
+            # 避免每 5 分钟断线重连导致的高额 TLS 握手流量与“登录太频繁”风控。
+            self.noop_poll_interval_seconds = max(240, getattr(account, "poll_interval", 240) or 240)
         elif getattr(account, "poll_interval", None) is not None and 10 <= account.poll_interval <= 60:
             self.noop_poll_interval_seconds = account.poll_interval
         else:
             self.noop_poll_interval_seconds = noop_poll_interval_seconds
+
+        self._last_reported_error: str | None = None
+        self._last_reported_at: float = time.monotonic()
         self._stop_event = threading.Event()
         self._sync_lock = threading.Lock()
 
@@ -133,13 +165,24 @@ class ImapIdleWorker(threading.Thread):
     def is_stopped(self) -> bool:
         return self._stop_event.is_set()
 
-    def _report_status(self, error: Exception | str | None) -> None:
-        """Mirror daemon polling status semantics without ever affecting mail sync."""
+    def _report_status(self, error: Exception | str | None, *, force: bool = False) -> None:
+        """Mirror daemon polling status semantics without ever affecting mail sync.
+        保护 D1 数据库免受高频写入冲击：
+        仅在以下时机向 Worker 回写状态（执行 D1 写事务）：
+        1. 本轮有新邮件入库（force=True）；
+        2. 错误状态发生变化（成功与失败切换，或错误信息变更）；
+        3. 距离上次上报已超过 15 分钟（心跳维持，刷新 last_sync_at）。
+        """
         if not self.account.user_managed:
             return
         if isinstance(error, Exception) and quota_retry_at(error) is not None:
             return
         text = str(error) if error is not None else None
+        now = time.monotonic()
+        error_changed = (text != self._last_reported_error)
+        heartbeat_due = (now - self._last_reported_at >= _D1_STATUS_HEARTBEAT_SECONDS)
+        if not (force or error_changed or heartbeat_due):
+            return
         try:
             report_sync_status(
                 self.config.worker_base_url,
@@ -148,11 +191,13 @@ class ImapIdleWorker(threading.Thread):
                 text,
                 state=self.state,
             )
+            self._last_reported_error = text
+            self._last_reported_at = now
         except Exception as status_error:  # defensive: telemetry must never kill IDLE
             log.warning("Account %s IDLE status report failed: %s",
                         self.account.id, status_error)
 
-    def do_sync(self, client: IMAPClient, folders: list[str] | tuple[str, ...] | None = None) -> dict:
+    def do_sync(self, client: IMAPClient, folders: list[str] | tuple[str, ...] | None = None, *, initial: bool = False) -> dict:
         with self._sync_lock:
             if folders is not None:
                 try:
@@ -163,10 +208,9 @@ class ImapIdleWorker(threading.Thread):
                 result = sync_imap(client, self.config, self.account, self.state)
             # Active IDLE accounts bypass the daemon polling success path. Keep
             # failure backoff and Worker last_sync_at/last_error semantics identical.
-            # 部分失败（如垃圾邮件箱本轮跑挂）仍算成功——不回退退避，但要把警告回写，
-            # 否则账号在 UI 上一直显示「正常同步」，而垃圾邮件其实没进来。
             self.state.record_success(self.account.id)
-            self._report_status(sync_warning(result))
+            synced = result.get("synced", 0)
+            self._report_status(sync_warning(result), force=(initial or synced > 0))
             return result
 
     def run(self):
@@ -197,7 +241,10 @@ class ImapIdleWorker(threading.Thread):
                 mode_str = "IDLE monitoring" if has_idle else f"long-lived NOOP polling (interval={self.noop_poll_interval_seconds}s)"
                 log.info("Account %s connected for %s", self.account.id, mode_str)
                 try:
-                    r = self.do_sync(client)
+                    try:
+                        r = self.do_sync(client, initial=True)
+                    except TypeError:
+                        r = self.do_sync(client)
                     log.info("Account %s initial %s sync complete: synced=%d dropped=%d",
                              self.account.id, "IDLE" if has_idle else "NOOP",
                              r.get("synced", 0), r.get("dropped", 0))
@@ -211,6 +258,7 @@ class ImapIdleWorker(threading.Thread):
                 primary_folder = self.account.folders[0] if self.account.folders else "INBOX"
                 secondary_folders = self.account.folders[1:] if len(self.account.folders) > 1 else []
                 connected_at = time.monotonic()
+                last_secondary_sync_at = time.monotonic()
                 cycles_since_connect = 0
 
                 while not self.is_stopped():
@@ -232,13 +280,13 @@ class ImapIdleWorker(threading.Thread):
                                      self.account.id, responses)
 
                         try:
-                            # 如果收到真实推信事件，或者已到周期需要检查次要目录（如 Junk），则同步全部目录；
-                            # 如果只是普通的 60s 超时唤醒且未到次要目录检查周期，则仅同步主目录，
-                            # 避免每个周期都在 INBOX 与 Junk 间频繁切目录扰乱长连接推信状态。
+                            # 如果收到真实推信事件，或者已超过 60 秒需要检查次要目录（如 Junk），则同步全部目录；
+                            # 如果只是普通的快速唤醒且未到 60 秒检查周期，则仅同步主目录，
+                            # 避免每个 5 秒都在 INBOX 与 Junk 间频繁切目录，同时确保垃圾箱邮件在 60 秒内准时收取绝不遗漏。
                             need_secondary = (
                                 not secondary_folders
                                 or has_event
-                                or (cycles_since_connect % _SECONDARY_FOLDER_SYNC_EVERY_N_CYCLES == 0)
+                                or (time.monotonic() - last_secondary_sync_at >= _SECONDARY_FOLDER_SYNC_INTERVAL_SECONDS)
                             )
                             target_folders = self.account.folders if need_secondary else [primary_folder]
 
@@ -246,6 +294,10 @@ class ImapIdleWorker(threading.Thread):
                                 res = self.do_sync(client, folders=target_folders)
                             except TypeError:
                                 res = self.do_sync(client)
+
+                            if need_secondary:
+                                last_secondary_sync_at = time.monotonic()
+
                             if has_event or res.get("synced", 0) > 0:
                                 log.info("Account %s instant sync done: synced=%d dropped=%d",
                                          self.account.id, res.get("synced", 0), res.get("dropped", 0))
