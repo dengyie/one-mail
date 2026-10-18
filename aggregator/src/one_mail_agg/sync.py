@@ -67,19 +67,36 @@ def default_client_factory(account: AccountConfig) -> IMAPClient:
 
 def _account_result(synced: int, dropped: int, protocol: str,
                     *, dropped_folders: list[str] | None = None,
+                    failed_folders: list[str] | None = None,
                     warning: str | None = None) -> dict:
     result = {"synced": synced, "dropped": dropped, "protocol": protocol}
     if dropped_folders:
         result["dropped_folders"] = list(dropped_folders)
+    if failed_folders:
+        result["failed_folders"] = list(failed_folders)
     if warning:
         result["warning"] = warning
     return result
+
+
+def sync_warning(result: dict) -> str | None:
+    """把一轮同步里的**非致命部分失败**渲染成状态文本，交给上层回写账号状态。
+
+    刻意只用 `failed_folders`（本轮真的跑挂了、下一轮会重试的目录，如垃圾邮件箱），
+    不用 `dropped_folders`/`warning`：后者是 POP3 账号「只能同步 INBOX」这种**结构性、
+    永久**的事实，回写成 last_error 会让那些账号在 UI 上永远挂着红色错误标签。
+    """
+    failed = result.get("failed_folders")
+    if not failed:
+        return None
+    return "folder sync failed this round: " + ", ".join(str(f) for f in failed)
 
 
 def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) -> dict:
     total = 0
     dropped = 0
     catalog_attempted = False
+    failed_folders: list[str] = []
     for index, folder in enumerate(account.folders):
         try:
             sel = client.select_folder(folder, readonly=True)
@@ -111,13 +128,19 @@ def sync_imap(client, config: Config, account: AccountConfig, state: SyncState) 
             # 健康状态由它承载，auto 单目录账号还可能要安全降级 POP3，必须照旧上抛。
             if quota_retry_at(error) is not None or index == 0:
                 raise
+            failed_folders.append(folder)
             log.warning("imap folder sync failed account=%s folder=%s: %r",
                         account.id, folder, error)
             continue
         if not catalog_attempted:
             maybe_sync_imap_folder_catalog(client, config, account)
             catalog_attempted = True
-    return _account_result(total, dropped, "imap")
+    if failed_folders:
+        # 单条 log.warning 每个失败目录各一行，容易被忽略；这里给出一条账号级汇总，让
+        # 「垃圾邮件箱一直同步不上」在运维日志里有稳定、可 grep 的落点。
+        log.warning("imap account=%s %d secondary folder(s) failed this round: %s",
+                    account.id, len(failed_folders), ", ".join(failed_folders))
+    return _account_result(total, dropped, "imap", failed_folders=failed_folders or None)
 
 
 def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> dict:

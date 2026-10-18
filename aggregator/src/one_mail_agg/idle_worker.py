@@ -7,7 +7,7 @@ from imapclient import IMAPClient
 
 from .config import Config, AccountConfig
 from .state import SyncState
-from .sync import sync_imap, default_client_factory
+from .sync import sync_imap, sync_warning, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .remote_accounts import report_sync_status
 from .uploader import quota_retry_at
@@ -135,8 +135,10 @@ class ImapIdleWorker(threading.Thread):
             result = sync_imap(client, self.config, self.account, self.state)
             # Active IDLE accounts bypass the daemon polling success path. Keep
             # failure backoff and Worker last_sync_at/last_error semantics identical.
+            # 部分失败（如垃圾邮件箱本轮跑挂）仍算成功——不回退退避，但要把警告回写，
+            # 否则账号在 UI 上一直显示「正常同步」，而垃圾邮件其实没进来。
             self.state.record_success(self.account.id)
-            self._report_status(None)
+            self._report_status(sync_warning(result))
             return result
 
     def run(self):

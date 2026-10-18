@@ -23,6 +23,35 @@ def _text(value) -> str:
     return str(value or "")
 
 
+# 部分服务商（QQ、163/126）的垃圾邮件目录不携带 \Junk/\Spam 标志，纯标志判定会把它们
+# 归为 custom，导致 worker 导出（folder_type='spam'）不把它们并入同步范围、垃圾邮件被
+# 静默漏掉。按约定俗成的目录名兜底。注意「垃圾箱/回收站」是 Trash 语义，绝不能混入。
+# 与 worker/src/unified/ingest.ts 的 folderType() 兜底名单保持同步。
+_JUNK_FOLDER_NAMES = frozenset({
+    "spam",
+    "junk",
+    "junk mail",
+    "junk e-mail",
+    "junk email",
+    "垃圾邮件",
+    "垃圾信件",
+    "垃圾郵件",
+    "垃圾電郵",
+})
+
+
+def _folder_basename(name: str) -> str:
+    """取目录名最后一个层级。IMAP 层级分隔符因服务商而异，但本部署在用的
+    Gmail/QQ/163 都返回 "/"（如 `[Gmail]/垃圾邮件`）。"""
+    return name.strip().lower().rsplit("/", 1)[-1].strip()
+
+
+def _is_junk_folder_name(name: str) -> bool:
+    normalized = name.strip().lower()
+    return (normalized in _JUNK_FOLDER_NAMES
+            or _folder_basename(normalized) in _JUNK_FOLDER_NAMES)
+
+
 def _imap_folder_type(flags, name: str) -> str:
     normalized = {_text(flag).strip().lower() for flag in (flags or [])}
     if "\\inbox" in normalized or name.strip().lower() == "inbox":
@@ -37,6 +66,8 @@ def _imap_folder_type(flags, name: str) -> str:
         return "spam"
     if "\\archive" in normalized or "\\all" in normalized:
         return "archive"
+    if _is_junk_folder_name(name):
+        return "spam"
     return "custom"
 
 

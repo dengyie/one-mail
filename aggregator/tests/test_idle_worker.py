@@ -589,3 +589,44 @@ def test_folders_change_restarts_idle_worker(tmp_path, monkeypatch):
     assert started == ["test-qq", "test-qq"]
     assert stopped == ["test-qq"]
     assert _active_idle_workers["test-qq"] is not first
+
+
+def test_do_sync_reports_partial_folder_failure_as_status_warning(tmp_path, monkeypatch):
+    """垃圾邮件箱本轮跑挂时不能静默：do_sync 仍算成功（不回退退避），但必须把警告
+    回写账号状态，否则 UI 上账号一直显示「正常同步」而垃圾邮件其实没进来。"""
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _qq_account(user_managed=True)
+
+    monkeypatch.setattr(idle_mod, "sync_imap", lambda client, cfg, a, st: {
+        "synced": 3, "dropped": 0, "protocol": "imap", "failed_folders": ["Junk"],
+    })
+    reports = []
+    monkeypatch.setattr(idle_mod, "report_sync_status",
+                        lambda url, token, aid, error, state=None: reports.append((aid, error)))
+
+    worker = ImapIdleWorker(config=config, account=acc, state=state,
+                            client_factory=lambda _a: MagicMock())
+    result = worker.do_sync(MagicMock())
+
+    assert result["synced"] == 3
+    assert reports == [("test-qq", "folder sync failed this round: Junk")]
+
+
+def test_do_sync_reports_clean_status_when_all_folders_sync(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _qq_account(user_managed=True)
+
+    monkeypatch.setattr(idle_mod, "sync_imap", lambda client, cfg, a, st: {
+        "synced": 1, "dropped": 0, "protocol": "imap",
+    })
+    reports = []
+    monkeypatch.setattr(idle_mod, "report_sync_status",
+                        lambda url, token, aid, error, state=None: reports.append((aid, error)))
+
+    worker = ImapIdleWorker(config=config, account=acc, state=state,
+                            client_factory=lambda _a: MagicMock())
+    worker.do_sync(MagicMock())
+
+    assert reports == [("test-qq", None)]

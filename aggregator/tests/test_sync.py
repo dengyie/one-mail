@@ -847,6 +847,39 @@ def test_sync_imap_isolates_secondary_folder_failure(monkeypatch, tmp_path):
     assert "垃圾邮件" in client.selected
     assert result["synced"] == 0
     assert result["protocol"] == "imap"
+    # 失败目录要反映到结果里，供上层回写账号状态——否则账号显示「正常同步」而垃圾邮件没进来
+    assert result["failed_folders"] == ["垃圾邮件"]
+
+
+def test_sync_warning_renders_partial_folder_failure():
+    """sync_warning 只认本轮真跑挂的目录，且渲染成可回写 last_error 的状态文本。"""
+    assert sync_mod.sync_warning(
+        {"synced": 0, "protocol": "imap", "failed_folders": ["垃圾邮件"]}
+    ) == "folder sync failed this round: 垃圾邮件"
+    assert sync_mod.sync_warning({"synced": 0, "protocol": "imap"}) is None
+    assert sync_mod.sync_warning(
+        {"synced": 0, "protocol": "imap", "failed_folders": []}
+    ) is None
+
+
+def test_sync_warning_ignores_structural_pop3_dropped_folders():
+    """POP3「只能同步 INBOX」是永久结构性事实，不能回写成 last_error，否则这些账号
+    在 UI 上会永远挂红。sync_warning 必须忽略 dropped_folders / warning。"""
+    result = {"synced": 0, "dropped": 1, "protocol": "pop3",
+              "dropped_folders": ["垃圾邮件"],
+              "warning": "POP3 only supports INBOX; non-INBOX folders were dropped"}
+    assert sync_mod.sync_warning(result) is None
+
+
+def test_sync_imap_success_has_no_failed_folders(monkeypatch, tmp_path):
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _multi_folder_acc()
+    cfg = _cfg([acc])
+    _stub_upload(monkeypatch)
+    result = sync_mod.sync_imap(_ImapEmpty(), cfg, acc, state)
+    assert result["synced"] == 0
+    assert "failed_folders" not in result
+    assert sync_mod.sync_warning(result) is None
 
 
 def test_sync_imap_inbox_failure_still_propagates(monkeypatch, tmp_path):

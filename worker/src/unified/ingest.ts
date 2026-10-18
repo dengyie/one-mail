@@ -95,14 +95,19 @@ const VALID_FOLDER_TYPES = new Set<FolderType>([
 // changes while coalescing the heartbeat repeated by each email in the folder.
 const FOLDER_HEARTBEAT_MS = 300_000;
 
-const folderType = (folder: string): FolderType => {
+// Fallback classification for catalog rows that omit folder_type, and for the
+// folder heartbeat derived from synced email source_folder. QQ/163 do not set
+// \Junk/\Spam, so localized junk names are matched here too. Keep in sync with
+// _JUNK_FOLDER_NAMES in aggregator/src/one_mail_agg/folder_catalog.py.
+export const folderType = (folder: string): FolderType => {
     const normalized = folder.trim().toLowerCase();
     if (normalized === "inbox") return "inbox";
     if (["sent", "sent items", "sent messages"].includes(normalized)) return "sent";
     if (["draft", "drafts"].includes(normalized)) return "drafts";
     if (["archive", "all mail", "all"].includes(normalized)) return "archive";
     if (["trash", "deleted", "deleted items"].includes(normalized)) return "trash";
-    if (["spam", "junk", "junk email"].includes(normalized)) return "spam";
+    if (["spam", "junk", "junk mail", "junk e-mail", "junk email",
+         "垃圾邮件", "垃圾信件", "垃圾郵件", "垃圾電郵"].includes(normalized)) return "spam";
     return "custom";
 };
 
