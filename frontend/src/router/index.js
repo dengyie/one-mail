@@ -142,6 +142,11 @@ const router = createRouter({
             component: () => import('../views/Admin.vue')
         },
         {
+            path: '/admin/attachments',
+            alias: '/:lang/admin/attachments',
+            component: () => import('../views/Admin.vue')
+        },
+        {
             path: '/admin/users',
             alias: '/:lang/admin/users',
             component: () => import('../views/Admin.vue')

@@ -35,6 +35,7 @@ import IpBlacklistSettings from './admin/IpBlacklistSettings.vue'
 import AiExtractSettings from './admin/AiExtractSettings.vue'
 import AdminSendMail from './admin/SendMail.vue'
 import UnknownSendMail from './admin/UnknownSendMail.vue'
+import AttachmentManagement from './admin/AttachmentManagement.vue'
 
 const {
   adminAuth, adminTab, loading,
@@ -81,6 +82,7 @@ const currentAdminView = computed(() => {
   if (p.includes('/admin/sendmail')) return 'send_mail'
   if (p.includes('/admin/sendbox')) return 'send_box'
   if (p.includes('/admin/send-unknown')) return 'send_unknown'
+  if (p.includes('/admin/attachments')) return 'attachments'
   if (p.includes('/admin/accounts')) return 'accounts'
   
   // 兼容根据 store adminTab 渲染
@@ -254,6 +256,17 @@ onMounted(async () => {
           </div>
         </div>
         <UnknownSendMail />
+      </div>
+
+      <!-- 统一收件箱附件管理模块 -->
+      <div v-else-if="currentAdminView === 'attachments'" class="settings-section space-y-6">
+        <div class="workspace-page-header">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 dark:text-white tracking-tight">{{ t('attachmentsTitle') }}</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ t('attachmentsSubtitle') }}</p>
+          </div>
+        </div>
+        <AttachmentManagement />
       </div>
 
     </div>

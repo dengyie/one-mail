@@ -132,6 +132,10 @@ export const MESSAGE_REGISTRY = {
     "zh": "待确认投递",
     "en": "Unconfirmed delivery"
   },
+  "adminAttachments": {
+    "zh": "附件管理",
+    "en": "Attachments"
+  },
   "expandSidebar": {
     "zh": "展开导航",
     "en": "Expand navigation"
@@ -1727,6 +1731,18 @@ export const MESSAGE_REGISTRY = {
     "sendUnknownSubtitle": {
       "en": "Outbound requests the provider did not confirm as delivered. Marking delivered keeps the quota; marking failed refunds it.",
       "zh": "服务商未确认送达的出站请求。标记已送达会保留额度,标记失败会退回额度。"
+    },
+    "attachmentsTitle": {
+      "en": "Unified Inbox Attachments",
+      "zh": "统一收件箱附件管理"
+    },
+    "attachmentsSubtitle": {
+      "en": "Review attachment metadata and download available files from the unified inbox",
+      "zh": "查看统一收件箱中的附件信息，并下载仍可用的文件"
+    },
+    "unnamedAttachment": {
+      "en": "Unnamed attachment",
+      "zh": "未命名附件"
     },
     "noAdminTitle": {
       "en": "No Admin Permission",

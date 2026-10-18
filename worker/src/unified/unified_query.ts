@@ -29,6 +29,36 @@ export function buildEmailFilters(q: Record<string, string | undefined>): EmailF
     else if (q.unread === "0") { clauses.push("is_read = 1"); }
     if (q.starred === "1") { clauses.push("is_starred = 1"); }
     else if (q.starred === "0") { clauses.push("(is_starred IS NULL OR is_starred = 0)"); }
+    if (q.has_attachments === "1") {
+        // Rows created before the attachment flag migration can still carry
+        // attachment metadata while the nullable flag is absent.
+        clauses.push(`(
+            has_attachments = 1
+            OR (
+                has_attachments IS NULL
+                AND CASE WHEN json_valid(attachments_json) THEN
+                    CASE WHEN json_type(attachments_json) = 'array'
+                        THEN json_array_length(attachments_json) > 0
+                        ELSE 0
+                    END
+                ELSE 0 END
+            )
+        )`);
+    }
+    else if (q.has_attachments === "0") {
+        clauses.push(`(
+            has_attachments = 0
+            OR (
+                has_attachments IS NULL
+                AND CASE WHEN json_valid(attachments_json) THEN
+                    CASE WHEN json_type(attachments_json) = 'array'
+                        THEN json_array_length(attachments_json) = 0
+                        ELSE 1
+                    END
+                ELSE 1 END
+            )
+        )`);
+    }
     if (q.since)       { clauses.push("received_at >= ?");  params.push(Number(q.since)); }
     if (q.until)       { clauses.push("received_at <= ?");  params.push(Number(q.until)); }
     if (q.q) {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { buildEmailFilters } from "./unified_query.ts";
 
 test("buildEmailFilters with no params returns 1=1", () => {
@@ -19,6 +20,33 @@ test("buildEmailFilters supports starred filter", () => {
   assert.equal(f1.where, "1=1 AND is_starred = 1");
   const f2 = buildEmailFilters({ starred: "0" });
   assert.equal(f2.where, "1=1 AND (is_starred IS NULL OR is_starred = 0)");
+});
+
+test("has_attachments filter includes legacy metadata only when the flag is null", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE emails (id TEXT PRIMARY KEY, has_attachments INTEGER, attachments_json TEXT)");
+  const insert = db.prepare("INSERT INTO emails VALUES (?, ?, ?)");
+  insert.run("flagged", 1, "[]");
+  insert.run("legacy-with-attachments", null, '[{"id":"att-1"}]');
+  insert.run("legacy-empty", null, "[]");
+  insert.run("legacy-malformed", null, "not-json");
+  insert.run("legacy-object", null, '{"id":"att-1"}');
+  insert.run("explicit-empty", 0, '[{"id":"att-1"}]');
+
+  const hasAttachments = buildEmailFilters({ has_attachments: "1" });
+  const withAttachments = db.prepare(
+    `SELECT id FROM emails WHERE ${hasAttachments.where} ORDER BY id`,
+  ).all(...hasAttachments.params);
+  assert.deepEqual(withAttachments.map(row => row.id), ["flagged", "legacy-with-attachments"]);
+
+  const noAttachments = buildEmailFilters({ has_attachments: "0" });
+  const withoutAttachments = db.prepare(
+    `SELECT id FROM emails WHERE ${noAttachments.where} ORDER BY id`,
+  ).all(...noAttachments.params);
+  assert.deepEqual(withoutAttachments.map(row => row.id), [
+    "explicit-empty", "legacy-empty", "legacy-malformed", "legacy-object",
+  ]);
+  db.close();
 });
 
 test("buildEmailFilters account_id + date range", () => {

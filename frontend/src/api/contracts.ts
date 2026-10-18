@@ -9,6 +9,7 @@ export interface UnifiedEmailSummary {
   received_at: number
   is_read: number
   is_starred: number
+  attachments_json: string | null
 }
 
 export interface UnifiedEmailDetail extends UnifiedEmailSummary {
@@ -24,6 +25,7 @@ export interface UnifiedListQuery {
   q?: string
   unread?: 0 | 1
   starred?: 0 | 1
+  has_attachments?: 0 | 1
   limit?: number
   offset?: number
   cursor?: string
