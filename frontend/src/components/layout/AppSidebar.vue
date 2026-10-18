@@ -79,7 +79,7 @@ const navGroups = computed(() => {
     ['adminAccounts', 'accounts', 'accounts'], ['adminUsers', 'users', 'users'], ['adminStats', 'chart', 'statistics'],
     ['adminAi', 'sparkles', 'ai-extract'], ['webhook', 'git-branch', 'webhook'], ['adminDatabase', 'database', 'database'],
     ['adminSettings', 'settings', 'settings'], ['adminSendAccess', 'key', 'sender-access'], ['adminSend', 'send', 'sendmail'],
-    ['adminHistory', 'archive', 'sendbox'], ['adminUnknown', 'clock', 'send-unknown'],
+    ['adminHistory', 'archive', 'sendbox'], ['adminUnknown', 'clock', 'send-unknown'], ['adminAttachments', 'paperclip', 'attachments'],
   ].map(([label, icon, path]) => ({ label, icon, path: '/admin/' + path, key: 'admin-' + path })) })
   return groups
 })
