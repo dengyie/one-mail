@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from .config import AccountConfig, Config, load_config
 from .state import SyncState
-from .sync import sync_account, default_client_factory
+from .sync import sync_account, sync_warning, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .graph_source import sync_graph
 from .mutation_jobs import process_mutation_jobs
@@ -272,8 +272,13 @@ def _poll_pass(config, state, now: float | None = None) -> None:
                 log.info("poll synced %s: protocol=%s synced=%d dropped=%d",
                          account.id, r.get("protocol") or "?", r.get("synced", 0), r.get("dropped", 0))
             state.record_success(account.id)
+            # 部分失败（如垃圾邮件箱本轮跑挂）算成功但要把警告回写到账号状态，否则
+            # 账号在 UI 上显示「正常同步」而垃圾邮件其实没进来。
+            warning = sync_warning(r)
+            if warning and not is_user:
+                log.warning("poll synced %s partial failure: %s", account.id, warning)
             if is_user:
-                report_sync_status(config.worker_base_url, config.admin_token, account.id, None, state=state)
+                report_sync_status(config.worker_base_url, config.admin_token, account.id, warning, state=state)
             _ACCOUNT_LAST_POLL[account.id] = now_ts
         except Exception as e:
             retry_at = quota_retry_at(e)

@@ -172,3 +172,53 @@ def test_graph_catalog_failure_is_best_effort_and_throttled(monkeypatch):
     assert catalog.maybe_sync_graph_folder_catalog("AT", _config(), account, now=1) == 0
     assert catalog.maybe_sync_graph_folder_catalog("AT", _config(), account, now=2) == 0
     assert attempts == ["graph-1"]
+
+
+# ---------- 垃圾邮件目录名兜底（不带 \Junk/\Spam 标志的服务商） ----------
+
+def test_imap_folder_type_recognizes_junk_names_without_flags():
+    """QQ/163 的垃圾邮件目录不带 \\Junk/\\Spam，纯标志判定会漏，按目录名兜底判 spam。"""
+    assert catalog._imap_folder_type((), "Junk") == "spam"
+    assert catalog._imap_folder_type((), "junk") == "spam"
+    assert catalog._imap_folder_type((), "  Spam  ") == "spam"
+    assert catalog._imap_folder_type((), "Junk Mail") == "spam"
+    assert catalog._imap_folder_type((), "Junk E-mail") == "spam"
+    assert catalog._imap_folder_type((), "垃圾邮件") == "spam"
+    assert catalog._imap_folder_type((), "垃圾信件") == "spam"
+
+
+def test_imap_folder_type_matches_junk_name_in_last_path_segment():
+    """层级目录（如 Gmail 的 `[Gmail]/垃圾邮件`）取最后一段判定。"""
+    assert catalog._imap_folder_type((), "[Gmail]/Junk") == "spam"
+    assert catalog._imap_folder_type((), "[Gmail]/垃圾邮件") == "spam"
+
+
+def test_imap_folder_type_flags_still_win_over_names():
+    """标志优先：显式 \\Trash/\\Sent/\\Archive 不能被目录名兜底覆盖。"""
+    assert catalog._imap_folder_type(("\\Trash",), "Junk") == "trash"
+    assert catalog._imap_folder_type(("\\Sent",), "垃圾邮件") == "sent"
+    assert catalog._imap_folder_type(("\\Archive",), "Spam") == "archive"
+
+
+def test_imap_folder_type_does_not_treat_trash_names_as_junk():
+    """「垃圾箱」「回收站」是 Trash 语义，绝不能因名字含「垃圾」被判成垃圾邮件箱。"""
+    assert catalog._imap_folder_type((), "垃圾箱") == "custom"
+    assert catalog._imap_folder_type((), "回收站") == "custom"
+    assert catalog._imap_folder_type((), "Archive/Projects") == "custom"
+
+
+def test_discover_imap_folders_types_unflagged_qq_junk_as_spam():
+    """端到端护栏：QQ 的 Junk（无标志）必须落进 folder_type='spam'，否则 worker 导出
+    （只取 folder_type='spam'）不会把它并入同步范围 = 垃圾邮件被静默漏掉。"""
+    class _Client:
+        def list_folders(self):
+            return [
+                ((b"\\HasNoChildren",), b"/", "INBOX"),
+                ((), b"/", "Junk"),
+                ((), b"/", "垃圾邮件"),
+            ]
+
+    rows = catalog.discover_imap_folders(_Client(), _imap_account())
+    assert {row["canonical_name"]: row["folder_type"] for row in rows} == {
+        "INBOX": "inbox", "Junk": "spam", "垃圾邮件": "spam",
+    }
