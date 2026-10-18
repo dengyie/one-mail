@@ -694,8 +694,8 @@ def test_idle_session_recycling_smoothly_reconnects(tmp_path):
 
 
 def test_netease_163_safe_noop_polling_interval(tmp_path):
-    """网易 163/126 邮箱由于严格的频控与流量保护，NOOP 轮询周期必须保持在安全下限（>= 300s），
-    杜绝短频轮询消耗流量导致被封。"""
+    """网易 163/126 邮箱由于严格的频控与流量保护，NOOP 轮询周期必须保持在安全下限（>= 240s），
+    既防 300s 服务端单方面断开，又杜绝短频轮询消耗流量导致被封。"""
     config = _config(tmp_path)
     state = SyncState(str(tmp_path / "state.json"))
 
@@ -716,17 +716,98 @@ def test_netease_163_safe_noop_polling_interval(tmp_path):
         state=state,
         noop_poll_interval_seconds=30,  # 即使传入 30s
     )
-    assert worker.noop_poll_interval_seconds >= 300
+    assert worker.noop_poll_interval_seconds >= 240
 
 
-def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path):
-    """在 IDLE 维持心跳超时时，主收件箱每个周期检查，次要目录（如 Junk）每隔若干周期检查一次；
-    收到真实事件时立即同步全部目录。"""
+def test_qq_mail_fast_idle_refresh_cadence(tmp_path):
+    """腾讯 QQ/Foxmail 邮箱由于服务端不推主动 push，默认使用 5s IDLE 快速唤醒周期，
+    且支持尊重 5~60s 显式配置的 poll_interval。"""
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+
+    # 默认 QQ 邮箱 5 秒快速唤醒
+    worker_qq = ImapIdleWorker(config=config, account=_qq_account(), state=state)
+    assert worker_qq.idle_refresh_seconds == 5
+
+    # 显式配置了 10 秒 poll_interval
+    worker_custom = ImapIdleWorker(
+        config=config,
+        account=_qq_account(poll_interval=10),
+        state=state,
+    )
+    assert worker_custom.idle_refresh_seconds == 10
+
+    # 非 QQ 邮箱默认兜底 30 秒
+    other_acc = AccountConfig(
+        id="test-gmail",
+        source="imap_gmail",
+        host="imap.gmail.com",
+        port=993,
+        username="test@gmail.com",
+        password="pwd",
+        folders=["INBOX"],
+        use_ssl=True,
+    )
+    worker_other = ImapIdleWorker(config=config, account=other_acc, state=state)
+    assert worker_other.idle_refresh_seconds == 30
+
+
+def test_d1_status_report_debouncing_protects_database(tmp_path, monkeypatch):
+    """验证 D1 状态回写防写放大防线：
+    当无新邮件同步（synced=0）且错误状态未发生变化时，不触发写事务请求；
+    有邮件同步（synced>0）或错误变化时，立即触发回写。"""
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+    acc = _qq_account(user_managed=True)
+
+    reports = []
+    monkeypatch.setattr(idle_mod, "report_sync_status",
+                        lambda url, token, aid, error, state=None: reports.append((aid, error)))
+
+    worker = ImapIdleWorker(config=config, account=acc, state=state,
+                            client_factory=lambda _a: MagicMock())
+
+    # 1. 模拟空闲检查（0 新邮件，无错误）：防线生效，不向 Worker/D1 发起 HTTP 请求
+    monkeypatch.setattr(idle_mod, "sync_imap", lambda client, cfg, a, st, **k: {
+        "synced": 0, "dropped": 0, "protocol": "imap",
+    })
+    worker.do_sync(MagicMock())
+    assert len(reports) == 0
+
+    # 2. 模拟新邮件入库（synced=1）：立即触发回写
+    monkeypatch.setattr(idle_mod, "sync_imap", lambda client, cfg, a, st, **k: {
+        "synced": 1, "dropped": 0, "protocol": "imap",
+    })
+    worker.do_sync(MagicMock())
+    assert reports == [("test-qq", None)]
+
+    # 3. 模拟又一次空闲检查（0 新邮件，状态仍为正常）：不重复写入 D1
+    monkeypatch.setattr(idle_mod, "sync_imap", lambda client, cfg, a, st, **k: {
+        "synced": 0, "dropped": 0, "protocol": "imap",
+    })
+    worker.do_sync(MagicMock())
+    assert len(reports) == 1  # 保持 1 次，无额外 D1 写事务
+
+    # 4. 模拟次要目录失败（错误状态改变）：立即触发回写
+    monkeypatch.setattr(idle_mod, "sync_imap", lambda client, cfg, a, st, **k: {
+        "synced": 0, "dropped": 0, "protocol": "imap", "failed_folders": ["Junk"],
+    })
+    worker.do_sync(MagicMock())
+    assert len(reports) == 2
+    assert reports[1] == ("test-qq", "folder sync failed this round: Junk")
+
+
+def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path, monkeypatch):
+    """在 IDLE 维持心跳超时时，未到 60 秒仅同步主收件箱，避免频繁切目录；
+    收到真实事件时立即同步全部目录（包含 Junk，确保不漏信）。"""
     config = _config(tmp_path)
     state = SyncState(str(tmp_path / "state.json"))
     acc = _qq_account(folders=["INBOX", "Junk"])
 
     sync_history = []
+
+    fake_now = 1000.0
+    monkeypatch.setattr(idle_mod.time, "monotonic", lambda: fake_now)
 
     class _MockClient:
         def __init__(self):
@@ -738,10 +819,16 @@ def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path):
         def idle(self):
             pass
         def idle_check(self, timeout=None):
+            nonlocal fake_now
             self.tick += 1
-            if self.tick == 2:
-                return [(b"1", b"EXISTS")]  # 第 2 次触发真实事件
-            return []  # 其他次为超时
+            if self.tick == 1:
+                fake_now += 5.0  # cycle 1 timeout: 5s (< 60s)
+            elif self.tick == 2:
+                fake_now += 5.0  # cycle 2: 收到真实推信事件
+                return [(b"1", b"EXISTS")]
+            elif self.tick == 3:
+                fake_now += 65.0  # cycle 3 timeout: 距离上次次要目录同步已满 65s (>= 60s)
+            return []
         def idle_done(self):
             pass
         def logout(self):
@@ -755,9 +842,9 @@ def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path):
         idle_refresh_seconds=1,
     )
 
-    def mock_sync(_c, folders=None):
+    def mock_sync(_c, folders=None, **_kw):
         sync_history.append(list(folders) if folders is not None else list(acc.folders))
-        if len(sync_history) >= 5:
+        if len(sync_history) >= 4:
             worker.stop()
         return {"synced": 0, "dropped": 0}
 
@@ -768,14 +855,12 @@ def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path):
     worker.stop()
 
     # 期望序列：
-    # 0: initial sync (folders=["INBOX", "Junk"])
-    # 1: cycle 0 timeout (cycles_since_connect=0 % 3 == 0) -> ["INBOX", "Junk"]
-    # 2: cycle 1 has_event=True -> ["INBOX", "Junk"]
-    # 3: cycle 2 timeout (cycles_since_connect=2 % 3 != 0) -> ["INBOX"]
-    # 4: cycle 3 timeout (cycles_since_connect=3 % 3 == 0) -> ["INBOX", "Junk"]
+    # 0: initial sync (全部目录: ["INBOX", "Junk"])
+    # 1: cycle 1 timeout 且时间差 5s < 60s -> 仅同步主目录: ["INBOX"]
+    # 2: cycle 2 has_event=True (真实推信事件) -> 立即同步全部目录: ["INBOX", "Junk"]
+    # 3: cycle 3 timeout 但时间差 65s >= 60s -> 触发定时次要目录同步: ["INBOX", "Junk"]
     assert sync_history[0] == ["INBOX", "Junk"]
-    assert sync_history[1] == ["INBOX", "Junk"]
+    assert sync_history[1] == ["INBOX"]
     assert sync_history[2] == ["INBOX", "Junk"]
-    assert sync_history[3] == ["INBOX"]
-    assert sync_history[4] == ["INBOX", "Junk"]
+    assert sync_history[3] == ["INBOX", "Junk"]
 
