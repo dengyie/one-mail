@@ -31,6 +31,13 @@ _active_idle_folders: dict[str, tuple[str, ...]] = {}
 _lock = threading.Lock()
 
 
+def is_idle_worker_active(account_id: str) -> bool:
+    """Thread-safely check if an IDLE worker is alive and active for the account."""
+    with _lock:
+        worker = _active_idle_workers.get(account_id)
+        return worker is not None and worker.is_alive() and not worker.is_stopped()
+
+
 def _idle_fingerprint(acc: AccountConfig) -> tuple:
     return (
         str(acc.host or "").strip().lower(),
@@ -200,10 +207,7 @@ class ImapIdleWorker(threading.Thread):
     def do_sync(self, client: IMAPClient, folders: list[str] | tuple[str, ...] | None = None, *, initial: bool = False) -> dict:
         with self._sync_lock:
             if folders is not None:
-                try:
-                    result = sync_imap(client, self.config, self.account, self.state, folders=folders)
-                except TypeError:
-                    result = sync_imap(client, self.config, self.account, self.state)
+                result = sync_imap(client, self.config, self.account, self.state, folders=folders)
             else:
                 result = sync_imap(client, self.config, self.account, self.state)
             # Active IDLE accounts bypass the daemon polling success path. Keep
@@ -241,10 +245,7 @@ class ImapIdleWorker(threading.Thread):
                 mode_str = "IDLE monitoring" if has_idle else f"long-lived NOOP polling (interval={self.noop_poll_interval_seconds}s)"
                 log.info("Account %s connected for %s", self.account.id, mode_str)
                 try:
-                    try:
-                        r = self.do_sync(client, initial=True)
-                    except TypeError:
-                        r = self.do_sync(client)
+                    r = self.do_sync(client, initial=True)
                     log.info("Account %s initial %s sync complete: synced=%d dropped=%d",
                              self.account.id, "IDLE" if has_idle else "NOOP",
                              r.get("synced", 0), r.get("dropped", 0))
@@ -289,11 +290,7 @@ class ImapIdleWorker(threading.Thread):
                                 or (time.monotonic() - last_secondary_sync_at >= _SECONDARY_FOLDER_SYNC_INTERVAL_SECONDS)
                             )
                             target_folders = self.account.folders if need_secondary else [primary_folder]
-
-                            try:
-                                res = self.do_sync(client, folders=target_folders)
-                            except TypeError:
-                                res = self.do_sync(client)
+                            res = self.do_sync(client, folders=target_folders)
 
                             if need_secondary:
                                 last_secondary_sync_at = time.monotonic()
@@ -344,8 +341,6 @@ class ImapIdleWorker(threading.Thread):
                             pass
                         client = None
                         break  # 优雅退出内层循环，由外层无等待快速重建新连接
-
-                    consecutive_errors = 0
 
             except Exception as e:
                 self._report_status(e)
@@ -475,9 +470,16 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
             folders = _folder_key(acc)
             previous_folders = _active_idle_folders.get(acc.id)
             if previous_folders is not None and previous_folders != folders:
-                stale = _active_idle_workers.pop(acc.id, None)
+                stale = _active_idle_workers.get(acc.id)
                 if stale is not None:
                     stale.stop()
+                    join_fn = getattr(stale, "join", None)
+                    if callable(join_fn):
+                        join_fn(timeout=1.0)
+                    if stale.is_alive():
+                        continue
+                    _active_idle_workers.pop(acc.id, None)
+                _active_idle_folders.pop(acc.id, None)
                 log.info("account %s sync folders changed %s -> %s; restarting IDLE worker",
                          acc.id, previous_folders, folders)
 

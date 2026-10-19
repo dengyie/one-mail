@@ -82,7 +82,7 @@ def test_idle_worker_lifecycle(tmp_path):
         client_factory=lambda _a: mock_client,
         idle_refresh_seconds=1,
     )
-    worker.do_sync = lambda _c: sync_calls.append(1) or {"synced": 1, "dropped": 0}
+    worker.do_sync = lambda _c, **_kw: sync_calls.append(1) or {"synced": 1, "dropped": 0}
 
     worker.start()
     worker.join(timeout=2)
@@ -116,7 +116,7 @@ def test_reconnect_backoff_grows_for_repeated_unstable_sessions(tmp_path):
         client_factory=lambda _a: _Client(),
     )
     worker._stop_event = _StopEvent()
-    worker.do_sync = lambda _c: {"synced": 0, "dropped": 0}
+    worker.do_sync = lambda _c, **_kw: {"synced": 0, "dropped": 0}
     worker.run()
 
     assert waits == [2, 4, 8]
@@ -166,7 +166,7 @@ def test_successful_idle_cycle_resets_reconnect_backoff(tmp_path):
         client_factory=factory,
     )
     worker._stop_event = _StopEvent()
-    worker.do_sync = lambda _c: {"synced": 0, "dropped": 0}
+    worker.do_sync = lambda _c, **_kw: {"synced": 0, "dropped": 0}
     worker.run()
 
     assert waits == [2, 2]
@@ -201,7 +201,7 @@ def test_repeated_idle_failures_enter_polling_cooldown(tmp_path, monkeypatch):
         client_factory=lambda _a: _Client(),
     )
     worker._stop_event = _StopEvent()
-    worker.do_sync = lambda _c: {"synced": 0, "dropped": 0}
+    worker.do_sync = lambda _c, **_kw: {"synced": 0, "dropped": 0}
     worker.run()
 
     # 第五次失败直接转 polling cooldown，不再额外 sleep。
@@ -565,11 +565,16 @@ def test_folders_change_restarts_idle_worker(tmp_path, monkeypatch):
     started, stopped = [], []
 
     class _FakeWorker:
-        def __init__(self, config, account, state, client_factory): self.account = account
+        def __init__(self, config, account, state, client_factory):
+            self.account = account
+            self._stopped = False
         def start(self): started.append(self.account.id)
-        def is_alive(self): return True
-        def is_stopped(self): return False
-        def stop(self): stopped.append(self.account.id)
+        def is_alive(self): return not self._stopped
+        def is_stopped(self): return self._stopped
+        def stop(self):
+            self._stopped = True
+            stopped.append(self.account.id)
+        def join(self, timeout=None): pass
 
     monkeypatch.setattr(idle_mod, "ImapIdleWorker", _FakeWorker)
     config = _config(tmp_path)
@@ -863,4 +868,72 @@ def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path, monkeypatc
     assert sync_history[1] == ["INBOX"]
     assert sync_history[2] == ["INBOX", "Junk"]
     assert sync_history[3] == ["INBOX", "Junk"]
+
+
+def test_is_idle_worker_active_thread_safe(tmp_path):
+    """测试 is_idle_worker_active 线程安全 helper 的正确性。"""
+    acc = _qq_account()
+    assert not idle_mod.is_idle_worker_active(acc.id)
+
+    class _StubWorker:
+        def __init__(self, alive, stopped):
+            self._alive = alive
+            self._stopped = stopped
+        def is_alive(self): return self._alive
+        def is_stopped(self): return self._stopped
+
+    with idle_mod._lock:
+        idle_mod._active_idle_workers[acc.id] = _StubWorker(alive=True, stopped=False)
+    assert idle_mod.is_idle_worker_active(acc.id) is True
+
+    with idle_mod._lock:
+        idle_mod._active_idle_workers[acc.id] = _StubWorker(alive=True, stopped=True)
+    assert idle_mod.is_idle_worker_active(acc.id) is False
+
+    with idle_mod._lock:
+        idle_mod._active_idle_workers[acc.id] = _StubWorker(alive=False, stopped=False)
+    assert idle_mod.is_idle_worker_active(acc.id) is False
+
+    with idle_mod._lock:
+        idle_mod._active_idle_workers.pop(acc.id, None)
+    assert idle_mod.is_idle_worker_active(acc.id) is False
+
+
+def test_folders_change_does_not_spawn_duplicate_while_stale_worker_alive(tmp_path, monkeypatch):
+    """当变更目录时，若旧 worker 仍在退出中（alive=True），不得并发启动新 worker。"""
+    started, stopped = [], []
+
+    class _SlowStoppingWorker:
+        def __init__(self, config, account, state, client_factory):
+            self.account = account
+            self._alive = True
+            self._stopped = False
+        def start(self): started.append(self.account.id)
+        def is_alive(self): return self._alive
+        def is_stopped(self): return self._stopped
+        def stop(self):
+            self._stopped = True
+            stopped.append(self.account.id)
+        def join(self, timeout=None):
+            # 模拟旧 worker 阻塞在网络 IO，join 超时仍未退出
+            pass
+
+    monkeypatch.setattr(idle_mod, "ImapIdleWorker", _SlowStoppingWorker)
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+
+    # 1. 启动初次监听
+    ensure_idle_workers(config, state, [_qq_account(folders=["INBOX"])])
+    assert started == ["test-qq"]
+
+    # 2. 文件夹变更，但旧 worker 仍未退出：发出 stop，但不启动第二个 worker
+    ensure_idle_workers(config, state, [_qq_account(folders=["INBOX", "Junk"])])
+    assert stopped == ["test-qq"]
+    assert started == ["test-qq"]  # 未增加，防双线程并发
+
+    # 3. 旧 worker 退出（_alive = False），下一轮顺利启动新 worker
+    _active_idle_workers["test-qq"]._alive = False
+    ensure_idle_workers(config, state, [_qq_account(folders=["INBOX", "Junk"])])
+    assert started == ["test-qq", "test-qq"]
+
 
