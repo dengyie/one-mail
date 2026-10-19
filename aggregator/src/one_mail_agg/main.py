@@ -13,7 +13,7 @@ from .mutation_jobs import process_mutation_jobs
 from .outbound_jobs import process_outbound_jobs, OutboundBatchError
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .uploader import quota_retry_at
-from .idle_worker import ensure_idle_workers
+from .idle_worker import ensure_idle_workers, is_idle_worker_active
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .egress_guard import install_egress_guard
 from .proxy_client import OVERSEAS_IMAP_HOSTS, is_overseas_imap_host
@@ -240,14 +240,7 @@ def _poll_pass(config, state, now: float | None = None) -> None:
     for account in accounts:
         # 若已有存活的 IDLE worker 正在托管该账号，无需在主循环频繁重复同步，
         # IDLE 线程自会处理实时事件及保底刷新；
-        from .idle_worker import _active_idle_workers
-        is_idle_active = (
-            account.id in _active_idle_workers
-            and _active_idle_workers[account.id].is_alive()
-            and not _active_idle_workers[account.id].is_stopped()
-        )
-
-        if is_idle_active:
+        if is_idle_worker_active(account.id):
             # IDLE 线程正在全实时监听，跳过主线程重复轮询
             _ACCOUNT_LAST_POLL.pop(account.id, None)
             continue

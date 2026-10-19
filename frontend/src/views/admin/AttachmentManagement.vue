@@ -163,7 +163,11 @@ const previousPage = () => {
 }
 
 const downloadAttachment = async (email, attachment) => {
-  if (!attachment.downloadable || !attachment.id || downloadingKey.value) return
+  if (!attachment.downloadable || downloadingKey.value) return
+  if (!attachment.id) {
+    message.warning(unifiedT('detail.downloadFailed'))
+    return
+  }
   const key = `${email.id}:${attachment.id}`
   const controller = new AbortController()
   downloadController = controller
