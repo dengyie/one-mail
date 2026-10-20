@@ -28,7 +28,7 @@
         <div class="mail-reader-meta"><div><span class="label">{{ t('detail.receivedAt') }}</span><span class="value">{{ fmtTime(email.received_at) }}</span></div><div><span class="label">{{ w('accounts') }}</span><span class="value">{{ email.account_id || email.to_addr }}</span></div></div>
         <div class="mail-reader-body">
           <n-alert v-if="htmlBlocked" type="info" :show-icon="false" class="mb-6"><div class="flex items-center justify-between gap-3 flex-wrap"><span>{{ t('detail.htmlBlocked', { count: htmlBlocked }) }}</span><n-button size="small" @click="handleLoadRemoteImages"><template #icon><MailIcon name="image" :size="15" /></template>{{ t('detail.loadRemoteImages') }}</n-button></div></n-alert>
-          <div v-if="htmlBody" class="mail-html-body mail-html" v-html="htmlBody"></div>
+          <ShadowHtmlComponent v-if="htmlBody" :html-content="htmlBody" :is-dark="Boolean(isDark)" class="mail-html-body mail-html" />
           <pre v-else-if="displayBody" class="whitespace-pre-wrap break-words font-sans text-sm leading-loose">{{ displayBody }}</pre>
           <WorkspaceEmpty v-else icon="mail" :title="t('detail.noBody')" />
         </div>
@@ -46,6 +46,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MailIcon from '../components/ui/MailIcon.vue'
 import WorkspaceEmpty from '../components/ui/WorkspaceEmpty.vue'
+import ShadowHtmlComponent from '../components/ShadowHtmlComponent.vue'
 import { extractSubjectCode } from '../utils/subject-code'
 import { markdownText } from '../utils/markdown-text'
 import { sanitizeHtmlMail } from '../utils/sanitize-html-mail'
@@ -62,7 +63,7 @@ import { useMessage } from 'naive-ui'
 
 const { t, locale } = useScopedI18n('unified')
 const { t: w } = useScopedI18n('workspace')
-const { userJwt, unifiedApiKey, adminAuth, autoLoadRemoteImages } = useGlobalState()
+const { userJwt, unifiedApiKey, adminAuth, autoLoadRemoteImages, isDark } = useGlobalState()
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
