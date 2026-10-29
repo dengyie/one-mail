@@ -100,4 +100,18 @@ describe('all writes share the terminal protocol', () => {
     const request = vi.fn().mockRejectedValue(error)
     await expect(createUnifiedMutationApi({ request, getAuth }).markRead('m')).rejects.toBe(error)
   })
+  it('tags a poll failure after the Worker accepted the queued write', async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ status: 'queued', job_id: 'j' })
+      .mockResolvedValueOnce({ status: 'failed', error: 'provider refused' })
+    await expect(createUnifiedMutationApi({ request, getAuth }).markRead('m'))
+      .rejects.toMatchObject({ code: 'mutation_failed', mutationAccepted: true })
+  })
+  it('does not tag a request rejection that never reached the queue', async () => {
+    const error = Object.assign(new Error('request failed'), { code: 'http_500' })
+    const request = vi.fn().mockRejectedValue(error)
+    const caught = await createUnifiedMutationApi({ request, getAuth }).markRead('m').catch(e => e)
+    expect(caught).toBe(error)
+    expect(caught.mutationAccepted).toBeUndefined()
+  })
 })

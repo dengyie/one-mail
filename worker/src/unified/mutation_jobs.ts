@@ -80,6 +80,10 @@ const mutationEmailSelect = `SELECT id, source, account_id, to_addr, is_read, is
 const isLocationOperation = (operation: MailMutationOperation): boolean =>
     operation === "move" || operation === "delete";
 
+/** Read and star are absolute desired-state writes; move/delete relocate a row. */
+const desiredStateColumn = (operation: MailMutationOperation): "is_read" | "is_starred" | null =>
+    operation === "set_read" ? "is_read" : operation === "set_starred" ? "is_starred" : null;
+
 const boundedText = (value: unknown, max = 2048): string | null => {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -224,6 +228,18 @@ const queueExternalMutation = async (
     // move/delete has started, its outcome can be unknown after a timeout, so it
     // must remain an ordering barrier until recovery reaches a terminal result.
     await supersedeOlderPendingIntent(c, row, operation, id, now);
+
+    // Read/star are absolute desired states, so the visible row must follow the
+    // user immediately rather than wait for the aggregator; otherwise the
+    // reloaded list still reads the old is_read and the client's poll can flip
+    // the detail back. No rollback on terminal failure: superseded predecessors
+    // make the pre-intent value unknown, so a guess could undo a later choice.
+    // Move/delete still wait for the provider's identity projection.
+    const column = desiredStateColumn(operation);
+    if (column && (desired === 0 || desired === 1)) {
+        await c.env.DB.prepare(`UPDATE emails SET ${column} = ?, updated_at = ? WHERE id = ?`)
+            .bind(desired, now, row.id).run();
+    }
 
     return c.json({
         ok: true,

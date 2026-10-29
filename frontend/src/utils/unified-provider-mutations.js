@@ -2,6 +2,26 @@ const DEFAULT_POLL_MS = 1200
 const DEFAULT_TIMEOUT_MS = 45_000
 
 const mutationError = (code, message, mutation) => Object.assign(new Error(message), { code, mutation })
+
+/**
+ * A provider write that is still queued is not a rejection: the Worker already
+ * stores the desired state, so callers must keep the optimistic value instead of
+ * undoing what the user just did.
+ */
+export const isMutationPending = (error) => error?.code === 'mutation_pending'
+
+/**
+ * True once the Worker has accepted the intent (202 queued). Any later poll
+ * outcome — timeout, provider rejection, or supersession by a newer intent —
+ * must not make callers undo the user's choice, because the local row already
+ * holds it and a newer intent may own the visible state.
+ */
+export const keepsOptimisticState = (error) => Boolean(error?.mutationAccepted)
+
+/** The source mailbox definitively refused the accepted write. */
+export const mutationRejected = (error) =>
+  error?.code === 'mutation_failed' || error?.code === 'mutation_unsupported'
+
 const assertIdentity = (initial, getAuth) => {
   if (!initial.key || initial.key !== getAuth().key) {
     throw mutationError('mutation_auth_changed', '登录身份已变化，源邮箱同步仍可能在后台继续')
@@ -77,10 +97,16 @@ export const createUnifiedMutationApi = ({ request, getAuth, ...pollOptions }) =
     const result = await request(path, options)
     options.signal?.throwIfAborted()
     assertIdentity(initialAuth, getAuth)
-    const terminal = result?.status === 'queued'
-      ? await waitForMutationTerminal(result.job_id, { ...pollOptions, initialAuth, getAuth, fetchStatus, signal: options.signal })
-      : result
-    return project(terminal)
+    if (result?.status !== 'queued') return project(result)
+    try {
+      const terminal = await waitForMutationTerminal(result.job_id, { ...pollOptions, initialAuth, getAuth, fetchStatus, signal: options.signal })
+      return project(terminal)
+    } catch (error) {
+      // The Worker stored the desired state when it answered 202 queued, so a
+      // later poll failure is not a rollback signal for the local row.
+      if (error && typeof error === 'object') error.mutationAccepted = true
+      throw error
+    }
   }
   const emailPath = id => `/api/unified/emails/${encodeURIComponent(id)}`
   const setRead = (id, desired, options = {}) => mutate(`${emailPath(id)}/${desired ? 'read' : 'unread'}`, {

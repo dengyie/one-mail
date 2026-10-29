@@ -4,7 +4,7 @@ import { WORKER_URL } from '../../fixtures/test-helpers';
 
 const ADMIN_HEADERS = { 'x-admin-auth': 'e2e-admin-pass' };
 
-test('external unified mutations stay queued until leased provider success', async ({ request }) => {
+test('external unified mutations project locally and settle on leased provider success', async ({ request }) => {
   const suffix = Date.now().toString();
   const accountId = `mutation-${suffix}`;
 
@@ -55,13 +55,14 @@ test('external unified mutations stay queued until leased provider success', asy
   expect(readJob).toMatchObject({ status: 'queued', desired_value: 1 });
   expect(readJob.job_id).toBeTruthy();
 
-  // Local projection must not move before the provider worker acknowledges it.
+  // Read is an absolute desired state, so the visible row follows the user at
+  // queue time; the provider write still has to be claimed and acknowledged.
   const beforeRes = await request.get(
     WORKER_URL + `/api/unified/emails/${encodeURIComponent(emailId)}`,
     { headers: authHeaders },
   );
   expect(beforeRes.ok()).toBe(true);
-  expect((await beforeRes.json() as { is_read: number }).is_read).toBe(0);
+  expect((await beforeRes.json() as { is_read: number }).is_read).toBe(1);
 
   const leaseToken = `lease-${suffix}`;
   const claimRes = await request.post(WORKER_URL + '/admin/unified/mutations/claim', {
@@ -120,6 +121,14 @@ test('external unified mutations stay queued until leased provider success', asy
   expect(starRes.status()).toBe(202);
   const starJob = await starRes.json() as { job_id: string; desired_value: number };
   expect(starJob.desired_value).toBe(1);
+
+  // Star is projected the same way as read.
+  const beforeStarRes = await request.get(
+    WORKER_URL + `/api/unified/emails/${encodeURIComponent(emailId)}`,
+    { headers: authHeaders },
+  );
+  expect(beforeStarRes.ok()).toBe(true);
+  expect((await beforeStarRes.json() as { is_starred: number }).is_starred).toBe(1);
 
   const starLease = `star-lease-${suffix}`;
   const starClaimRes = await request.post(WORKER_URL + '/admin/unified/mutations/claim', {

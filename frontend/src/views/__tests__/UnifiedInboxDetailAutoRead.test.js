@@ -64,6 +64,25 @@ describe('reading a mail marks it read', () => {
     expect(host.querySelector('button')?.textContent).not.toContain('Mark as read')
   })
 
+  it('keeps the mail read while the provider write is still queued', async () => {
+    const unread = email('mail-a')
+    ctx.api.unified.getEmail.mockResolvedValue(unread)
+    // Slow source mailbox: the job was accepted and queued, but the provider
+    // round trip has not settled. That is not a provider rejection, so the read
+    // the user already sees must survive.
+    ctx.api.unified.markRead.mockRejectedValue(Object.assign(
+      new Error('操作已排队，源邮箱仍在后台同步；请稍后刷新确认'),
+      { code: 'mutation_pending', mutationAccepted: true },
+    ))
+
+    const { host } = await mount(UnifiedInboxDetail)
+    await flush()
+
+    expect(unread.is_read).toBe(1)
+    expect(ctx.messages.error).not.toHaveBeenCalled()
+    expect(host.textContent).toContain('Read')
+  })
+
   it('drops a late provider response that arrives after the mail changed', async () => {
     const first = email('mail-a')
     const second = { ...email('mail-b'), is_read: 1 }

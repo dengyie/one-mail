@@ -7,6 +7,7 @@ import { useGlobalState } from '../store'
 import { api } from '../api'
 import { useScopedI18n } from '../i18n/app'
 import { getRouterPathWithLang, hashPassword } from '../utils'
+import { keepsOptimisticState, mutationRejected } from '../utils/unified-provider-mutations'
 
 // 域名邮箱全域工作台：任意拼一个前缀 + 选一个本站域名，即可查看该域名下
 // 所有收件（catch-all 入库的 cf_routing 邮件），无需预先注册地址。
@@ -234,6 +235,12 @@ const toggleStar = async (row, event) => {
     try {
         await api.unified.toggleStar(row.id, nextVal)
     } catch (e) {
+        // The Worker accepted the intent, so keep the optimistic value; only a
+        // definitive source-mailbox rejection is worth reporting.
+        if (keepsOptimisticState(e)) {
+            if (mutationRejected(e)) message.error(e.message || '星标切换失败')
+            return
+        }
         row.is_starred = prevVal
         message.error(e.message || '星标切换失败')
     }
@@ -252,6 +259,10 @@ const toggleRead = async (row, event) => {
             await api.unified.markUnread(row.id)
         }
     } catch (e) {
+        if (keepsOptimisticState(e)) {
+            if (mutationRejected(e)) message.error(e.message || '标记失败')
+            return
+        }
         row.is_read = prevVal
         message.error(e.message || '标记失败')
     }
