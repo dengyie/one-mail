@@ -265,6 +265,7 @@ import InboxMessageRow from '../components/inbox/InboxMessageRow.vue'
 import { useScopedI18n } from '../i18n/app'
 import { api } from '../api'
 import { extractSubjectCode as extractCardCode } from '../utils/subject-code'
+import { isMutationPending } from '../utils/unified-provider-mutations'
 import { useGlobalState, MIN_AUTO_REFRESH_INTERVAL } from '../store'
 import StatusIndicator from '../components/ai/StatusIndicator.vue'
 import { useMessage } from 'naive-ui'
@@ -570,6 +571,9 @@ const updateRow = async (row, field) => {
     }
   } catch (error) {
     if (!current()) return
+    // Still queued at the source mailbox: the Worker already stored the desired
+    // state, so keeping the optimistic value is the truthful rendering.
+    if (isMutationPending(error)) return
     row[field] = previous
     message.error(error.message || t('settings.testFail'))
   } finally {

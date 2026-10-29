@@ -55,6 +55,7 @@ import { useScopedI18n } from '../i18n/app'
 import { getRouterPathWithLang } from '../utils'
 import { replaceLocaleInFullPath } from '../i18n/utils'
 import { api } from '../api'
+import { isMutationPending } from '../utils/unified-provider-mutations'
 import { useGlobalState } from '../store'
 import UnifiedMailboxActions from '../components/UnifiedMailboxActions.vue'
 import StreamMarkdown from '../components/ai/StreamMarkdown.vue'
@@ -170,6 +171,9 @@ const autoMarkRead = async () => {
       authIdentity.value !== targetIdentity ||
       String(route.params.id || '') !== targetId
     ) return
+    // Queued at the source mailbox is not a failure: the Worker already stored
+    // the read state, so keep showing it instead of flipping back to unread.
+    if (isMutationPending(e)) return
     target.is_read = 0
     message.error(e.message || '标记已读失败')
   } finally {
@@ -352,6 +356,13 @@ const markRead = async () => {
       authIdentity.value !== targetIdentity ||
       String(route.params.id || '') !== targetId
     ) return
+    // The provider write is only queued; the local read state is already
+    // stored, so report the slow sync instead of undoing the action.
+    if (isMutationPending(e)) {
+      target.is_read = 1
+      message.info(e.message)
+      return
+    }
     message.error(e.message || 'error')
   } finally {
     if (email.value === target) {
@@ -365,9 +376,10 @@ const toggleStar = async () => {
   if (!target || starring.value) return
   const targetId = String(target.id)
   const targetIdentity = authIdentity.value
+  const nextStarred = target.is_starred ? 0 : 1
   starring.value = true
   try {
-    const res = await api.unified.toggleStar(target.id, target.is_starred ? 0 : 1, { signal: detailController?.signal })
+    const res = await api.unified.toggleStar(target.id, nextStarred, { signal: detailController?.signal })
     if (
       disposed || email.value !== target ||
       authIdentity.value !== targetIdentity ||
@@ -385,6 +397,13 @@ const toggleStar = async () => {
       authIdentity.value !== targetIdentity ||
       String(route.params.id || '') !== targetId
     ) return
+    // The provider write is only queued; the Worker already stored the star, so
+    // show it and report the slow sync instead of undoing the action.
+    if (isMutationPending(e)) {
+      target.is_starred = nextStarred
+      message.info(e.message)
+      return
+    }
     message.error(e.message || '操作失败')
   } finally {
     if (email.value === target) {

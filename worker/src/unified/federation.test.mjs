@@ -582,11 +582,16 @@ for (const [action, method, body, operation, desired] of mutationCases) {
                 assert.equal(lookups.length, 1);
                 assert.match(lookups[0].sql, /json_each\(\?\)/);
                 assert.strictEqual(t.env.DB, t.main.database);
-                // Queueing keeps external visible state unchanged until provider completion.
+                // Read/star are absolute desired states, so the owning shard
+                // projects them immediately; move/delete wait for the provider
+                // to confirm the new identity. The primary copy never changes.
+                const readAfterQueue = operation === "set_read" ? desired : 0;
+                const starredAfterQueue = operation === "set_starred" ? desired : 0;
                 for (const store of [t.main, t.remote]) {
                     const row = store.sqlite.prepare("SELECT is_read,is_starred,source_folder FROM emails WHERE id='migrated'").get();
-                    assert.equal(row.is_read, 0);
-                    assert.equal(row.is_starred, 0);
+                    const owns = store === t.remote;
+                    assert.equal(row.is_read, owns ? readAfterQueue : 0);
+                    assert.equal(row.is_starred, owns ? starredAfterQueue : 0);
                     assert.equal(row.source_folder, "INBOX");
                 }
                 assert.equal((await t.request(`mutations/${result.job_id}`)).status, 200);

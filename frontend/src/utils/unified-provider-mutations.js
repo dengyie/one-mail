@@ -2,6 +2,13 @@ const DEFAULT_POLL_MS = 1200
 const DEFAULT_TIMEOUT_MS = 45_000
 
 const mutationError = (code, message, mutation) => Object.assign(new Error(message), { code, mutation })
+
+/**
+ * A provider write that is still queued is not a rejection: the Worker already
+ * stores the desired state, so callers must keep the optimistic value instead of
+ * undoing what the user just did.
+ */
+export const isMutationPending = (error) => error?.code === 'mutation_pending'
 const assertIdentity = (initial, getAuth) => {
   if (!initial.key || initial.key !== getAuth().key) {
     throw mutationError('mutation_auth_changed', '登录身份已变化，源邮箱同步仍可能在后台继续')
