@@ -258,7 +258,7 @@ it('keeps a filtered row and pagination unchanged when the provider rejects the 
   expect(host.querySelector('button[aria-label="Next page"]').disabled).toBe(false)
 })
 
-it.each(['succeeded', 'failed'])('keeps an unread action pending until provider %s', async status => {
+it.each(['succeeded', 'failed', 'unsupported'])('keeps the optimistic unread action after provider %s', async status => {
   const { createUnifiedMutationApi } = await import('../../utils/unified-provider-mutations')
   const pending = deferred()
   const request = vi.fn().mockResolvedValueOnce({ status: 'queued', job_id: 'j-unread' }).mockReturnValueOnce(pending.promise)
@@ -267,8 +267,10 @@ it.each(['succeeded', 'failed'])('keeps an unread action pending until provider 
   const { host } = await mount(UnifiedInbox)
   host.querySelector('button[aria-label="Mark as unread"]').click(); await flush()
   expect(host.querySelector('button[aria-label="Mark as read"]').disabled).toBe(true)
-  pending.resolve({ status, desired_value: 0, error: status === 'failed' ? 'provider refused' : null }); await flush()
-  const label = status === 'succeeded' ? 'Mark as read' : 'Mark as unread'
-  expect(host.querySelector(`button[aria-label="${label}"]`).disabled).toBe(false)
-  if (status === 'failed') expect(ctx.messages.error).toHaveBeenCalledWith('provider refused')
+  pending.resolve({ status, desired_value: 0, error: status === 'succeeded' ? null : 'provider refused' }); await flush()
+  // The Worker accepted the intent when it answered 202 queued, so the row keeps
+  // is_read=0 (and offers "Mark as read") even after a later provider rejection.
+  expect(host.querySelector('button[aria-label="Mark as read"]').disabled).toBe(false)
+  if (status === 'succeeded') expect(ctx.messages.error).not.toHaveBeenCalled()
+  else expect(ctx.messages.error).toHaveBeenCalledWith('provider refused')
 })

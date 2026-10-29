@@ -55,7 +55,7 @@ import { useScopedI18n } from '../i18n/app'
 import { getRouterPathWithLang } from '../utils'
 import { replaceLocaleInFullPath } from '../i18n/utils'
 import { api } from '../api'
-import { isMutationPending } from '../utils/unified-provider-mutations'
+import { isMutationPending, keepsOptimisticState, mutationRejected } from '../utils/unified-provider-mutations'
 import { useGlobalState } from '../store'
 import UnifiedMailboxActions from '../components/UnifiedMailboxActions.vue'
 import StreamMarkdown from '../components/ai/StreamMarkdown.vue'
@@ -171,9 +171,12 @@ const autoMarkRead = async () => {
       authIdentity.value !== targetIdentity ||
       String(route.params.id || '') !== targetId
     ) return
-    // Queued at the source mailbox is not a failure: the Worker already stored
-    // the read state, so keep showing it instead of flipping back to unread.
-    if (isMutationPending(e)) return
+    // The Worker accepted the intent (202 queued), so keep showing the read
+    // state even if the source mailbox later refuses or a newer intent wins.
+    if (keepsOptimisticState(e)) {
+      if (mutationRejected(e)) message.error(e.message || '标记已读失败')
+      return
+    }
     target.is_read = 0
     message.error(e.message || '标记已读失败')
   } finally {
@@ -356,11 +359,12 @@ const markRead = async () => {
       authIdentity.value !== targetIdentity ||
       String(route.params.id || '') !== targetId
     ) return
-    // The provider write is only queued; the local read state is already
-    // stored, so report the slow sync instead of undoing the action.
-    if (isMutationPending(e)) {
+    // The provider write was accepted; the local read state is already stored,
+    // so report the slow sync instead of undoing the action.
+    if (keepsOptimisticState(e)) {
       target.is_read = 1
-      message.info(e.message)
+      if (mutationRejected(e)) message.error(e.message || 'error')
+      else if (isMutationPending(e)) message.info(e.message)
       return
     }
     message.error(e.message || 'error')
@@ -397,11 +401,12 @@ const toggleStar = async () => {
       authIdentity.value !== targetIdentity ||
       String(route.params.id || '') !== targetId
     ) return
-    // The provider write is only queued; the Worker already stored the star, so
+    // The provider write was accepted; the Worker already stored the star, so
     // show it and report the slow sync instead of undoing the action.
-    if (isMutationPending(e)) {
+    if (keepsOptimisticState(e)) {
       target.is_starred = nextStarred
-      message.info(e.message)
+      if (mutationRejected(e)) message.error(e.message || '操作失败')
+      else if (isMutationPending(e)) message.info(e.message)
       return
     }
     message.error(e.message || '操作失败')

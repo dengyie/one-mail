@@ -72,7 +72,7 @@ describe('reading a mail marks it read', () => {
     // the user already sees must survive.
     ctx.api.unified.markRead.mockRejectedValue(Object.assign(
       new Error('操作已排队，源邮箱仍在后台同步；请稍后刷新确认'),
-      { code: 'mutation_pending' },
+      { code: 'mutation_pending', mutationAccepted: true },
     ))
 
     const { host } = await mount(UnifiedInboxDetail)
