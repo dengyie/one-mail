@@ -127,7 +127,35 @@ const send = async () => {
         return
     }
 
-    const externalAccount = selectedExternalAccount.value
+    const replyAccountId = typeof sendMailModel.value.replyAccountId === 'string'
+        ? sendMailModel.value.replyAccountId.trim()
+        : ''
+    const replyAccount = replyAccountId
+        ? externalAccounts.value.find((account) => account.id === replyAccountId) || null
+        : null
+    // The identity dropdown chooses the From of a new mail only. A reply to a
+    // bound Gmail mailbox always sends as that mailbox; the server enforces the
+    // same rule and ignores a different account_id.
+    const externalAccount = replyAccount || selectedExternalAccount.value
+    const inReplyTo = typeof sendMailModel.value.inReplyTo === 'string'
+        ? sendMailModel.value.inReplyTo.trim()
+        : ''
+    const references = Array.isArray(sendMailModel.value.references)
+        ? sendMailModel.value.references.filter((value) => typeof value === 'string' && value.trim())
+        : []
+    const replyToEmailId = typeof sendMailModel.value.replyToEmailId === 'string'
+        ? sendMailModel.value.replyToEmailId.trim()
+        : ''
+    const providerThreadId = typeof sendMailModel.value.providerThreadId === 'string'
+        && /^[0-9a-f]{1,16}$/i.test(sendMailModel.value.providerThreadId.trim())
+        ? sendMailModel.value.providerThreadId.trim().toLowerCase()
+        : ''
+    const threading = {
+        ...(inReplyTo ? { in_reply_to: inReplyTo } : {}),
+        ...(references.length > 0 ? { references } : {}),
+        ...(replyToEmailId ? { reply_to_email_id: replyToEmailId } : {}),
+        ...(providerThreadId ? { provider_thread_id: providerThreadId } : {}),
+    }
 
     const payload = externalAccount
         ? {
@@ -139,6 +167,7 @@ const send = async () => {
             subject,
             content,
             is_html: isHtml,
+            ...threading,
         }
         : {
             from_name: sendMailModel.value.fromName,
@@ -147,6 +176,7 @@ const send = async () => {
             subject,
             is_html: isHtml,
             content,
+            ...threading,
         }
 
     sending.value = true
@@ -155,6 +185,9 @@ const send = async () => {
             await api.fetch(`/api/send_mail/external`, {
                 method: 'POST',
                 body: JSON.stringify(payload),
+                headers: {
+                    'x-idempotency-key': currentSendMailIdempotencyKey(),
+                },
             })
         } else {
             await api.fetch(`/api/send_mail`, {
@@ -173,6 +206,11 @@ const send = async () => {
             subject: "",
             contentType: 'text',
             content: "",
+            inReplyTo: "",
+            references: [],
+            replyToEmailId: "",
+            providerThreadId: "",
+            replyAccountId: "",
         }
         isPreview.value = false
         resetSendMailIdempotencyKey()

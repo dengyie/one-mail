@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import time
 from datetime import datetime
 
@@ -91,19 +92,25 @@ def _send_smtp_xoauth(
     config,
     token_fn,
     provider_label: str,
+    access_token: str | None = None,
 ) -> str | None:
-    """Shared XOAUTH2 SMTP send path used by both Gmail and Outlook."""
-    host, port, use_ssl = _GMAIL_SMTP if provider_label == "gmail" else _OUTLOOK_SMTP
-    if not account.oauth:
-        raise OutboundIdentityError(f"{provider_label} account {account.id} has no OAuth config")
+    """Shared XOAUTH2 SMTP send path used by both Gmail and Outlook.
 
-    on_rotated = make_rotated_callback(
-        config if (config is not None and (config.config_path or account.user_managed)) else None,
-        account,
-    )
-    with redemption_lock():
-        refresh_rt_from_config(config, account)
-        access_token = token_fn(account.oauth or {}, on_rotated)
+    `access_token` lets a Gmail reply that already refreshed a token for the
+    API lookup reuse it, instead of exchanging the refresh token a second time.
+    """
+    host, port, use_ssl = _GMAIL_SMTP if provider_label == "gmail" else _OUTLOOK_SMTP
+    if access_token is None:
+        if not account.oauth:
+            raise OutboundIdentityError(f"{provider_label} account {account.id} has no OAuth config")
+
+        on_rotated = make_rotated_callback(
+            config if (config is not None and (config.config_path or account.user_managed)) else None,
+            account,
+        )
+        with redemption_lock():
+            refresh_rt_from_config(config, account)
+            access_token = token_fn(account.oauth or {}, on_rotated)
 
     msg = build_outbound_mime(payload)
     client = None
@@ -135,15 +142,192 @@ def _send_smtp_xoauth(
     return None
 
 
-def send_gmail(account: AccountConfig, payload: dict, config) -> str | None:
-    """Send one message as a Gmail account via XOAUTH2 SMTP.
+_GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+_GMAIL_LIST_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 
-    Uses smtp.gmail.com:587 with STARTTLS. The connected account's
-    credentials (oauth.client_id + refresh_token) are exchanged for an
-    access token via the gmail_access_token helper, which preserves the
-    original OAuth scope.
+
+_GMAIL_THREAD_RE = re.compile(r"^[0-9a-f]{1,16}$")
+# One RFC822 Message-ID token. Quotes and whitespace would escape the Gmail q=.
+_MESSAGE_ID_RE = re.compile(r"^<?[^<>\s\"']+@[^<>\s\"']+>?$")
+
+
+def gmail_thread_id(payload: dict) -> str | None:
+    """Gmail API threadId is unpadded lowercase hex, not a decimal or Message-ID.
+
+    Conversion from X-GM-THRID happens once at the IMAP boundary. Do not convert
+    again here: a decimal string is not an API id. A value that is only digits
+    and longer than 16 characters cannot be a 64-bit hex id.
     """
-    return _send_smtp_xoauth(account, payload, config, gmail_access_token, "gmail")
+    raw = payload.get("provider_thread_id")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    text = str(raw).strip().lower()
+    if text.isdigit() and len(text) > 16:
+        return None
+    if not _GMAIL_THREAD_RE.fullmatch(text):
+        return None
+    return text
+
+
+def gmail_send_body(payload: dict, mime: bytes | None = None) -> dict:
+    """JSON body for users.messages.send.
+
+    `raw` is base64url of the RFC822 message (no padding). `threadId` is set
+    only when the caller already resolved a Gmail thread; omitting it starts a
+    new conversation, which is what non-reply sends want.
+    """
+    raw = mime if mime is not None else build_outbound_mime(payload).as_bytes()
+    body: dict = {
+        "raw": base64.urlsafe_b64encode(raw).decode("ascii").rstrip("="),
+    }
+    thread_id = gmail_thread_id(payload)
+    if thread_id:
+        body["threadId"] = thread_id
+    return body
+
+
+def _gmail_access(account: AccountConfig, config) -> str:
+    if not account.oauth:
+        raise OutboundIdentityError(f"gmail account {account.id} has no OAuth config")
+    on_rotated = make_rotated_callback(
+        config if (config is not None and (config.config_path or account.user_managed)) else None,
+        account,
+    )
+    with redemption_lock():
+        refresh_rt_from_config(config, account)
+        return gmail_access_token(account.oauth or {}, on_rotated)
+
+
+def _rfc822msgid_query(message_id: str) -> str | None:
+    """One Message-ID, double-quoted, with no characters that escape Gmail q=.
+
+    An internal quote, space, or extra token is rejected rather than interpolated.
+    """
+    text = message_id.strip()
+    if not text or not _MESSAGE_ID_RE.fullmatch(text):
+        return None
+    if not (text.startswith("<") and text.endswith(">")):
+        text = f"<{text.strip('<>')}>"
+    if not _MESSAGE_ID_RE.fullmatch(text):
+        return None
+    return f'rfc822msgid:"{text}"'
+
+
+def lookup_gmail_thread_id(access_token: str, message_id: str) -> str | None:
+    """Resolve a Gmail threadId from an RFC822 Message-ID.
+
+    Used when the original mail was synced before X-GM-THRID was stored.
+    None means Gmail returned zero or more than one match; only that miss may
+    fall back to SMTP. Timeout, connection errors, 429, and 5xx raise
+    OutboundOutcomeUnknown. 401/403 raise OutboundUnsupported. Neither is a miss.
+    The returned threadId is the API's hex id and is not converted again.
+    """
+    query = _rfc822msgid_query(message_id)
+    if not query:
+        return None
+    try:
+        response = requests.get(
+            _GMAIL_LIST_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"q": query, "maxResults": 2, "includeSpamTrash": "true"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        messages = response.json().get("messages") or []
+    except requests.HTTPError as error:
+        status = error.response.status_code if error.response is not None else 0
+        if status in (401, 403):
+            raise OutboundUnsupported(
+                f"Gmail thread lookup forbidden (HTTP {status}); "
+                "reconnect the account if the grant lacks Gmail API access"
+            ) from error
+        if status in (408, 429) or status >= 500:
+            raise OutboundOutcomeUnknown(
+                f"Gmail thread lookup transient error HTTP {status}: {error}") from error
+        raise OutboundSendError(
+            f"Gmail thread lookup rejected HTTP {status}: {error}") from error
+    except (requests.Timeout, requests.ConnectionError) as error:
+        raise OutboundOutcomeUnknown(
+            f"Gmail thread lookup did not complete: {error}") from error
+    except requests.RequestException as error:
+        raise OutboundOutcomeUnknown(
+            f"Gmail thread lookup outcome is unknown: {error}") from error
+    if len(messages) != 1 or not isinstance(messages[0], dict):
+        return None
+    thread_id = messages[0].get("threadId")
+    if not isinstance(thread_id, str):
+        return None
+    text = thread_id.strip().lower()
+    return text if _GMAIL_THREAD_RE.fullmatch(text) else None
+
+
+def send_gmail_api(account: AccountConfig, payload: dict, config, access_token: str) -> str | None:
+    """Send through Gmail API so the reply stays in the original Gmail thread.
+
+    A 403 means the stored grant cannot call the API (scope was granted before
+    send was required). That is a permanent capability gap, not a transient
+    failure, so it is classified as unsupported rather than retried forever.
+    """
+    try:
+        response = requests.post(
+            _GMAIL_SEND_URL,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json=gmail_send_body(payload),
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        status = error.response.status_code if error.response is not None else 0
+        if status in (401, 403):
+            raise OutboundUnsupported(
+                f"Gmail API send forbidden for {account.id} (HTTP {status}); "
+                "reconnect the account if the grant lacks Gmail API access"
+            ) from error
+        if status in (408, 429) or status >= 500:
+            raise OutboundOutcomeUnknown(
+                f"Gmail API send transient error HTTP {status}: {error}") from error
+        raise OutboundSendError(
+            f"Gmail API send rejected HTTP {status}: {error}") from error
+    except (requests.Timeout, requests.ConnectionError) as error:
+        raise OutboundOutcomeUnknown(
+            f"Gmail API send request lost for {account.id}: {error}") from error
+    except requests.RequestException as error:
+        raise OutboundOutcomeUnknown(
+            f"Gmail API send outcome is unknown for {account.id}: {error}") from error
+    try:
+        message_id = response.json().get("id")
+    except ValueError:
+        message_id = None
+    return str(message_id) if message_id else None
+
+
+def send_gmail(account: AccountConfig, payload: dict, config) -> str | None:
+    """Send one message as a Gmail account.
+
+    Replies that already know a Gmail threadId (or can resolve one from the
+    parent RFC822 Message-ID) go through users.messages.send so Gmail keeps
+    them in the original thread. Everything else stays on XOAUTH2 SMTP, which
+    is the path new mail and non-thread replies already use.
+    """
+    thread_id = gmail_thread_id(payload)
+    in_reply_to = payload.get("in_reply_to")
+    needs_api = bool(thread_id) or (isinstance(in_reply_to, str) and in_reply_to.strip())
+    if not needs_api:
+        return _send_smtp_xoauth(account, payload, config, gmail_access_token, "gmail")
+    access_token = _gmail_access(account, config)
+    if not thread_id and isinstance(in_reply_to, str):
+        # lookup raises on transport/auth failure. Only a genuine empty result
+        # (None) may leave the Gmail thread and send through SMTP.
+        resolved = lookup_gmail_thread_id(access_token, in_reply_to)
+        if not resolved:
+            return _send_smtp_xoauth(
+                account, payload, config, gmail_access_token, "gmail", access_token,
+            )
+        payload = {**payload, "provider_thread_id": resolved}
+    return send_gmail_api(account, payload, config, access_token)
 
 
 def send_outlook_smtp(account: AccountConfig, payload: dict, config) -> str | None:

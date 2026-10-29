@@ -396,6 +396,48 @@ export class SendMailIdempotencyConflictError extends Error {
     }
 }
 
+const GMAIL_REROUTE_IDEMPOTENCY_STATEMENTS = [
+    "CREATE TABLE IF NOT EXISTS gmail_reroute_idempotency (" +
+        "idempotency_key TEXT PRIMARY KEY, " +
+        "request_hash TEXT NOT NULL, " +
+        "job_id TEXT NOT NULL, " +
+        "created_at INTEGER NOT NULL" +
+    ")",
+];
+
+/**
+ * Remember an x-idempotency-key for a Gmail reply that never enters
+ * send_mail_limit_reservations. That table's insert trigger increments the
+ * domain send quota, which this path must not touch and must not charge
+ * send_balance for either.
+ */
+export const lookupSendMailIdempotency = async (
+    db: D1Database,
+    idempotencyKey: string,
+): Promise<{ request_hash: string; job_id: string } | null> => {
+    for (const sql of GMAIL_REROUTE_IDEMPOTENCY_STATEMENTS) {
+        await db.prepare(sql).run();
+    }
+    return await db.prepare(
+        "SELECT request_hash, job_id FROM gmail_reroute_idempotency WHERE idempotency_key = ?",
+    ).bind(idempotencyKey).first<{ request_hash: string; job_id: string }>();
+};
+
+export const rememberSendMailIdempotency = async (
+    db: D1Database,
+    idempotencyKey: string,
+    requestHash: string,
+    jobId: string,
+): Promise<void> => {
+    for (const sql of GMAIL_REROUTE_IDEMPOTENCY_STATEMENTS) {
+        await db.prepare(sql).run();
+    }
+    await db.prepare(
+        "INSERT INTO gmail_reroute_idempotency (idempotency_key, request_hash, job_id, created_at) " +
+        "VALUES (?, ?, ?, ?)",
+    ).bind(idempotencyKey, requestHash, jobId, Date.now()).run();
+};
+
 export const hashSendMailRequest = async (value: unknown): Promise<string> => {
     const encoded = new TextEncoder().encode(JSON.stringify(value) ?? "");
     const digest = await crypto.subtle.digest("SHA-256", encoded);

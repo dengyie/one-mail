@@ -7,6 +7,7 @@ import {
   computeOutboundRequestHash,
   isOutboundProvider,
   isOutboundStatus,
+  forceGmailReplyRoute,
   providerForAccountSource,
   validateOutboundPayload,
 } from "./outbound_mail.ts";
@@ -104,6 +105,35 @@ test("validateOutboundPayload requires boolean is_html", () => {
   );
 });
 
+test("validateOutboundPayload keeps optional threading headers", () => {
+  const result = validateOutboundPayload({
+    ...validPayload,
+    in_reply_to: "<parent@example.com>",
+    references: ["<root@example.com>", "<parent@example.com>", "  ", 12],
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.in_reply_to, "<parent@example.com>");
+    assert.deepEqual(result.value.references, [
+      "<root@example.com>",
+      "<parent@example.com>",
+    ]);
+  }
+});
+
+test("validateOutboundPayload omits blank threading headers", () => {
+  const result = validateOutboundPayload({
+    ...validPayload,
+    in_reply_to: "   ",
+    references: [],
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.in_reply_to, undefined);
+    assert.equal(result.value.references, undefined);
+  }
+});
+
 test("computeOutboundRequestHash is deterministic and account-scoped", async () => {
   const first = await computeOutboundRequestHash({
     account_id: "acct-1",
@@ -127,6 +157,86 @@ test("computeOutboundRequestHash is deterministic and account-scoped", async () 
     payload: { ...validPayload, content: "Different body" },
   });
   assert.notEqual(first, otherContent);
+});
+
+test("validateOutboundPayload keeps a hex Gmail thread id and drops a decimal X-GM-THRID", () => {
+  const kept = validateOutboundPayload({
+    ...validPayload,
+    reply_to_email_id: "mail-1",
+    provider_thread_id: "18BB368A913AD11A",
+  });
+  assert.equal(kept.ok, true);
+  if (kept.ok) {
+    assert.equal(kept.value.reply_to_email_id, "mail-1");
+    assert.equal(kept.value.provider_thread_id, "18bb368a913ad11a");
+  }
+  const decimal = validateOutboundPayload({
+    ...validPayload,
+    provider_thread_id: "1781312345678901234",
+  });
+  assert.equal(decimal.ok, true);
+  if (decimal.ok) {
+    assert.equal(decimal.value.provider_thread_id, undefined);
+  }
+  const dropped = validateOutboundPayload({
+    ...validPayload,
+    provider_thread_id: "<parent@gmail.com>",
+  });
+  assert.equal(dropped.ok, true);
+  if (dropped.ok) {
+    assert.equal(dropped.value.provider_thread_id, undefined);
+  }
+});
+
+test("a Gmail original is routed as its owning account even when another account was requested", () => {
+  const routed = forceGmailReplyRoute(
+    {
+      account_id: "acct-a",
+      source: "imap_gmail",
+      provider_thread_id: "18BB368A913AD11A",
+      message_id_header: "<parent@gmail.com>",
+    },
+    { id: "acct-a", username: "a@gmail.com" },
+    { ...validPayload, from_addr: "b@163.com", reply_to_email_id: "mail-gmail" },
+  );
+  assert.equal(routed.accountId, "acct-a");
+  assert.equal(routed.payload.from_addr, "a@gmail.com");
+  assert.equal(routed.payload.provider_thread_id, "18bb368a913ad11a");
+  assert.equal(routed.payload.in_reply_to, "<parent@gmail.com>");
+  assert.equal(forceGmailReplyRoute(
+    { account_id: "local", source: "cf_routing", provider_thread_id: null, message_id_header: null },
+    { id: "acct-b", username: "b@163.com" },
+    validPayload,
+  ), null);
+  assert.equal(forceGmailReplyRoute(
+    { account_id: "acct-a", source: "imap_gmail", provider_thread_id: "63", message_id_header: null },
+    null,
+    validPayload,
+  ), null);
+});
+
+test("computeOutboundRequestHash changes when the Gmail thread id changes", async () => {
+  const first = await computeOutboundRequestHash({
+    account_id: "acct-1",
+    payload: { ...validPayload, provider_thread_id: "ab" },
+  });
+  const second = await computeOutboundRequestHash({
+    account_id: "acct-1",
+    payload: { ...validPayload, provider_thread_id: "cd" },
+  });
+  assert.notEqual(first, second);
+});
+
+test("computeOutboundRequestHash changes when threading headers change", async () => {
+  const plain = await computeOutboundRequestHash({
+    account_id: "acct-1",
+    payload: validPayload,
+  });
+  const reply = await computeOutboundRequestHash({
+    account_id: "acct-1",
+    payload: { ...validPayload, in_reply_to: "<parent@example.com>" },
+  });
+  assert.notEqual(plain, reply);
 });
 
 test("computeOutboundRequestHash ignores from_name/to_name ordering noise", async () => {

@@ -198,6 +198,12 @@ app.use('/api/*', async (c, next) => {
 	) {
 		await checkoutUserRolePayload(c);
 	}
+	// Optional. A reply to a bound Gmail mailbox is routed through that
+	// account only when this token belongs to the address owner. No token
+	// leaves /api/send_mail on the address JWT path it already used.
+	if (c.req.path === "/api/send_mail" && c.req.method === "POST") {
+		await checkUserPayload(c);
+	}
 	if (c.req.path.startsWith("/api/address_login")) {
 		await next();
 		return;

@@ -151,6 +151,12 @@ def build_outbound_mime(payload: dict) -> EmailMessage:
     ))
     msg["Subject"] = str(payload.get("subject") or "")
     msg["Date"] = localtime()
+    in_reply_to = payload.get("in_reply_to")
+    if isinstance(in_reply_to, str) and in_reply_to.strip():
+        msg["In-Reply-To"] = in_reply_to.strip()
+    references = payload.get("references")
+    if isinstance(references, list) and references:
+        msg["References"] = " ".join(str(r).strip() for r in references if str(r).strip())
     is_html = bool(payload.get("is_html") or payload.get("body_html"))
     content = payload.get("body_html") if is_html else (payload.get("body_text") or "")
     subtype = "html" if is_html else "plain"

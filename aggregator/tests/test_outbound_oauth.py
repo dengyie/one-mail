@@ -309,6 +309,166 @@ def test_send_graph_sets_save_to_sent_items(monkeypatch):
 
 # ---------------------------------------------------------------------- send_outbound_oauth dispatcher
 
+def test_gmail_send_body_carries_thread_and_rfc_headers():
+    import base64
+    body = oauth_send.gmail_send_body(_payload(
+        in_reply_to="<parent@example.com>",
+        references=["<root@example.com>", "<parent@example.com>"],
+        provider_thread_id="18bb368a913ad11a",
+    ))
+    assert body["threadId"] == "18bb368a913ad11a"
+    raw = base64.urlsafe_b64decode(body["raw"] + "==")
+    text = raw.decode("utf-8", errors="replace")
+    assert "In-Reply-To: <parent@example.com>" in text
+    assert "References: <root@example.com> <parent@example.com>" in text
+    assert "From: Sender <user@example.com>" in text
+
+
+def test_gmail_send_body_omits_thread_when_absent():
+    body = oauth_send.gmail_send_body(_payload())
+    assert "threadId" not in body
+
+
+def test_gmail_thread_id_rejects_rfc_message_id_and_decimal():
+    assert oauth_send.gmail_thread_id({"provider_thread_id": "<abc@gmail.com>"}) is None
+    assert oauth_send.gmail_thread_id({"provider_thread_id": "0"}) == "0"
+    assert oauth_send.gmail_thread_id({"provider_thread_id": "1781312345678901234"}) is None
+    assert oauth_send.gmail_thread_id({"provider_thread_id": "18BB368A913AD11A"}) == "18bb368a913ad11a"
+    assert oauth_send.gmail_thread_id({"provider_thread_id": "63"}) == "63"
+
+
+class _JsonResponse:
+    def __init__(self, status, payload):
+        self.status_code = status
+        self._payload = payload
+        self.text = json.dumps(payload)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            error = requests.HTTPError(f"HTTP {self.status_code}")
+            error.response = self
+            raise error
+
+    def json(self):
+        return self._payload
+
+
+def test_send_gmail_reply_posts_thread_id(monkeypatch):
+    account = _oauth_account()
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        captured["auth"] = kwargs.get("headers", {}).get("Authorization")
+        return _JsonResponse(200, {"id": "sent-1", "threadId": "63"})
+
+    monkeypatch.setattr(oauth_send, "_gmail_access", lambda *a: "AT-secret")
+    monkeypatch.setattr(oauth_send.requests, "post", fake_post)
+    result = oauth_send.send_gmail(account, _payload(
+        in_reply_to="<parent@example.com>",
+        provider_thread_id="63",
+    ), None)
+    assert result == "sent-1"
+    assert captured["url"].endswith("/messages/send")
+    assert captured["json"]["threadId"] == "63"
+    assert captured["auth"] == "Bearer AT-secret"
+    assert "AT-secret" not in json.dumps({k: v for k, v in captured.items() if k != "auth"})
+
+
+def test_send_gmail_without_thread_stays_on_smtp(monkeypatch):
+    account = _oauth_account()
+    called = {}
+    monkeypatch.setattr(
+        oauth_send, "_send_smtp_xoauth",
+        lambda *a, **k: called.update(path="smtp") or "smtp-id",
+    )
+    monkeypatch.setattr(oauth_send, "send_gmail_api", lambda *a, **k: called.update(path="api"))
+    result = oauth_send.send_gmail(account, _payload(), None)
+    assert result == "smtp-id"
+    assert called == {"path": "smtp"}
+
+
+def test_lookup_timeout_does_not_send_smtp(monkeypatch):
+    account = _oauth_account()
+    smtp = {}
+    monkeypatch.setattr(oauth_send, "_gmail_access", lambda *a: "AT")
+    monkeypatch.setattr(
+        oauth_send.requests, "get",
+        lambda *a, **k: (_ for _ in ()).throw(requests.Timeout("timed out")),
+    )
+    monkeypatch.setattr(
+        oauth_send, "_send_smtp_xoauth",
+        lambda *a, **k: smtp.update(called=True),
+    )
+    with pytest.raises(oauth_send.OutboundOutcomeUnknown):
+        oauth_send.send_gmail(account, _payload(in_reply_to="<parent@example.com>"), None)
+    assert smtp == {}
+
+
+def test_lookup_403_does_not_send(monkeypatch):
+    account = _oauth_account()
+    smtp = {}
+    api = {}
+    monkeypatch.setattr(oauth_send, "_gmail_access", lambda *a: "AT")
+    monkeypatch.setattr(
+        oauth_send.requests, "get",
+        lambda *a, **k: _JsonResponse(403, {"error": "insufficient"}),
+    )
+    monkeypatch.setattr(
+        oauth_send, "_send_smtp_xoauth",
+        lambda *a, **k: smtp.update(called=True),
+    )
+    monkeypatch.setattr(
+        oauth_send, "send_gmail_api",
+        lambda *a, **k: api.update(called=True),
+    )
+    with pytest.raises(oauth_send.OutboundUnsupported):
+        oauth_send.send_gmail(account, _payload(in_reply_to="<parent@example.com>"), None)
+    assert smtp == {}
+    assert api == {}
+
+
+def test_lookup_miss_may_send_smtp(monkeypatch):
+    account = _oauth_account()
+    captured = {}
+    monkeypatch.setattr(oauth_send, "_gmail_access", lambda *a: "AT")
+    monkeypatch.setattr(
+        oauth_send.requests, "get",
+        lambda *a, **k: _JsonResponse(200, {"messages": []}),
+    )
+    monkeypatch.setattr(
+        oauth_send, "_send_smtp_xoauth",
+        lambda *a, **k: captured.update(path="smtp") or "smtp-id",
+    )
+    result = oauth_send.send_gmail(account, _payload(in_reply_to="<parent@example.com>"), None)
+    assert result == "smtp-id"
+    assert captured == {"path": "smtp"}
+
+
+def test_lookup_quotes_message_id_and_keeps_hex_thread(monkeypatch):
+    captured = {}
+
+    def fake_get(url, **kwargs):
+        captured["q"] = kwargs.get("params", {}).get("q")
+        return _JsonResponse(200, {"messages": [{"id": "m1", "threadId": "18bb368a913ad11a"}]})
+
+    monkeypatch.setattr(oauth_send.requests, "get", fake_get)
+    assert oauth_send.lookup_gmail_thread_id("AT", "parent@example.com") == "18bb368a913ad11a"
+    assert captured["q"] == 'rfc822msgid:"<parent@example.com>"'
+    assert oauth_send.lookup_gmail_thread_id("AT", 'parent"injected@example.com') is None
+
+
+def test_send_gmail_api_403_is_unsupported(monkeypatch):
+    account = _oauth_account()
+    monkeypatch.setattr(
+        oauth_send.requests, "post",
+        lambda *a, **k: _JsonResponse(403, {"error": "insufficient"}),
+    )
+    with pytest.raises(oauth_send.OutboundUnsupported, match="forbidden"):
+        oauth_send.send_gmail_api(account, _payload(provider_thread_id="63"), None, "AT")
+
+
 def test_send_outbound_oauth_dispatches_gmail(monkeypatch):
     account = _oauth_account(source="imap_gmail")
     called = {}

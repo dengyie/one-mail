@@ -49,7 +49,7 @@
 | QQ 邮箱 | `imap_qq` | `password`（SMTP 授权码） | `smtp.qq.com:465` SSL | **否**（零新增） |
 | 网易 163 | `imap_163` | `password`（SMTP 授权码） | `smtp.163.com:465` SSL | **否** |
 | 自定义 IMAP | `imap_custom` | `password` | 账号自带 SMTP host/port（需新增配置项） | 视服务商 |
-| Gmail | `imap_gmail` | OAuth2 refresh_token | `smtp.gmail.com:587` XOAUTH2 | **待确认 scope**（见 §2.5） |
+| Gmail | `imap_gmail` | OAuth2 refresh_token | 新邮件：`smtp.gmail.com:587` XOAUTH2；回复：Gmail API `users.messages.send` + `threadId` | **待确认 scope**（见 §2.5） |
 | Outlook 组织/个人 | `imap_outlook` / `msa` | OAuth2 refresh_token | `smtp-mail.outlook.com:587` XOAUTH2 | **是**（当前 scope 纯读） |
 | Graph | `graph_outlook` | OAuth2 refresh_token（Graph scope） | Graph `/me/sendMail` | **是**（需 `Mail.Send`） |
 
@@ -57,7 +57,8 @@
 
 - Gmail 的 OAuth 授权 scope **不在代码里**。它在 D1 `settings` 表的 `OAUTH2_SETTINGS_KEY`（`UserOauth2Settings.scope`，`worker/src/models/index.ts:185`），授权时经 `getOauth2LoginUrl` 拼进 redirect URL（`worker/src/user_api/oauth2.ts:26`）。
 - 聚合器刷新 token 时**不带 scope**（`gmail_access_token`，`oauth.py:36`），刷新出的 access_token 保留原授权粒度。
-- 标准 Gmail 邮件 scope `https://mail.google.com/` 同时覆盖 IMAP 与 SMTP 发送；若当初授权的是该 scope，则发信**无需重新授权**；若被窄化（如只读 IMAP scope），则需要引导用户重新授权。
+- 标准 Gmail 邮件 scope `https://mail.google.com/` 同时覆盖 IMAP、SMTP 与 Gmail API；若当初授权的是该 scope，则发信**无需重新授权**；若被窄化（如只读 IMAP scope），Gmail API 回复会 403，需要引导用户重新授权。新邮件仍走 XOAUTH2 SMTP。
+- 回复挂回原会话靠 Gmail API 的 `threadId`，不是 RFC `Message-ID`。IMAP `X-GM-THRID` 是十进制整数，API 要同一整数的不补零小写十六进制；只在 IMAP 边界用 `format(n, "x")` 转一次，写入 `emails.provider_thread_id`。之后只接受 `^[0-9a-f]{1,16}$`，发送时不再转换。旧信没有该列时，聚合器用加引号的 `rfc822msgid:"<id>"` 回查，零条或多条才退回 SMTP。超时、连接失败、429、5xx 记为结果未知并重试，401/403 记为不支持，这两种都不退回 SMTP。From 仍锁在该账号自己的地址。调用方不选通道：原信属于可发信的 `imap_gmail` 账号时，即使请求里写了别的 `account_id` 也强制改回该账号。
 - **结论：第一步需读取线上 `OAUTH2_SETTINGS_KEY` 里 Gmail 的 `scope` 值，决定 Gmail 是否走「重新授权」分支。**（仓库内无法确认，属运行时数据。）
 
 ### 2.6 Outlook / Graph scope（已确定需重新授权）
@@ -182,10 +183,11 @@ ALTER TABLE user_mail_accounts ADD COLUMN can_send INTEGER NOT NULL DEFAULT 0;
 
 ### 7.2 新模块 `gmail_sender.py` / `outlook_sender.py`
 
-OAuth2 + XOAUTH2 发送适配器：
+OAuth2 发送适配器（实现在 `aggregator/src/one_mail_agg/oauth_sender.py`，没有单独的 `gmail_sender.py`）：
 
-- 用现有 `oauth_client_factory` / `gmail_access_token` / `cached_msa_access_token` 拿 access_token（已在 `redemption_lock` 内做 RT 轮换防并发）。
-- `smtplib` + `auth('XOAUTH2', ...)` 走 `smtp.gmail.com:587` / `smtp-mail.outlook.com:587`。
+- 用现有 `gmail_access_token` / `cached_msa_access_token` 拿 access_token（已在 `redemption_lock` 内做 RT 轮换防并发）。token 只留在聚合器进程里，不写日志、不回前端。
+- Outlook 以及 Gmail 新邮件：`smtplib` + `auth('XOAUTH2', ...)` 走 `smtp-mail.outlook.com:587` / `smtp.gmail.com:587`。
+- Gmail 回复：`POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send`，body 为 `{ raw: base64url(RFC822), threadId }`。`threadId` 是同步时由 `X-GM-THRID` 转成的十六进制；没有时用原信 `Message-ID` 做 `rfc822msgid:` 查询，查到的 hex 原样使用。403 记为不支持（授权范围不够），不当成可无限重试的临时失败。经 `/api/send_mail` 改道的 Gmail 回复消费 `x-idempotency-key`，但不占用域名发信配额、不扣 `send_balance`。
 
 ### 7.3 Graph 发送
 
