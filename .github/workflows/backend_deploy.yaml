@@ -445,6 +445,11 @@ jobs:
             --yes \
             --file ../db/2026-10-05-outbound-mail-jobs.sql
 
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-10-29-gmail-reroute-idempotency.sql
+
           # The aggregator export reads SMTP/proxy columns even when sending is
           # disabled. Repair each missing column before publishing the Worker.
           pnpm exec wrangler d1 execute DB \

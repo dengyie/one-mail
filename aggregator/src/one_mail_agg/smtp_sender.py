@@ -138,6 +138,16 @@ def connect_smtp(host: str, port: int, use_ssl: bool, timeout: float = 30.0, pro
     return _connect_smtp_starttls(host, port, timeout, proxy_policy=proxy_policy)
 
 
+def _single_header(value) -> str | None:
+    """One RFC822 header value. A CR or LF would start another header."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or "\r" in text or "\n" in text:
+        return None
+    return text
+
+
 def build_outbound_mime(payload: dict) -> EmailMessage:
     """Construct an RFC 5322 MIME message from the outbound job payload."""
     msg = EmailMessage()
@@ -151,12 +161,16 @@ def build_outbound_mime(payload: dict) -> EmailMessage:
     ))
     msg["Subject"] = str(payload.get("subject") or "")
     msg["Date"] = localtime()
-    in_reply_to = payload.get("in_reply_to")
-    if isinstance(in_reply_to, str) and in_reply_to.strip():
-        msg["In-Reply-To"] = in_reply_to.strip()
+    in_reply_to = _single_header(payload.get("in_reply_to"))
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
     references = payload.get("references")
     if isinstance(references, list) and references:
-        msg["References"] = " ".join(str(r).strip() for r in references if str(r).strip())
+        folded = " ".join(
+            value for value in (_single_header(item) for item in references) if value
+        )
+        if folded:
+            msg["References"] = folded
     is_html = bool(payload.get("is_html") or payload.get("body_html"))
     content = payload.get("body_html") if is_html else (payload.get("body_text") or "")
     subtype = "html" if is_html else "plain"

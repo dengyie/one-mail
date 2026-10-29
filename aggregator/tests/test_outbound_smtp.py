@@ -140,6 +140,16 @@ def test_build_outbound_mime_omits_empty_threading_headers():
     assert msg["References"] is None
 
 
+def test_build_outbound_mime_drops_a_header_that_contains_a_line_break():
+    msg = smtp.build_outbound_mime(_payload(
+        in_reply_to="<parent@example.com>\r\nBcc: victim@example.com",
+        references=["<root@example.com>\nBcc: victim@example.com"],
+    ))
+    assert msg["In-Reply-To"] is None
+    assert msg["References"] is None
+    assert "victim@example.com" not in msg.as_string()
+
+
 def test_send_smtp_message_no_host_is_unsupported(monkeypatch):
     account = _smtp_account("imap_unknown")
     with pytest.raises(smtp.OutboundUnsupported, match="no SMTP host"):

@@ -33,6 +33,7 @@ import {
     providerForAccountSource,
     validateOutboundPayload,
 } from '../core/outbound_mail';
+import { recipientIsBlocked } from '../core/send_guard';
 
 
 export const api = new Hono<HonoCustomType>()
@@ -268,7 +269,7 @@ export const sendMail = async (
     }
     // check SEND_BLOCK_LIST_KEY
     const sendBlockList = await getJsonSetting(c, CONSTANTS.SEND_BLOCK_LIST_KEY) as string[];
-    if (sendBlockList && sendBlockList.some((item) => to_mail.includes(item))) {
+    if (recipientIsBlocked(to_mail, sendBlockList)) {
         throw new Error(msgs.AddressBlockedMsg)
     }
     if (!subject) {
@@ -527,26 +528,35 @@ api.post('/api/send_mail', async (c) => {
                     ? reqJson.references.filter((value: unknown): value is string => typeof value === "string")
                     : [];
                 const idempotencyKey = c.req.raw.headers.get("x-idempotency-key") ?? undefined;
-                const routed = await enqueueExternalSend(c, userId, {
-                    account_id: gmail.id,
-                    from_addr: gmail.username,
-                    from_name: typeof reqJson.from_name === "string" ? reqJson.from_name : "",
-                    to_mail: reqJson.to_mail,
-                    to_name: typeof reqJson.to_name === "string" ? reqJson.to_name : "",
-                    subject: reqJson.subject,
-                    content: reqJson.content,
-                    is_html: reqJson.is_html === true,
-                    reply_to_email_id: replyToEmailId,
-                    ...(gmail.messageId ? { in_reply_to: gmail.messageId } : {}),
-                    ...(references.length > 0 ? { references } : {}),
-                    ...(gmail.threadId ? { provider_thread_id: gmail.threadId } : {}),
-                }, {
-                    idempotencyKey,
-                    // Same key namespace as domain send, but this path never reserves balance.
-                    requestHash: idempotencyKey
-                        ? await hashSendMailRequest({ address, route: "gmail_reply", reqJson })
-                        : undefined,
-                });
+                let routed: Response;
+                try {
+                    routed = await enqueueExternalSend(c, userId, {
+                        account_id: gmail.id,
+                        from_addr: gmail.username,
+                        from_name: typeof reqJson.from_name === "string" ? reqJson.from_name : "",
+                        to_mail: reqJson.to_mail,
+                        to_name: typeof reqJson.to_name === "string" ? reqJson.to_name : "",
+                        subject: reqJson.subject,
+                        content: reqJson.content,
+                        is_html: reqJson.is_html === true,
+                        reply_to_email_id: replyToEmailId,
+                        ...(gmail.messageId ? { in_reply_to: gmail.messageId } : {}),
+                        ...(references.length > 0 ? { references } : {}),
+                        ...(gmail.threadId ? { provider_thread_id: gmail.threadId } : {}),
+                    }, {
+                        idempotencyKey,
+                        // Same key namespace as domain send, but this path never reserves balance.
+                        requestHash: idempotencyKey
+                            ? await hashSendMailRequest({ address, route: "gmail_reply", reqJson })
+                            : undefined,
+                    });
+                } catch (e) {
+                    const error = e as Error;
+                    if (error instanceof SendMailIdempotencyConflictError) {
+                        return c.text(error.message, 409);
+                    }
+                    throw error;
+                }
                 return routed;
             }
         }
@@ -715,6 +725,10 @@ export const enqueueExternalSend = async (
         return c.text(validation.reason, 400);
     }
     const payload: OutboundPayload = validation.value;
+    const sendBlockList = await getJsonSetting(c, CONSTANTS.SEND_BLOCK_LIST_KEY) as string[];
+    if (recipientIsBlocked(payload.to_mail, sendBlockList)) {
+        return c.text(msgs.AddressBlockedMsg, 400);
+    }
 
     // Ownership + send permission in one indexed lookup. A missing row is a
     // distinct outcome from a present-but-not-authorized row, so the client can
@@ -905,5 +919,13 @@ api.post('/api/send_mail/external', async (c) => {
         return c.text(msgs.UserTokenExpiredMsg, 401);
     }
     const body = await c.req.json().catch(() => null);
-    return enqueueExternalSend(c, userPayload.user_id, body);
+    try {
+        return await enqueueExternalSend(c, userPayload.user_id, body);
+    } catch (e) {
+        const error = e as Error;
+        if (error instanceof SendMailIdempotencyConflictError) {
+            return c.text(error.message, 409);
+        }
+        throw error;
+    }
 })

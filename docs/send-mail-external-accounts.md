@@ -187,7 +187,7 @@ OAuth2 发送适配器（实现在 `aggregator/src/one_mail_agg/oauth_sender.py`
 
 - 用现有 `gmail_access_token` / `cached_msa_access_token` 拿 access_token（已在 `redemption_lock` 内做 RT 轮换防并发）。token 只留在聚合器进程里，不写日志、不回前端。
 - Outlook 以及 Gmail 新邮件：`smtplib` + `auth('XOAUTH2', ...)` 走 `smtp-mail.outlook.com:587` / `smtp.gmail.com:587`。
-- Gmail 回复：`POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send`，body 为 `{ raw: base64url(RFC822), threadId }`。`threadId` 是同步时由 `X-GM-THRID` 转成的十六进制；没有时用原信 `Message-ID` 做 `rfc822msgid:` 查询，查到的 hex 原样使用。403 记为不支持（授权范围不够），不当成可无限重试的临时失败。经 `/api/send_mail` 改道的 Gmail 回复消费 `x-idempotency-key`，但不占用域名发信配额、不扣 `send_balance`。
+- Gmail 回复：`POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send`，body 为 `{ raw: base64url(RFC822), threadId }`。`threadId` 是同步时由 `X-GM-THRID` 转成的十六进制；没有时用原信 `Message-ID` 做 `rfc822msgid:` 查询，查到的 hex 原样使用。403 记为不支持（授权范围不够），不当成可无限重试的临时失败。经 `/api/send_mail` 改道的 Gmail 回复消费 `x-idempotency-key`，但不占用域名发信配额、不扣 `send_balance`。改道和外部账号入口都套用 `SEND_BLOCK_LIST_KEY`；同一个幂等键配不同请求体返回 409，不返回 500。`In-Reply-To` / `References` 含 CR 或 LF 时整条丢弃，避免再起一个邮件头。幂等表 `gmail_reroute_idempotency` 由部署迁移创建，请求路径仍保留 `CREATE TABLE IF NOT EXISTS`。
 
 ### 7.3 Graph 发送
 

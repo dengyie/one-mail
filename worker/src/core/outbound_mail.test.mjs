@@ -188,6 +188,19 @@ test("validateOutboundPayload keeps a hex Gmail thread id and drops a decimal X-
   }
 });
 
+test("validateOutboundPayload rejects a threading header that contains a line break", () => {
+  const broken = validateOutboundPayload({
+    ...validPayload,
+    in_reply_to: "<parent@example.com>\r\nBcc: victim@example.com",
+  });
+  assert.equal(broken.ok, false);
+  const brokenReference = validateOutboundPayload({
+    ...validPayload,
+    references: ["<root@example.com>\nBcc: victim@example.com"],
+  });
+  assert.equal(brokenReference.ok, false);
+});
+
 test("a Gmail original is routed as its owning account even when another account was requested", () => {
   const routed = forceGmailReplyRoute(
     {
