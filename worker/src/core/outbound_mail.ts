@@ -69,6 +69,13 @@ export type GmailReplyOriginal = {
  * that account. The requested account_id is ignored. A non-Gmail original
  * returns null so the caller keeps the explicit account and drops any thread id.
  */
+const singleLineHeader = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const text = value.trim();
+    if (!text || /[\r\n]/.test(text)) return undefined;
+    return text;
+};
+
 export const forceGmailReplyRoute = (
     original: GmailReplyOriginal | null,
     owner: GmailReplyOwner | null,
@@ -79,7 +86,7 @@ export const forceGmailReplyRoute = (
     }
     const stored = original.provider_thread_id?.trim().toLowerCase() ?? "";
     const threadId = GMAIL_THREAD_RE.test(stored) ? stored : undefined;
-    const messageId = original.message_id_header?.trim() || payload.in_reply_to;
+    const messageId = singleLineHeader(original.message_id_header) || singleLineHeader(payload.in_reply_to);
     const routed: OutboundPayload = {
         ...payload,
         from_addr: owner.username,
@@ -174,9 +181,12 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
         return { ok: false, reason: "is_html must be a boolean" };
     }
 
-    const in_reply_to = boundedString(record.in_reply_to, 998);
+    const in_reply_to = singleLineHeader(boundedString(record.in_reply_to, 998));
     const references = Array.isArray(record.references)
-        ? record.references.filter((v): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 998)
+        ? record.references
+            .filter((v): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 998)
+            .map((value) => singleLineHeader(value))
+            .filter((value): value is string => Boolean(value))
         : undefined;
     const reply_to_email_id = boundedString(record.reply_to_email_id, 128);
     // Hex only. A long decimal X-GM-THRID is not an API threadId and must be
@@ -185,13 +195,6 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
     const gmailThreadId = provider_thread_id && GMAIL_THREAD_RE.test(provider_thread_id.toLowerCase())
         ? provider_thread_id.toLowerCase()
         : undefined;
-    if (in_reply_to && /[\r\n]/.test(in_reply_to)) {
-        return { ok: false, reason: "in_reply_to must be a single header value" };
-    }
-    if (references?.some((value) => /[\r\n]/.test(value))) {
-        return { ok: false, reason: "references must be single header values" };
-    }
-
     return {
         ok: true,
         value: {

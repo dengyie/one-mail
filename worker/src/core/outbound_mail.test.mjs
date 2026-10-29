@@ -188,17 +188,18 @@ test("validateOutboundPayload keeps a hex Gmail thread id and drops a decimal X-
   }
 });
 
-test("validateOutboundPayload rejects a threading header that contains a line break", () => {
+test("validateOutboundPayload drops a threading header that contains a line break", () => {
   const broken = validateOutboundPayload({
     ...validPayload,
     in_reply_to: "<parent@example.com>\r\nBcc: victim@example.com",
+    references: ["<root@example.com>", "<mid@example.com>\nBcc: victim@example.com"],
   });
-  assert.equal(broken.ok, false);
-  const brokenReference = validateOutboundPayload({
-    ...validPayload,
-    references: ["<root@example.com>\nBcc: victim@example.com"],
-  });
-  assert.equal(brokenReference.ok, false);
+  assert.equal(broken.ok, true);
+  if (broken.ok) {
+    assert.equal(broken.value.in_reply_to, undefined);
+    assert.deepEqual(broken.value.references, ["<root@example.com>"]);
+    assert.equal(JSON.stringify(broken.value).includes("victim@example.com"), false);
+  }
 });
 
 test("a Gmail original is routed as its owning account even when another account was requested", () => {
@@ -216,6 +217,18 @@ test("a Gmail original is routed as its owning account even when another account
   assert.equal(routed.payload.from_addr, "a@gmail.com");
   assert.equal(routed.payload.provider_thread_id, "18bb368a913ad11a");
   assert.equal(routed.payload.in_reply_to, "<parent@gmail.com>");
+  const injected = forceGmailReplyRoute(
+    {
+      account_id: "acct-a",
+      source: "imap_gmail",
+      provider_thread_id: "63",
+      message_id_header: "<parent@gmail.com>\r\nBcc: victim@example.com",
+    },
+    { id: "acct-a", username: "a@gmail.com" },
+    validPayload,
+  );
+  assert.equal(injected.payload.in_reply_to, undefined);
+  assert.equal(JSON.stringify(injected.payload).includes("victim@example.com"), false);
   assert.equal(forceGmailReplyRoute(
     { account_id: "local", source: "cf_routing", provider_thread_id: null, message_id_header: null },
     { id: "acct-b", username: "b@163.com" },
