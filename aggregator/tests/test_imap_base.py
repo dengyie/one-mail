@@ -1,4 +1,8 @@
-from one_mail_agg.imap_base import make_imap_uid, fetch_new_messages
+from one_mail_agg.imap_base import (
+    fetch_new_messages,
+    gmail_thread_id_from_fetch,
+    make_imap_uid,
+)
 from one_mail_agg.state import SyncState
 from one_mail_agg.config import AccountConfig
 
@@ -45,6 +49,56 @@ class FakeClient:
             else:
                 out[u] = {}
         return out
+
+
+def test_gmail_thread_id_from_fetch_converts_decimal_to_hex_once():
+    assert gmail_thread_id_from_fetch(1781312345678901234) == format(1781312345678901234, "x")
+    assert format(1781312345678901234, "x") == "18b87e23fe356ff2"
+    assert gmail_thread_id_from_fetch(b"42") == "2a"
+    assert gmail_thread_id_from_fetch(99) == "63"
+    assert gmail_thread_id_from_fetch(0) is None
+    assert gmail_thread_id_from_fetch(b"not-a-thread") is None
+    assert gmail_thread_id_from_fetch(None) is None
+
+
+def test_fetch_gmail_keeps_x_gm_thrid(tmp_path):
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("gm", "INBOX", 0)
+
+    class GmailClient(FakeClient):
+        def __init__(self):
+            super().__init__([1])
+            self.requested = None
+
+        def fetch(self, uids, data):
+            self.requested = list(data)
+            out = super().fetch(uids, data)
+            for uid in uids:
+                out[uid][b"X-GM-THRID"] = 99
+            return out
+
+    client = GmailClient()
+    account = AccountConfig(id="gm", source="imap_gmail", host="imap.gmail.com", port=993,
+                             username="u@gmail.com", password="", folders=["INBOX"])
+    msgs = fetch_new_messages(client, account, "INBOX", state)
+    assert b"X-GM-THRID" in client.requested
+    assert msgs[0].gmail_thread_id == "63"
+
+
+def test_fetch_non_gmail_does_not_request_x_gm_thrid(tmp_path):
+    state = SyncState(str(tmp_path / "st.json"))
+    state.set_last_uid("qq", "INBOX", 0)
+    client = FakeClient([1])
+    requested = {}
+    original = client.fetch
+
+    def fetch(uids, data):
+        requested["data"] = list(data)
+        return original(uids, data)
+
+    client.fetch = fetch
+    fetch_new_messages(client, acc(), "INBOX", state)
+    assert b"X-GM-THRID" not in requested["data"]
 
 
 def test_fetch_new_messages_only_after_last_uid(tmp_path):

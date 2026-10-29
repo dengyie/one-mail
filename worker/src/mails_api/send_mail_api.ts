@@ -25,10 +25,11 @@ import {
     type SendMailSource,
 } from '../core/sendbox_source';
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
-import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError } from './send_mail_limit_utils';
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, lookupSendMailIdempotency, rememberSendMailIdempotency } from './send_mail_limit_utils';
 import {
     OutboundPayload,
     computeOutboundRequestHash,
+    forceGmailReplyRoute,
     providerForAccountSource,
     validateOutboundPayload,
 } from '../core/outbound_mail';
@@ -52,12 +53,89 @@ api.post('/api/request_send_mail_access', async (c) => {
     return c.text(msgs.OperationFailedMsg, 500)
 })
 
+type SendMailBody = {
+    from_name: string, to_mail: string, to_name: string,
+    subject: string, content: string, is_html: boolean,
+    in_reply_to?: string, references?: string[],
+    reply_to_email_id?: string,
+};
+
+type OriginalMailRow = {
+    account_id: string | null;
+    source: string | null;
+    provider_thread_id: string | null;
+    message_id_header: string | null;
+};
+
+const GMAIL_THREAD_RE = /^[0-9a-f]{1,16}$/;
+
+const loadOriginalMail = async (
+    c: Context<HonoCustomType>,
+    emailId: string | undefined,
+): Promise<OriginalMailRow | null> => {
+    if (!emailId) return null;
+    return await c.env.DB.prepare(
+        `SELECT account_id, source, provider_thread_id, message_id_header
+           FROM emails WHERE id = ?`,
+    ).bind(emailId).first<OriginalMailRow>();
+};
+
+/**
+ * A Gmail reply is sent as the bound account only when that account owns the
+ * original row, is allowed to send, and the caller is that account's user
+ * (or the address JWT is bound to that user). Otherwise the request stays on
+ * the caller's existing channel. The client does not choose.
+ */
+const resolveGmailReplyAccount = async (
+    c: Context<HonoCustomType>,
+    replyToEmailId: string | undefined,
+    userId: number | string | undefined,
+): Promise<{ id: string; username: string; threadId?: string; messageId?: string } | null> => {
+    if (!replyToEmailId || userId === undefined || userId === null || userId === "") return null;
+    const original = await loadOriginalMail(c, replyToEmailId);
+    if (!original?.account_id || original.source !== "imap_gmail") return null;
+    const account = await c.env.DB.prepare(
+        `SELECT id, username FROM user_mail_accounts
+          WHERE id = ? AND user_id = ? AND source = 'imap_gmail'
+            AND enabled = 1 AND can_send = 1`,
+    ).bind(original.account_id, userId).first<{ id: string; username: string }>();
+    if (!account?.username) return null;
+    const storedThread = original.provider_thread_id?.trim().toLowerCase() ?? "";
+    const threadId = GMAIL_THREAD_RE.test(storedThread) ? storedThread : undefined;
+    const messageId = original.message_id_header?.trim() || undefined;
+    return { id: account.id, username: account.username, threadId, messageId };
+};
+
+const userOwnsAddress = async (
+    c: Context<HonoCustomType>,
+    userId: number | string,
+    addressId: number | string | undefined,
+): Promise<boolean> => {
+    if (addressId === undefined || addressId === null || addressId === "") return false;
+    const row = await c.env.DB.prepare(
+        `SELECT 1 AS ok FROM users_address WHERE user_id = ? AND address_id = ?`,
+    ).bind(userId, addressId).first<{ ok: number }>();
+    return row?.ok === 1;
+};
+
+const threadingHeaders = (reqJson: Pick<SendMailBody, "in_reply_to" | "references">): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    const inReplyTo = typeof reqJson.in_reply_to === "string" ? reqJson.in_reply_to.trim() : "";
+    if (inReplyTo) {
+        headers["In-Reply-To"] = inReplyTo;
+    }
+    const references = Array.isArray(reqJson.references)
+        ? reqJson.references.map((value) => value.trim()).filter(Boolean)
+        : [];
+    if (references.length > 0) {
+        headers["References"] = references.join(" ");
+    }
+    return headers;
+};
+
 export const sendMailToVerifyAddress = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    }
+    reqJson: SendMailBody
 ): Promise<void> => {
     const {
         from_name, to_mail, to_name,
@@ -67,6 +145,9 @@ export const sendMailToVerifyAddress = async (
     msg.setSender(from_name ? { name: from_name, addr: address } : address);
     msg.setRecipient(to_name ? { name: to_name, addr: to_mail } : to_mail);
     msg.setSubject(subject);
+    for (const [name, value] of Object.entries(threadingHeaders(reqJson))) {
+        msg.setHeader(name, value);
+    }
     msg.addMessage({
         contentType: is_html ? 'text/html' : 'text/plain',
         data: content
@@ -78,32 +159,29 @@ export const sendMailToVerifyAddress = async (
 
 export const sendMailByBinding = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    }
+    reqJson: SendMailBody
 ): Promise<void> => {
     const {
         from_name, to_mail, to_name,
         subject, content, is_html
     } = reqJson;
+    const headers = threadingHeaders(reqJson);
     await c.env.SEND_MAIL.send({
         from: from_name ? { email: address, name: from_name } : address,
         to: to_name ? [`${to_name} <${to_mail}>`] : [to_mail],
         subject,
         ...(is_html ? { html: content } : { text: content }),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
     });
 }
 
 const sendMailByResend = async (
     address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    },
+    reqJson: SendMailBody,
     token: string
 ): Promise<string | undefined> => {
     const resend = new Resend(token);
+    const headers = threadingHeaders(reqJson);
     const { data, error } = await resend.emails.send({
         from: reqJson.from_name ? `${reqJson.from_name} <${address}>` : address,
         to: reqJson.to_name ? `${reqJson.to_name} <${reqJson.to_mail}>` : reqJson.to_mail,
@@ -112,7 +190,8 @@ const sendMailByResend = async (
             html: reqJson.content,
         } : {
             text: reqJson.content,
-        })
+        }),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
     });
     if (error) {
         throw new Error(`Resend error: ${error.name} ${error.message}`);
@@ -123,12 +202,10 @@ const sendMailByResend = async (
 
 const sendMailBySmtp = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    },
+    reqJson: SendMailBody,
     smtpOptions: WorkerMailerOptions
 ): Promise<void> => {
+    const headers = threadingHeaders(reqJson);
     await WorkerMailer.send(
         smtpOptions,
         {
@@ -142,17 +219,15 @@ const sendMailBySmtp = async (
             },
             subject: reqJson.subject,
             text: reqJson.is_html ? undefined : reqJson.content,
-            html: reqJson.is_html ? reqJson.content : undefined
+            html: reqJson.is_html ? reqJson.content : undefined,
+            ...(Object.keys(headers).length > 0 ? { headers } : {}),
         }
     )
 }
 
 export const sendMail = async (
     c: Context<HonoCustomType>, address: string,
-    reqJson: {
-        from_name: string, to_mail: string, to_name: string,
-        subject: string, content: string, is_html: boolean
-    },
+    reqJson: SendMailBody,
     options?: {
         isAdmin?: boolean
         addressId?: number | string
@@ -439,6 +514,43 @@ export const saveSendboxIfMissing = async (
 api.post('/api/send_mail', async (c) => {
     const { address, address_id } = c.get("jwtPayload")
     const reqJson = await c.req.json();
+    const replyToEmailId = typeof reqJson?.reply_to_email_id === "string"
+        ? reqJson.reply_to_email_id.trim()
+        : "";
+    if (replyToEmailId) {
+        const userPayload = c.get("userPayload");
+        const userId = userPayload?.user_id;
+        if (userId !== undefined && userId !== null && await userOwnsAddress(c, userId, address_id)) {
+            const gmail = await resolveGmailReplyAccount(c, replyToEmailId, userId);
+            if (gmail) {
+                const references = Array.isArray(reqJson.references)
+                    ? reqJson.references.filter((value: unknown): value is string => typeof value === "string")
+                    : [];
+                const idempotencyKey = c.req.raw.headers.get("x-idempotency-key") ?? undefined;
+                const routed = await enqueueExternalSend(c, userId, {
+                    account_id: gmail.id,
+                    from_addr: gmail.username,
+                    from_name: typeof reqJson.from_name === "string" ? reqJson.from_name : "",
+                    to_mail: reqJson.to_mail,
+                    to_name: typeof reqJson.to_name === "string" ? reqJson.to_name : "",
+                    subject: reqJson.subject,
+                    content: reqJson.content,
+                    is_html: reqJson.is_html === true,
+                    reply_to_email_id: replyToEmailId,
+                    ...(gmail.messageId ? { in_reply_to: gmail.messageId } : {}),
+                    ...(references.length > 0 ? { references } : {}),
+                    ...(gmail.threadId ? { provider_thread_id: gmail.threadId } : {}),
+                }, {
+                    idempotencyKey,
+                    // Same key namespace as domain send, but this path never reserves balance.
+                    requestHash: idempotencyKey
+                        ? await hashSendMailRequest({ address, route: "gmail_reply", reqJson })
+                        : undefined,
+                });
+                return routed;
+            }
+        }
+    }
     try {
         await sendMail(c, address, reqJson, {
             addressId: address_id,
@@ -572,22 +684,30 @@ api.delete('/api/sendbox/:id', async (c) => {
     })
 })
 
-// 外部账号发信：以已接入的外部邮箱身份发送邮件。
-// 该路由经 worker.ts 的 /api/* 中间件豁免地址 JWT，改用 x-user-token 鉴权；
-// checkUserPayload 已将有效 token 写入 userPayload。发送不占用域名配额，仅要求
-// 账号 enabled=1 且 can_send=1。请求幂等：同 account_id + 同内容 → 同 request_hash，
-// 由唯一索引 (account_id, request_hash) 去重，二次提交返回已有任务。
-api.post('/api/send_mail/external', async (c) => {
+export const enqueueExternalSend = async (
+    c: Context<HonoCustomType>,
+    userId: number | string,
+    body: unknown,
+    options?: { idempotencyKey?: string; requestHash?: string },
+): Promise<Response> => {
     const msgs = i18n.getMessagesbyContext(c);
-    const userPayload = c.get("userPayload");
-    if (!userPayload?.user_id) {
-        return c.text(msgs.UserTokenExpiredMsg, 401);
-    }
-
-    const body = await c.req.json().catch(() => null);
-    const accountId = typeof body?.account_id === "string" ? body.account_id.trim() : "";
+    const record = body !== null && typeof body === "object" ? body as Record<string, unknown> : null;
+    let accountId = typeof record?.account_id === "string" ? record.account_id.trim() : "";
     if (!accountId) {
         return c.text("account_id is required", 400);
+    }
+    const idempotencyKey = options?.idempotencyKey?.trim() || "";
+    if (idempotencyKey) {
+        if (!options?.requestHash) {
+            throw new SendMailIdempotencyConflictError();
+        }
+        const prior = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
+        if (prior) {
+            if (prior.request_hash !== options.requestHash) {
+                throw new SendMailIdempotencyConflictError();
+            }
+            return c.json({ status: "queued", job_id: prior.job_id });
+        }
     }
 
     const validation = validateOutboundPayload(body);
@@ -603,7 +723,7 @@ api.post('/api/send_mail/external', async (c) => {
         `SELECT id, source, username, enabled, can_send
            FROM user_mail_accounts
           WHERE id = ? AND user_id = ?`,
-    ).bind(accountId, userPayload.user_id).first<{
+    ).bind(accountId, userId).first<{
         id: string; source: string; username: string; enabled: number; can_send: number;
     }>();
     if (!account) {
@@ -614,18 +734,70 @@ api.post('/api/send_mail/external', async (c) => {
     }
 
     // The authenticated send identity is the account's own address; a client may
-    // not spoof a different From header through this endpoint. Enforce the
-    // address match (case-insensitive) before the job is enqueued.
-    if (payload.from_addr.toLowerCase() !== account.username.toLowerCase()) {
+    // not spoof a different From header through this endpoint. A Gmail-owned
+    // reply rewrites From to the owning account below, so the check is skipped
+    // until that rewrite. Enforce the address match (case-insensitive) before
+    // the job is enqueued for every other send.
+    const fromMatchesAccount = payload.from_addr.toLowerCase() === account.username.toLowerCase();
+
+    // A reply to a Gmail-owned row is sent as that account, whatever account_id
+    // the client asked for. The identity dropdown is for new mail only.
+    // A non-Gmail original keeps the caller's explicit account and drops any
+    // thread id that does not belong to it.
+    let routedPayload = payload;
+    if (payload.reply_to_email_id) {
+        const original = await c.env.DB.prepare(
+            `SELECT account_id, source, provider_thread_id, message_id_header
+               FROM emails WHERE id = ?`,
+        ).bind(payload.reply_to_email_id).first<{
+            account_id: string | null;
+            source: string | null;
+            provider_thread_id: string | null;
+            message_id_header: string | null;
+        }>();
+        if (original?.source === "imap_gmail" && original.account_id) {
+            const owner = await c.env.DB.prepare(
+                `SELECT id, username FROM user_mail_accounts
+                  WHERE id = ? AND user_id = ? AND source = 'imap_gmail'
+                    AND enabled = 1 AND can_send = 1`,
+            ).bind(original.account_id, userId).first<{ id: string; username: string }>();
+            const forced = forceGmailReplyRoute(original, owner, payload);
+            if (!forced) {
+                return c.text(msgs.ExternalAccountCannotSendMsg, 403);
+            }
+            accountId = forced.accountId;
+            routedPayload = forced.payload;
+        } else if (payload.provider_thread_id) {
+            routedPayload = { ...payload, provider_thread_id: undefined };
+            delete routedPayload.provider_thread_id;
+        }
+    } else if (payload.provider_thread_id) {
+        routedPayload = { ...payload, provider_thread_id: undefined };
+        delete routedPayload.provider_thread_id;
+    }
+
+    if (accountId === account.id && !fromMatchesAccount) {
         return c.text("from_addr must match the account address", 400);
     }
 
-    const provider = providerForAccountSource(account.source);
+    const ownerAccount = accountId === account.id
+        ? account
+        : await c.env.DB.prepare(
+            `SELECT id, source, username, enabled, can_send
+               FROM user_mail_accounts
+              WHERE id = ? AND user_id = ?`,
+        ).bind(accountId, userId).first<{
+            id: string; source: string; username: string; enabled: number; can_send: number;
+        }>();
+    if (!ownerAccount) {
+        return c.text(msgs.ExternalAccountNotFoundMsg, 404);
+    }
+    const provider = providerForAccountSource(ownerAccount.source);
     if (!provider) {
-        return c.text(`unsupported account source: ${account.source}`, 400);
+        return c.text(`unsupported account source: ${ownerAccount.source}`, 400);
     }
 
-    const requestHash = await computeOutboundRequestHash({ account_id: accountId, payload });
+    const requestHash = await computeOutboundRequestHash({ account_id: accountId, payload: routedPayload });
     const existing = await c.env.DB.prepare(
         `SELECT id, status FROM outbound_mail_jobs
           WHERE account_id = ? AND request_hash = ?
@@ -640,7 +812,7 @@ api.post('/api/send_mail/external', async (c) => {
 
     const now = Date.now();
     const id = crypto.randomUUID();
-    const payloadJson = JSON.stringify(payload);
+    const payloadJson = JSON.stringify(routedPayload);
     try {
         await c.env.DB.prepare(
             `INSERT INTO outbound_mail_jobs (
@@ -651,11 +823,11 @@ api.post('/api/send_mail/external', async (c) => {
         ).bind(
             id,
             accountId,
-            payload.from_addr,
-            payload.to_mail,
-            payload.subject,
-            payload.is_html ? null : payload.content,
-            payload.is_html ? payload.content : null,
+            routedPayload.from_addr,
+            routedPayload.to_mail,
+            routedPayload.subject,
+            routedPayload.is_html ? null : routedPayload.content,
+            routedPayload.is_html ? routedPayload.content : null,
             payloadJson,
             requestHash,
             provider,
@@ -670,6 +842,16 @@ api.post('/api/send_mail/external', async (c) => {
               WHERE account_id = ? AND request_hash = ? LIMIT 1`,
         ).bind(accountId, requestHash).first<{ id: string; status: string }>();
         if (winner) {
+            if (idempotencyKey && options?.requestHash) {
+                try {
+                    await rememberSendMailIdempotency(c.env.DB, idempotencyKey, options.requestHash, winner.id);
+                } catch (rememberError) {
+                    const again = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
+                    if (!again || again.request_hash !== options.requestHash || again.job_id !== winner.id) {
+                        throw rememberError;
+                    }
+                }
+            }
             return c.json({
                 status: winner.status === "succeeded" ? "already_sent" : "queued",
                 job_id: winner.id,
@@ -678,15 +860,30 @@ api.post('/api/send_mail/external', async (c) => {
         throw error;
     }
 
+    if (idempotencyKey && options?.requestHash) {
+        try {
+            await rememberSendMailIdempotency(c.env.DB, idempotencyKey, options.requestHash, id);
+        } catch (rememberError) {
+            const again = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
+            if (again && again.request_hash === options.requestHash) {
+                return c.json({ status: "queued", job_id: again.job_id });
+            }
+            if (again) {
+                throw new SendMailIdempotencyConflictError();
+            }
+            throw rememberError;
+        }
+    }
+
     // A pending outbound job is visible in the sendbox under its from-address so
     // the workbench shows it as queued rather than silently omitting it.
-    await saveSendbox(c, payload.from_addr, {
-        from_name: payload.from_name ?? "",
-        to_mail: payload.to_mail,
-        to_name: payload.to_name ?? "",
-        subject: payload.subject,
-        content: payload.content,
-        is_html: payload.is_html,
+    await saveSendbox(c, routedPayload.from_addr, {
+        from_name: routedPayload.from_name ?? "",
+        to_mail: routedPayload.to_mail,
+        to_name: routedPayload.to_name ?? "",
+        subject: routedPayload.subject,
+        content: routedPayload.content,
+        is_html: routedPayload.is_html,
     }, {
         source: "external_account",
         channel: null,
@@ -694,4 +891,19 @@ api.post('/api/send_mail/external', async (c) => {
     });
 
     return c.json({ status: "queued", job_id: id });
+};
+
+// 外部账号发信：以已接入的外部邮箱身份发送邮件。
+// 该路由经 worker.ts 的 /api/* 中间件豁免地址 JWT，改用 x-user-token 鉴权；
+// checkUserPayload 已将有效 token 写入 userPayload。发送不占用域名配额，仅要求
+// 账号 enabled=1 且 can_send=1。请求幂等：同 account_id + 同内容 → 同 request_hash，
+// 由唯一索引 (account_id, request_hash) 去重，二次提交返回已有任务。
+api.post('/api/send_mail/external', async (c) => {
+    const msgs = i18n.getMessagesbyContext(c);
+    const userPayload = c.get("userPayload");
+    if (!userPayload?.user_id) {
+        return c.text(msgs.UserTokenExpiredMsg, 401);
+    }
+    const body = await c.req.json().catch(() => null);
+    return enqueueExternalSend(c, userPayload.user_id, body);
 })

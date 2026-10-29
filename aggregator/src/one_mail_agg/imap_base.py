@@ -18,6 +18,8 @@ class RawMessage:
     raw_bytes: bytes
     internal_date_ms: int | None
     uidl: str | None = None
+    # Gmail API threadId: X-GM-THRID converted once to unpadded lowercase hex.
+    gmail_thread_id: str | None = None
 
 
 def make_imap_uid(account_id: str, host: str, folder: str, uidvalidity: int, uid: int) -> str:
@@ -36,6 +38,29 @@ def _to_ms(dt) -> int | None:
             return int(parsedate_to_datetime(str(dt)).timestamp() * 1000)
         except Exception:
             return None
+
+
+def gmail_thread_id_from_fetch(value) -> str | None:
+    """Turn an IMAP X-GM-THRID into the hex threadId Gmail API expects.
+
+    X-GM-THRID is a positive decimal integer. users.messages.send wants that
+    same integer as unpadded lowercase hex (format(n, "x")). Convert once here.
+    Later layers only accept ^[0-9a-f]{1,16}$. A missing or non-numeric value
+    is ignored so a non-Gmail server cannot poison provider_thread_id.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        number = value
+    else:
+        text = value.decode("ascii", errors="ignore") if isinstance(value, (bytes, bytearray)) else str(value)
+        text = text.strip()
+        if not text.isdigit():
+            return None
+        number = int(text)
+    if number <= 0 or number.bit_length() > 64:
+        return None
+    return format(number, "x")
 
 
 def _size_value(raw_size) -> int | None:
@@ -120,10 +145,22 @@ def fetch_new_messages(client, account: AccountConfig, folder: str, state: SyncS
     if not picked:
         return []
 
-    data = client.fetch(picked, [b"RFC822", b"INTERNALDATE"])
+    items = [b"RFC822", b"INTERNALDATE"]
+    # Only Gmail answers X-GM-THRID. Asking other servers for it makes the whole
+    # FETCH fail, so the attribute is requested only for imap_gmail.
+    gmail = str(getattr(account, "source", "") or "").strip().lower() == "imap_gmail"
+    if gmail:
+        items.append(b"X-GM-THRID")
+    data = client.fetch(picked, items)
     out = []
     for u in picked:
         body = data.get(u, {})
         raw = body.get(b"RFC822", b"")
-        out.append(RawMessage(uid=u, raw_bytes=raw, internal_date_ms=_to_ms(body.get(b"INTERNALDATE"))))
+        thread_id = gmail_thread_id_from_fetch(body.get(b"X-GM-THRID")) if gmail else None
+        out.append(RawMessage(
+            uid=u,
+            raw_bytes=raw,
+            internal_date_ms=_to_ms(body.get(b"INTERNALDATE")),
+            gmail_thread_id=thread_id,
+        ))
     return out

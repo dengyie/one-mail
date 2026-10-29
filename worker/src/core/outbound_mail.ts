@@ -52,6 +52,43 @@ const MAX_SUBJECT = 998;
 const MAX_BODY = 10 * 1024 * 1024;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** Gmail API threadId: unpadded lowercase hex. Decimal X-GM-THRID is converted once at IMAP ingest. */
+export const GMAIL_THREAD_RE = /^[0-9a-f]{1,16}$/;
+
+export type GmailReplyOwner = { id: string; username: string };
+
+export type GmailReplyOriginal = {
+    account_id: string | null;
+    source: string | null;
+    provider_thread_id: string | null;
+    message_id_header: string | null;
+};
+
+/**
+ * A reply whose original row belongs to a sendable Gmail account is sent as
+ * that account. The requested account_id is ignored. A non-Gmail original
+ * returns null so the caller keeps the explicit account and drops any thread id.
+ */
+export const forceGmailReplyRoute = (
+    original: GmailReplyOriginal | null,
+    owner: GmailReplyOwner | null,
+    payload: OutboundPayload,
+): { accountId: string; payload: OutboundPayload } | null => {
+    if (original?.source !== "imap_gmail" || !original.account_id || !owner?.id || !owner.username) {
+        return null;
+    }
+    const stored = original.provider_thread_id?.trim().toLowerCase() ?? "";
+    const threadId = GMAIL_THREAD_RE.test(stored) ? stored : undefined;
+    const messageId = original.message_id_header?.trim() || payload.in_reply_to;
+    const routed: OutboundPayload = {
+        ...payload,
+        from_addr: owner.username,
+        ...(messageId ? { in_reply_to: messageId } : {}),
+        ...(threadId ? { provider_thread_id: threadId } : {}),
+    };
+    if (!threadId) delete routed.provider_thread_id;
+    return { accountId: owner.id, payload: routed };
+};
 
 export type OutboundPayload = {
     from_addr: string;
@@ -61,6 +98,12 @@ export type OutboundPayload = {
     subject: string;
     content: string;
     is_html: boolean;
+    in_reply_to?: string;
+    references?: string[];
+    /** Original emails.id. The sender uses it to recover a Gmail thread id; it is not a From. */
+    reply_to_email_id?: string;
+    /** Gmail API threadId (unpadded lowercase hex). Never a decimal X-GM-THRID or an RFC Message-ID. */
+    provider_thread_id?: string;
 };
 
 export type OutboundValidation =
@@ -131,6 +174,18 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
         return { ok: false, reason: "is_html must be a boolean" };
     }
 
+    const in_reply_to = boundedString(record.in_reply_to, 998);
+    const references = Array.isArray(record.references)
+        ? record.references.filter((v): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 998)
+        : undefined;
+    const reply_to_email_id = boundedString(record.reply_to_email_id, 128);
+    // Hex only. A long decimal X-GM-THRID is not an API threadId and must be
+    // dropped here rather than converted a second time.
+    const provider_thread_id = boundedString(record.provider_thread_id, 16);
+    const gmailThreadId = provider_thread_id && GMAIL_THREAD_RE.test(provider_thread_id.toLowerCase())
+        ? provider_thread_id.toLowerCase()
+        : undefined;
+
     return {
         ok: true,
         value: {
@@ -141,6 +196,10 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
             subject,
             content,
             is_html: record.is_html,
+            ...(in_reply_to ? { in_reply_to } : {}),
+            ...(references && references.length > 0 ? { references } : {}),
+            ...(reply_to_email_id ? { reply_to_email_id } : {}),
+            ...(gmailThreadId ? { provider_thread_id: gmailThreadId } : {}),
         },
     };
 };
@@ -164,6 +223,10 @@ export const computeOutboundRequestHash = async (input: {
         subject: input.payload.subject,
         content: input.payload.content,
         is_html: input.payload.is_html,
+        in_reply_to: input.payload.in_reply_to ?? "",
+        references: input.payload.references ?? [],
+        reply_to_email_id: input.payload.reply_to_email_id ?? "",
+        provider_thread_id: input.payload.provider_thread_id ?? "",
     });
     const digest = await crypto.subtle.digest(
         "SHA-256",

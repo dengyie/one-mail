@@ -33,12 +33,23 @@ function sanitizeContent(mail) {
 }
 
 /**
+ * RFC 5322 reply subject. An existing Re: (any number of them, any case) is
+ * kept as a single prefix so a reply to a reply does not become "Re: Re:".
+ */
+export function replySubject(subject) {
+  const text = String(subject ?? '').trim();
+  const stripped = text.replace(/^(?:\s*re\s*:\s*)+/i, '').trim();
+  return `Re: ${stripped}`;
+}
+
+/**
  * Build the send-mail model for replying to an email.
  * @param {Object} mail - The mail object (curMail)
- * @param {string} replyLabel - Translated "Reply" label
+ * @param {string} [_replyLabel] - Unused. Kept so existing callers stay valid;
+ *   the subject prefix is always the literal "Re:", not a translated label.
  * @returns {Object} Fields to assign onto sendMailModel
  */
-export function buildReplyModel(mail, replyLabel) {
+export function buildReplyModel(mail, _replyLabel) {
   const emailRegex = /(.+?) <(.+?)>/;
   let toMail = mail.originalSource || '';
   let toName = "";
@@ -48,14 +59,48 @@ export function buildReplyModel(mail, replyLabel) {
     toMail = match[2];
   }
   const safeContent = sanitizeContent(mail);
+  const messageId = typeof mail.messageId === 'string'
+    ? mail.messageId.trim()
+    : (typeof mail.message_id_header === 'string' ? mail.message_id_header.trim() : '');
+  const priorReferences = typeof mail.references === 'string'
+    ? mail.references.split(/\s+/).filter(Boolean)
+    : Array.isArray(mail.references)
+      ? mail.references.filter((value) => typeof value === 'string' && value.trim())
+      : (typeof mail.references_json === 'string'
+        ? (() => {
+            try {
+              const parsed = JSON.parse(mail.references_json);
+              return Array.isArray(parsed)
+                ? parsed.filter((value) => typeof value === 'string' && value.trim())
+                : [];
+            } catch {
+              return [];
+            }
+          })()
+        : []);
+  const references = messageId && !priorReferences.includes(messageId)
+    ? [...priorReferences, messageId]
+    : priorReferences;
+  const threadId = typeof mail.provider_thread_id === 'string' && /^[0-9a-f]{1,16}$/i.test(mail.provider_thread_id.trim())
+    ? mail.provider_thread_id.trim().toLowerCase()
+    : '';
+  const replyToEmailId = typeof mail.id === 'string' ? mail.id.trim() : '';
+  const replyAccountId = mail.source === 'imap_gmail' && typeof mail.account_id === 'string'
+    ? mail.account_id.trim()
+    : '';
   return {
     toName,
     toMail,
-    subject: `${replyLabel}: ${mail.subject}`,
+    subject: replySubject(mail.subject),
     contentType: mail.message ? 'html' : 'rich',
     content: safeContent
       ? `<p><br></p><blockquote>${safeContent}</blockquote><p><br></p>`
       : '',
+    ...(messageId ? { inReplyTo: messageId } : {}),
+    ...(references.length > 0 ? { references } : {}),
+    ...(threadId ? { providerThreadId: threadId } : {}),
+    ...(replyToEmailId ? { replyToEmailId } : {}),
+    ...(replyAccountId ? { replyAccountId } : {}),
   };
 }
 

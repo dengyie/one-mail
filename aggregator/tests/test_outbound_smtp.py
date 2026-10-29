@@ -124,6 +124,22 @@ def test_build_outbound_mime_html_preferred_when_present():
     assert msg.get_content().strip() == "<b>html</b>"
 
 
+def test_build_outbound_mime_includes_threading_headers():
+    payload = _payload(
+        in_reply_to="<parent@example.com>",
+        references=["<root@example.com>", "<parent@example.com>"],
+    )
+    msg = smtp.build_outbound_mime(payload)
+    assert msg["In-Reply-To"] == "<parent@example.com>"
+    assert msg["References"] == "<root@example.com> <parent@example.com>"
+
+
+def test_build_outbound_mime_omits_empty_threading_headers():
+    msg = smtp.build_outbound_mime(_payload(in_reply_to="  ", references=[]))
+    assert msg["In-Reply-To"] is None
+    assert msg["References"] is None
+
+
 def test_send_smtp_message_no_host_is_unsupported(monkeypatch):
     account = _smtp_account("imap_unknown")
     with pytest.raises(smtp.OutboundUnsupported, match="no SMTP host"):

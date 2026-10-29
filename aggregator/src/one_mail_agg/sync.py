@@ -118,7 +118,8 @@ def sync_imap(
                     try:
                         batch.append(normalize_message(
                             m.raw_bytes, account, folder, uidvalidity,
-                            m.uid, m.internal_date_ms))
+                            m.uid, m.internal_date_ms,
+                            provider_thread_id=m.gmail_thread_id))
                     except Exception as e:
                         dropped += 1
                         log.warning("skip imap message uid=%s folder=%s account=%s: %r",

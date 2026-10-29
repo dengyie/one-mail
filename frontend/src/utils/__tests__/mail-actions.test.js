@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { buildReplyModel, buildForwardModel } from '../mail-actions';
+import { buildReplyModel, buildForwardModel, replySubject } from '../mail-actions';
 
 const T = 'https://tracker.example/p.png';
 
@@ -63,6 +63,57 @@ describe('buildReplyModel / buildForwardModel quoting pipeline', () => {
         expect(forward.subject).toContain('Fwd:');
         expect(forward.contentType).toBe('html');
         expect(forward.content).not.toContain(T);
+    });
+
+    it('carries the parent Message-ID and reference chain into the reply', () => {
+        const reply = buildReplyModel({
+            ...firstMail('<p>hi</p>'),
+            messageId: '<parent@example.com>',
+            references: '<root@example.com>',
+        }, 'Re');
+        expect(reply.inReplyTo).toBe('<parent@example.com>');
+        expect(reply.references).toEqual(['<root@example.com>', '<parent@example.com>']);
+    });
+
+    it('prefixes Re: once and does not stack it', () => {
+        expect(replySubject('hello')).toBe('Re: hello');
+        expect(replySubject('Re: hello')).toBe('Re: hello');
+        expect(replySubject('RE: Re: hello')).toBe('Re: hello');
+        expect(buildReplyModel(firstMail('<p>hi</p>'), '回复').subject).toBe('Re: hello');
+    });
+
+    it('carries the Gmail account and thread of the original mail', () => {
+        const reply = buildReplyModel({
+            ...firstMail('<p>hi</p>'),
+            id: 'mail-1',
+            source: 'imap_gmail',
+            account_id: 'acct-gmail',
+            provider_thread_id: '18BB368A913AD11A',
+            message_id_header: '<parent@gmail.com>',
+        }, 'Re');
+        expect(reply.replyAccountId).toBe('acct-gmail');
+        expect(reply.providerThreadId).toBe('18bb368a913ad11a');
+        expect(reply.replyToEmailId).toBe('mail-1');
+        expect(reply.inReplyTo).toBe('<parent@gmail.com>');
+    });
+
+    it('does not attach a Gmail account when the original mail is not Gmail', () => {
+        const reply = buildReplyModel({
+            ...firstMail('<p>hi</p>'),
+            id: 'mail-2',
+            source: 'cf_routing',
+            account_id: 'local',
+            provider_thread_id: 'not-a-gmail-thread',
+        }, 'Re');
+        expect(reply.replyAccountId).toBeUndefined();
+        expect(reply.providerThreadId).toBeUndefined();
+        expect(reply.replyToEmailId).toBe('mail-2');
+    });
+
+    it('omits threading fields when the original mail has no Message-ID', () => {
+        const reply = buildReplyModel(firstMail('<p>hi</p>'), 'Re');
+        expect(reply.inReplyTo).toBeUndefined();
+        expect(reply.references).toBeUndefined();
     });
 
     it('escapes plain-text bodies instead of treating them as HTML', () => {

@@ -36,6 +36,25 @@ export async function processItem(item) {
         item.subject = parsedEmail.subject || '';
         item.message = parsedEmail.body_html || parsedEmail.text || '';
         item.text = parsedEmail.text || '';
+        // wasm drops Message-ID. Keep the stored header when the list/detail
+        // row already has it, so a reply can still set In-Reply-To.
+        if (!item.messageId && typeof item.message_id_header === 'string') {
+            item.messageId = item.message_id_header;
+        }
+        // wasm never exposes Message-ID. When the row also lacks the stored
+        // header, parse with PostalMime only to fill the threading fields and
+        // keep the wasm body and attachments.
+        if (!item.messageId && item.raw) {
+            try {
+                const headersOnly = await PostalMime.parse(item.raw);
+                if (headersOnly.messageId) item.messageId = headersOnly.messageId;
+                if (headersOnly.inReplyTo) item.inReplyTo = headersOnly.inReplyTo;
+                if (headersOnly.references) item.references = headersOnly.references;
+            } catch (headerError) {
+                console.log('Error reading Message-ID with PostalMime');
+                console.error(headerError);
+            }
+        }
         item.attachments = parsedEmail.attachments?.map((a_item) => {
             const blob = new Blob(
                 [a_item.content],
@@ -69,6 +88,9 @@ export async function processItem(item) {
             item.source = `${parsedEmail.from.name} <${parsedEmail.from.address}>`;
         }
         item.subject = parsedEmail.subject || 'No Subject';
+        item.messageId = parsedEmail.messageId || '';
+        item.inReplyTo = parsedEmail.inReplyTo || '';
+        item.references = parsedEmail.references || '';
         item.message = parsedEmail.html || parsedEmail.text || item.raw;
         item.text = parsedEmail.text || '';
         item.attachments = parsedEmail.attachments?.map((a_item) => {
