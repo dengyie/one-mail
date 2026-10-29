@@ -185,6 +185,12 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
     const gmailThreadId = provider_thread_id && GMAIL_THREAD_RE.test(provider_thread_id.toLowerCase())
         ? provider_thread_id.toLowerCase()
         : undefined;
+    if (in_reply_to && /[\r\n]/.test(in_reply_to)) {
+        return { ok: false, reason: "in_reply_to must be a single header value" };
+    }
+    if (references?.some((value) => /[\r\n]/.test(value))) {
+        return { ok: false, reason: "references must be single header values" };
+    }
 
     return {
         ok: true,
