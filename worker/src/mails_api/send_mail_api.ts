@@ -33,7 +33,7 @@ import {
     providerForAccountSource,
     validateOutboundPayload,
 } from '../core/outbound_mail';
-import { recipientIsBlocked } from '../core/send_guard';
+import { recipientIsBlocked, singleHeaderValue, threadingHeaders } from '../core/send_guard';
 
 
 export const api = new Hono<HonoCustomType>()
@@ -103,7 +103,7 @@ const resolveGmailReplyAccount = async (
     if (!account?.username) return null;
     const storedThread = original.provider_thread_id?.trim().toLowerCase() ?? "";
     const threadId = GMAIL_THREAD_RE.test(storedThread) ? storedThread : undefined;
-    const messageId = original.message_id_header?.trim() || undefined;
+    const messageId = singleHeaderValue(original.message_id_header);
     return { id: account.id, username: account.username, threadId, messageId };
 };
 
@@ -117,21 +117,6 @@ const userOwnsAddress = async (
         `SELECT 1 AS ok FROM users_address WHERE user_id = ? AND address_id = ?`,
     ).bind(userId, addressId).first<{ ok: number }>();
     return row?.ok === 1;
-};
-
-const threadingHeaders = (reqJson: Pick<SendMailBody, "in_reply_to" | "references">): Record<string, string> => {
-    const headers: Record<string, string> = {};
-    const inReplyTo = typeof reqJson.in_reply_to === "string" ? reqJson.in_reply_to.trim() : "";
-    if (inReplyTo) {
-        headers["In-Reply-To"] = inReplyTo;
-    }
-    const references = Array.isArray(reqJson.references)
-        ? reqJson.references.map((value) => value.trim()).filter(Boolean)
-        : [];
-    if (references.length > 0) {
-        headers["References"] = references.join(" ");
-    }
-    return headers;
 };
 
 export const sendMailToVerifyAddress = async (
@@ -707,18 +692,18 @@ export const enqueueExternalSend = async (
         return c.text("account_id is required", 400);
     }
     const idempotencyKey = options?.idempotencyKey?.trim() || "";
-    if (idempotencyKey) {
+    const priorJob = async (): Promise<Response | null> => {
+        if (!idempotencyKey) return null;
         if (!options?.requestHash) {
             throw new SendMailIdempotencyConflictError();
         }
         const prior = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
-        if (prior) {
-            if (prior.request_hash !== options.requestHash) {
-                throw new SendMailIdempotencyConflictError();
-            }
-            return c.json({ status: "queued", job_id: prior.job_id });
+        if (!prior) return null;
+        if (prior.request_hash !== options.requestHash) {
+            throw new SendMailIdempotencyConflictError();
         }
-    }
+        return c.json({ status: "queued", job_id: prior.job_id });
+    };
 
     const validation = validateOutboundPayload(body);
     if (!validation.ok) {
@@ -729,6 +714,8 @@ export const enqueueExternalSend = async (
     if (recipientIsBlocked(payload.to_mail, sendBlockList)) {
         return c.text(msgs.AddressBlockedMsg, 400);
     }
+    const replay = await priorJob();
+    if (replay) return replay;
 
     // Ownership + send permission in one indexed lookup. A missing row is a
     // distinct outcome from a present-but-not-authorized row, so the client can
@@ -910,8 +897,8 @@ export const enqueueExternalSend = async (
 // 外部账号发信：以已接入的外部邮箱身份发送邮件。
 // 该路由经 worker.ts 的 /api/* 中间件豁免地址 JWT，改用 x-user-token 鉴权；
 // checkUserPayload 已将有效 token 写入 userPayload。发送不占用域名配额，仅要求
-// 账号 enabled=1 且 can_send=1。请求幂等：同 account_id + 同内容 → 同 request_hash，
-// 由唯一索引 (account_id, request_hash) 去重，二次提交返回已有任务。
+// 账号 enabled=1 且 can_send=1。x-idempotency-key 在黑名单检查之后才重放；
+// 同一把键配不同请求体返回 409。没有这把键时，仍按 (account_id, request_hash) 去重。
 api.post('/api/send_mail/external', async (c) => {
     const msgs = i18n.getMessagesbyContext(c);
     const userPayload = c.get("userPayload");
@@ -919,8 +906,12 @@ api.post('/api/send_mail/external', async (c) => {
         return c.text(msgs.UserTokenExpiredMsg, 401);
     }
     const body = await c.req.json().catch(() => null);
+    const idempotencyKey = c.req.raw.headers.get("x-idempotency-key")?.trim() || "";
     try {
-        return await enqueueExternalSend(c, userPayload.user_id, body);
+        return await enqueueExternalSend(c, userPayload.user_id, body, idempotencyKey ? {
+            idempotencyKey,
+            requestHash: await hashSendMailRequest({ user_id: userPayload.user_id, route: "external", body }),
+        } : undefined);
     } catch (e) {
         const error = e as Error;
         if (error instanceof SendMailIdempotencyConflictError) {
