@@ -1,8 +1,10 @@
 import { Context } from "hono";
 import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
-import { saveSendbox, saveSendboxIfMissing, sendMail } from "../mails_api/send_mail_api";
+import { enqueueExternalSend, loadOriginalMail, saveSendbox, saveSendboxIfMissing, sendMail } from "../mails_api/send_mail_api";
 import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, listUnknownSendMailReservations, countUnknownSendMailReservations, resolveUnknownSendMailReservation, refundResolvedSendMailBalance } from "../mails_api/send_mail_limit_utils";
+import { singleHeaderValue } from "../core/send_guard";
+import { GMAIL_THREAD_RE } from "../core/outbound_mail";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -157,6 +159,92 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
     });
     return c.json({ status: "ok" });
 }
+
+
+type AdminGmailReplyAccount = {
+    id: string;
+    user_id: number;
+    username: string;
+};
+
+/**
+ * POST /admin/send_mail/gmail_reply
+ *
+ * Program callers authenticate with x-admin-auth, so there is no user payload to
+ * scope a reply against. The sending identity is derived from the original mail
+ * row: only an enabled, sendable Gmail account may be used, and any account_id or
+ * from address in the request is ignored. Routing itself stays inside
+ * enqueueExternalSend, which re-checks ownership against the account's user and
+ * forces the Gmail thread on the same terms as the login-user branch.
+ */
+export const sendGmailReplyByAdmin = async (c: Context<HonoCustomType>) => {
+    const msgs = i18n.getMessagesbyContext(c);
+    let reqJson: Record<string, unknown>;
+    try {
+        const body = await c.req.json();
+        reqJson = body !== null && typeof body === "object" && !Array.isArray(body)
+            ? body as Record<string, unknown>
+            : {};
+    } catch (e) {
+        console.error("Admin gmail reply invalid json", e);
+        return c.text(msgs.InvalidInputMsg, 400);
+    }
+    const replyToEmailId = typeof reqJson.reply_to_email_id === "string" ? reqJson.reply_to_email_id.trim() : "";
+    if (!replyToEmailId) {
+        return c.text("reply_to_email_id is required", 400);
+    }
+
+    const original = await loadOriginalMail(c, replyToEmailId);
+    if (!original?.account_id) {
+        return c.text("original mail not found", 400);
+    }
+    if (original.source !== "imap_gmail") {
+        return c.text("original mail is not a Gmail message", 400);
+    }
+
+    const account = await c.env.DB.prepare(
+        `SELECT id, user_id, username FROM user_mail_accounts
+          WHERE id = ? AND source = 'imap_gmail' AND enabled = 1 AND can_send = 1`,
+    ).bind(original.account_id).first<AdminGmailReplyAccount>();
+    if (!account?.username) {
+        return c.text(msgs.ExternalAccountCannotSendMsg, 403);
+    }
+
+    const storedThread = original.provider_thread_id?.trim().toLowerCase() ?? "";
+    const threadId = GMAIL_THREAD_RE.test(storedThread) ? storedThread : undefined;
+    const messageId = singleHeaderValue(original.message_id_header);
+    const references = Array.isArray(reqJson.references)
+        ? reqJson.references.filter((value): value is string => typeof value === "string")
+        : [];
+    const idempotencyKey = c.req.raw.headers.get("x-idempotency-key")?.trim() || "";
+    try {
+        return await enqueueExternalSend(c, account.user_id, {
+            account_id: account.id,
+            from_addr: account.username,
+            from_name: typeof reqJson.from_name === "string" ? reqJson.from_name : "",
+            to_mail: reqJson.to_mail,
+            to_name: typeof reqJson.to_name === "string" ? reqJson.to_name : "",
+            subject: reqJson.subject,
+            content: reqJson.content,
+            // Left as-is when present so a non-boolean is rejected by payload
+            // validation instead of silently becoming plain text.
+            is_html: reqJson.is_html === undefined ? false : reqJson.is_html,
+            reply_to_email_id: replyToEmailId,
+            ...(messageId ? { in_reply_to: messageId } : {}),
+            ...(references.length > 0 ? { references } : {}),
+            ...(threadId ? { provider_thread_id: threadId } : {}),
+        }, idempotencyKey ? {
+            idempotencyKey,
+            requestHash: await hashSendMailRequest({ route: "admin_gmail_reply", user_id: account.user_id, reqJson }),
+        } : undefined);
+    } catch (e) {
+        if (e instanceof SendMailIdempotencyConflictError) {
+            return c.text(e.message, 409);
+        }
+        console.error("Admin gmail reply failed", e);
+        throw e;
+    }
+};
 
 
 export const listUnknownSendMail = async (c: Context<HonoCustomType>) => {

@@ -143,6 +143,17 @@ ALTER TABLE user_mail_accounts ADD COLUMN can_send INTEGER NOT NULL DEFAULT 0;
 
 - **不变动**既有 `/api/send_mail` / `/external/api/send_mail` / `/admin/send_mail` 的契约。
 
+### 5.1a 程序调用方 Gmail 回信改道（admin，`/admin/send_mail/gmail_reply`）
+
+- **目的**：持有 `x-admin-auth` 的受信任程序调用方也能对 Gmail 原信发起回信，复用登录用户的 Gmail API `users.messages.send` 改道，不需要用户登录态。
+- `POST /admin/send_mail/gmail_reply`（`x-admin-auth` 鉴权，走 `/admin/*` 中间件）。
+- 请求体：`{ reply_to_email_id, to_mail, to_name?, subject, content, is_html?, from_name?, references? }`；幂等头 `x-idempotency-key`。
+- **归属强制**：调用方传的 `account_id` / `from` 一律忽略。发信账号由原信行决定——按 `reply_to_email_id` 查 `emails` 得 `account_id`，要求 `source='imap_gmail'`，反查 `user_mail_accounts` 须 `enabled=1 AND can_send=1`（否则 403），From 重写为该账号地址。
+- 线程推导与登录分支一致：`in_reply_to` 取原信 `message_id_header`（经 `singleHeaderValue`），`provider_thread_id` 取原信 threadId（`^[0-9a-f]{1,16}$` 校验），`references` 沿用传入值。
+- 幂等：`x-idempotency-key` + `hashSendMailRequest`（route `admin_gmail_reply`），同一 key 配不同请求体返回 409；其余错误映射沿用 `enqueueExternalSend`（黑名单 400、账号不存在 404、`can_send=0` 403）。
+- 不扣域名配额、不动 `send_balance`；超时/408/429/5xx 保持 unknown 重试，401/403 记 unsupported 不退回 SMTP。
+- **路由内部**：实现复用 `enqueueExternalSend(c, userId, body, {idempotencyKey, requestHash})`，其中 userId 取自反查出的 `user_mail_accounts.user_id`，路由与 From 改写逻辑完全复用现有分支，不新增发信逻辑。
+
 ### 5.2 认领/回写端点（复用语义，新增路径）
 
 - `POST /admin/unified/outbound/claim`（x-admin-auth）：从 `outbound_mail_jobs` 认领 pending job，打 lease（复用 `LEASE_MS=60s`、恢复 crashed worker、幂等键去重）。
