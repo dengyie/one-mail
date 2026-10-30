@@ -70,7 +70,7 @@ type OriginalMailRow = {
 
 const GMAIL_THREAD_RE = /^[0-9a-f]{1,16}$/;
 
-const loadOriginalMail = async (
+export const loadOriginalMail = async (
     c: Context<HonoCustomType>,
     emailId: string | undefined,
 ): Promise<OriginalMailRow | null> => {
