@@ -25,7 +25,7 @@ import {
     type SendMailSource,
 } from '../core/sendbox_source';
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
-import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, lookupSendMailIdempotency, rememberSendMailIdempotency } from './send_mail_limit_utils';
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, lookupSendMailIdempotency, reserveSendMailIdempotency, completeSendMailIdempotency, releaseSendMailIdempotency } from './send_mail_limit_utils';
 import {
     OutboundPayload,
     computeOutboundRequestHash,
@@ -81,6 +81,62 @@ export const loadOriginalMail = async (
     ).bind(emailId).first<OriginalMailRow>();
 };
 
+export type GmailReplyTarget =
+    | {
+        ok: true;
+        id: string;
+        userId: number;
+        username: string;
+        threadId?: string;
+        messageId?: string;
+    }
+    | { ok: false; reason: "not_found" | "not_gmail" | "not_sendable" };
+
+/**
+ * The single resolver for "which account answers this original mail, and with
+ * which thread headers". Both the logged-in reply and the admin reply path use
+ * it, so the Gmail-ownership rule and the header derivation can only be
+ * tightened in one place.
+ *
+ * `userId` scopes the lookup to one user. Omitting it is the admin case: the
+ * caller authenticates as an operator, so the account is taken from the
+ * original row alone and any account id the client sent was already ignored.
+ */
+export const resolveGmailReplyTarget = async (
+    c: Context<HonoCustomType>,
+    replyToEmailId: string | undefined,
+    userId?: number | string,
+): Promise<GmailReplyTarget> => {
+    const original = await loadOriginalMail(c, replyToEmailId);
+    if (!original?.account_id) return { ok: false, reason: "not_found" };
+    if (original.source !== "imap_gmail") return { ok: false, reason: "not_gmail" };
+    const scoped = userId !== undefined && userId !== null && userId !== "";
+    const account = await (scoped
+        ? c.env.DB.prepare(
+            `SELECT id, user_id, username FROM user_mail_accounts
+              WHERE id = ? AND user_id = ? AND source = 'imap_gmail'
+                AND enabled = 1 AND can_send = 1`,
+        ).bind(original.account_id, userId)
+        : c.env.DB.prepare(
+            `SELECT id, user_id, username FROM user_mail_accounts
+              WHERE id = ? AND source = 'imap_gmail'
+                AND enabled = 1 AND can_send = 1`,
+        ).bind(original.account_id)
+    ).first<{ id: string; user_id: number; username: string }>();
+    if (!account?.username) return { ok: false, reason: "not_sendable" };
+    const storedThread = original.provider_thread_id?.trim().toLowerCase() ?? "";
+    const threadId = GMAIL_THREAD_RE.test(storedThread) ? storedThread : undefined;
+    const messageId = singleHeaderValue(original.message_id_header);
+    return {
+        ok: true,
+        id: account.id,
+        userId: account.user_id,
+        username: account.username,
+        threadId,
+        messageId,
+    };
+};
+
 /**
  * A Gmail reply is sent as the bound account only when that account owns the
  * original row, is allowed to send, and the caller is that account's user
@@ -93,18 +149,14 @@ const resolveGmailReplyAccount = async (
     userId: number | string | undefined,
 ): Promise<{ id: string; username: string; threadId?: string; messageId?: string } | null> => {
     if (!replyToEmailId || userId === undefined || userId === null || userId === "") return null;
-    const original = await loadOriginalMail(c, replyToEmailId);
-    if (!original?.account_id || original.source !== "imap_gmail") return null;
-    const account = await c.env.DB.prepare(
-        `SELECT id, username FROM user_mail_accounts
-          WHERE id = ? AND user_id = ? AND source = 'imap_gmail'
-            AND enabled = 1 AND can_send = 1`,
-    ).bind(original.account_id, userId).first<{ id: string; username: string }>();
-    if (!account?.username) return null;
-    const storedThread = original.provider_thread_id?.trim().toLowerCase() ?? "";
-    const threadId = GMAIL_THREAD_RE.test(storedThread) ? storedThread : undefined;
-    const messageId = singleHeaderValue(original.message_id_header);
-    return { id: account.id, username: account.username, threadId, messageId };
+    const target = await resolveGmailReplyTarget(c, replyToEmailId, userId);
+    if (!target.ok) return null;
+    return {
+        id: target.id,
+        username: target.username,
+        threadId: target.threadId,
+        messageId: target.messageId,
+    };
 };
 
 const userOwnsAddress = async (
@@ -692,17 +744,30 @@ export const enqueueExternalSend = async (
         return c.text("account_id is required", 400);
     }
     const idempotencyKey = options?.idempotencyKey?.trim() || "";
+    const requestHash = options?.requestHash;
+    const replayJob = async (jobId: string): Promise<Response> => {
+        const row = await c.env.DB.prepare(
+            `SELECT status FROM outbound_mail_jobs WHERE id = ?`,
+        ).bind(jobId).first<{ status: string }>();
+        return c.json({
+            status: row?.status === "succeeded" ? "already_sent" : "queued",
+            job_id: jobId,
+        });
+    };
     const priorJob = async (): Promise<Response | null> => {
         if (!idempotencyKey) return null;
-        if (!options?.requestHash) {
+        if (!requestHash) {
             throw new SendMailIdempotencyConflictError();
         }
         const prior = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
         if (!prior) return null;
-        if (prior.request_hash !== options.requestHash) {
+        if (prior.request_hash !== requestHash) {
             throw new SendMailIdempotencyConflictError();
         }
-        return c.json({ status: "queued", job_id: prior.job_id });
+        // An empty job_id means another request holds this key and has not
+        // written its job yet; fall through and let the unique index pick one.
+        if (!prior.job_id) return null;
+        return await replayJob(prior.job_id);
     };
 
     const validation = validateOutboundPayload(body);
@@ -798,13 +863,31 @@ export const enqueueExternalSend = async (
         return c.text(`unsupported account source: ${ownerAccount.source}`, 400);
     }
 
-    const requestHash = await computeOutboundRequestHash({ account_id: accountId, payload: routedPayload });
+    // Claim the key before the job row exists, so a second caller with the same
+    // key and a different body is rejected here instead of after its job is
+    // already queued and on its way to the aggregator.
+    let keyOwned = false;
+    if (idempotencyKey && requestHash) {
+        const reservation = await reserveSendMailIdempotency(c.env.DB, idempotencyKey, requestHash);
+        if (reservation.status === "conflict") {
+            throw new SendMailIdempotencyConflictError();
+        }
+        if (reservation.status === "replay") {
+            return await replayJob(reservation.jobId);
+        }
+        keyOwned = reservation.owned;
+    }
+
+    const contentHash = await computeOutboundRequestHash({ account_id: accountId, payload: routedPayload });
     const existing = await c.env.DB.prepare(
         `SELECT id, status FROM outbound_mail_jobs
           WHERE account_id = ? AND request_hash = ?
           ORDER BY rowid DESC LIMIT 1`,
-    ).bind(accountId, requestHash).first<{ id: string; status: string }>();
+    ).bind(accountId, contentHash).first<{ id: string; status: string }>();
     if (existing) {
+        if (idempotencyKey && requestHash) {
+            await completeSendMailIdempotency(c.env.DB, idempotencyKey, existing.id);
+        }
         return c.json({
             status: existing.status === "succeeded" ? "already_sent" : "queued",
             job_id: existing.id,
@@ -830,7 +913,7 @@ export const enqueueExternalSend = async (
             routedPayload.is_html ? null : routedPayload.content,
             routedPayload.is_html ? routedPayload.content : null,
             payloadJson,
-            requestHash,
+            contentHash,
             provider,
             now,
             now,
@@ -841,39 +924,26 @@ export const enqueueExternalSend = async (
         const winner = await c.env.DB.prepare(
             `SELECT id, status FROM outbound_mail_jobs
               WHERE account_id = ? AND request_hash = ? LIMIT 1`,
-        ).bind(accountId, requestHash).first<{ id: string; status: string }>();
+        ).bind(accountId, contentHash).first<{ id: string; status: string }>();
         if (winner) {
-            if (idempotencyKey && options?.requestHash) {
-                try {
-                    await rememberSendMailIdempotency(c.env.DB, idempotencyKey, options.requestHash, winner.id);
-                } catch (rememberError) {
-                    const again = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
-                    if (!again || again.request_hash !== options.requestHash || again.job_id !== winner.id) {
-                        throw rememberError;
-                    }
-                }
+            if (idempotencyKey && requestHash) {
+                await completeSendMailIdempotency(c.env.DB, idempotencyKey, winner.id);
             }
             return c.json({
                 status: winner.status === "succeeded" ? "already_sent" : "queued",
                 job_id: winner.id,
             });
         }
+        // Nothing was queued, so hand the key back rather than pinning this
+        // caller to a 409 on every retry.
+        if (idempotencyKey && requestHash && keyOwned) {
+            await releaseSendMailIdempotency(c.env.DB, idempotencyKey).catch(() => undefined);
+        }
         throw error;
     }
 
-    if (idempotencyKey && options?.requestHash) {
-        try {
-            await rememberSendMailIdempotency(c.env.DB, idempotencyKey, options.requestHash, id);
-        } catch (rememberError) {
-            const again = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
-            if (again && again.request_hash === options.requestHash) {
-                return c.json({ status: "queued", job_id: again.job_id });
-            }
-            if (again) {
-                throw new SendMailIdempotencyConflictError();
-            }
-            throw rememberError;
-        }
+    if (idempotencyKey && requestHash) {
+        await completeSendMailIdempotency(c.env.DB, idempotencyKey, id);
     }
 
     // A pending outbound job is visible in the sendbox under its from-address so

@@ -423,19 +423,75 @@ export const lookupSendMailIdempotency = async (
     ).bind(idempotencyKey).first<{ request_hash: string; job_id: string }>();
 };
 
-export const rememberSendMailIdempotency = async (
+export type SendMailIdempotencyReservation =
+    | { status: "reserved"; owned: boolean }
+    | { status: "replay"; jobId: string }
+    | { status: "conflict" };
+
+/**
+ * Take the key before the job row is written.
+ *
+ * The row is inserted with an empty job_id and filled in once the job exists.
+ * That ordering is what makes a same-key/different-body pair safe: the second
+ * caller trips the primary key here, before it can enqueue anything, so a 409
+ * can never hide a job that is already on its way to the aggregator.
+ *
+ * `owned` is false when the key is already held for the *same* request and that
+ * request has not written its job yet. A caller must not release a key it does
+ * not own; the row stays until its owner completes it. If that owner dies
+ * mid-flight the row is left behind, and a retry with the same key and body
+ * still completes it, so the normal retry path is not blocked.
+ */
+export const reserveSendMailIdempotency = async (
     db: D1Database,
     idempotencyKey: string,
     requestHash: string,
-    jobId: string,
-): Promise<void> => {
+): Promise<SendMailIdempotencyReservation> => {
     for (const sql of GMAIL_REROUTE_IDEMPOTENCY_STATEMENTS) {
         await db.prepare(sql).run();
     }
+    try {
+        await db.prepare(
+            "INSERT INTO gmail_reroute_idempotency (idempotency_key, request_hash, job_id, created_at) " +
+            "VALUES (?, ?, '', ?)",
+        ).bind(idempotencyKey, requestHash, Date.now()).run();
+        return { status: "reserved", owned: true };
+    } catch (error) {
+        const prior = await lookupSendMailIdempotency(db, idempotencyKey);
+        if (!prior) throw error;
+        if (prior.request_hash !== requestHash) return { status: "conflict" };
+        if (prior.job_id) return { status: "replay", jobId: prior.job_id };
+        return { status: "reserved", owned: false };
+    }
+};
+
+/**
+ * Attach the job id to a reservation. Conditional so a replayed call cannot
+ * overwrite an id another request already filled in.
+ */
+export const completeSendMailIdempotency = async (
+    db: D1Database,
+    idempotencyKey: string,
+    jobId: string,
+): Promise<void> => {
     await db.prepare(
-        "INSERT INTO gmail_reroute_idempotency (idempotency_key, request_hash, job_id, created_at) " +
-        "VALUES (?, ?, ?, ?)",
-    ).bind(idempotencyKey, requestHash, jobId, Date.now()).run();
+        "UPDATE gmail_reroute_idempotency SET job_id = ? WHERE idempotency_key = ? " +
+        "AND (job_id IS NULL OR job_id = '')",
+    ).bind(jobId, idempotencyKey).run();
+};
+
+/**
+ * Give an unfulfilled reservation back so a caller that hit a transient error
+ * can retry with the same key instead of being pinned to a 409 forever.
+ */
+export const releaseSendMailIdempotency = async (
+    db: D1Database,
+    idempotencyKey: string,
+): Promise<void> => {
+    await db.prepare(
+        "DELETE FROM gmail_reroute_idempotency WHERE idempotency_key = ? " +
+        "AND (job_id IS NULL OR job_id = '')",
+    ).bind(idempotencyKey).run();
 };
 
 export const hashSendMailRequest = async (value: unknown): Promise<string> => {
