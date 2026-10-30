@@ -8,7 +8,18 @@
  * it without dragging in the other.
  */
 
-const GMAIL_REROUTE_IDEMPOTENCY_SCHEMA =
+/**
+ * The table is what stops the same x-idempotency-key from sending a Gmail reply
+ * twice without touching the domain send quota, so both the send path (which
+ * inserts/reads rows) and the cron pruner (which reclaims abandoned rows) have
+ * to know it exists. It is a leaf module with no imports so either side can load
+ * it without dragging in the other.
+ *
+ * Exported so a test can hold it against `db/2026-10-29-gmail-reroute-idempotency.sql`:
+ * the migration is the authoritative shape, this copy only makes the send path
+ * work on a database where the migration has not been applied yet.
+ */
+export const GMAIL_REROUTE_IDEMPOTENCY_SCHEMA =
     "CREATE TABLE IF NOT EXISTS gmail_reroute_idempotency (" +
         "idempotency_key TEXT PRIMARY KEY, " +
         "request_hash TEXT NOT NULL, " +

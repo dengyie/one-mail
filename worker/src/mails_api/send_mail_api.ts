@@ -32,6 +32,7 @@ import {
     OutboundPayload,
     computeOutboundRequestHash,
     forceGmailReplyRoute,
+    outboundReplay,
     providerForAccountSource,
     validateOutboundPayload,
 } from '../core/outbound_mail';
@@ -720,28 +721,18 @@ api.delete('/api/sendbox/:id', async (c) => {
 
 export type EnqueueExternalSendOptions = { idempotencyKey?: string };
 
-/**
- * The client-visible outcome of a job that already exists. Reporting a terminal
- * failure as "queued" would make the caller wait for a send that will never
- * happen, so every known terminal state is passed through unchanged.
- */
-const replayStatus = (status: string): string => {
-    if (status === "succeeded") return "already_sent";
-    if (status === "failed" || status === "unsupported") return status;
-    return "queued";
-};
-
 const existingJobResponse = (
     c: Context<HonoCustomType>,
     jobId: string,
     status: string | null | undefined,
 ): Response => {
+    const replay = outboundReplay(status);
     // The row is gone: the key can no longer be honoured, and claiming "queued"
     // would point the caller at a job id that will never be processed.
-    if (!status) {
+    if (replay.gone) {
         return c.text("outbound job no longer exists", 410);
     }
-    return c.json({ status: replayStatus(status), job_id: jobId });
+    return c.json({ status: replay.status, job_id: jobId });
 };
 
 export const enqueueExternalSend = async (
@@ -798,15 +789,7 @@ export const enqueueExternalSend = async (
     // thread id that does not belong to it.
     let routedPayload = payload;
     if (payload.reply_to_email_id) {
-        const original = await c.env.DB.prepare(
-            `SELECT account_id, source, provider_thread_id, message_id_header
-               FROM emails WHERE id = ?`,
-        ).bind(payload.reply_to_email_id).first<{
-            account_id: string | null;
-            source: string | null;
-            provider_thread_id: string | null;
-            message_id_header: string | null;
-        }>();
+        const original = await loadOriginalMail(c, payload.reply_to_email_id);
         if (original?.source === "imap_gmail" && original.account_id) {
             const owner = await c.env.DB.prepare(
                 `SELECT id, username FROM user_mail_accounts
