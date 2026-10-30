@@ -129,7 +129,7 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
         // an unbounded delete pass.
         try {
             const pruned = await pruneTerminalJobs(env);
-            if (pruned.mutation > 0 || pruned.outbound > 0) {
+            if (pruned.mutation > 0 || pruned.outbound > 0 || pruned.idempotency > 0) {
                 console.log("one-mail terminal job pruning:", JSON.stringify(pruned));
             }
         } catch (error) {

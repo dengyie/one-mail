@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { ensureGmailRerouteIdempotencyTable } from "../core/gmail_reroute_idempotency.ts";
 import i18n from "../i18n/index.ts";
 import type { SendMailLimitConfig } from "../models/index.ts";
 import { CONSTANTS } from "../constants.ts";
@@ -396,15 +397,6 @@ export class SendMailIdempotencyConflictError extends Error {
     }
 }
 
-const GMAIL_REROUTE_IDEMPOTENCY_STATEMENTS = [
-    "CREATE TABLE IF NOT EXISTS gmail_reroute_idempotency (" +
-        "idempotency_key TEXT PRIMARY KEY, " +
-        "request_hash TEXT NOT NULL, " +
-        "job_id TEXT NOT NULL, " +
-        "created_at INTEGER NOT NULL" +
-    ")",
-];
-
 /**
  * Remember an x-idempotency-key for a Gmail reply that never enters
  * send_mail_limit_reservations. That table's insert trigger increments the
@@ -415,9 +407,7 @@ export const lookupSendMailIdempotency = async (
     db: D1Database,
     idempotencyKey: string,
 ): Promise<{ request_hash: string; job_id: string } | null> => {
-    for (const sql of GMAIL_REROUTE_IDEMPOTENCY_STATEMENTS) {
-        await db.prepare(sql).run();
-    }
+    await ensureGmailRerouteIdempotencyTable(db);
     return await db.prepare(
         "SELECT request_hash, job_id FROM gmail_reroute_idempotency WHERE idempotency_key = ?",
     ).bind(idempotencyKey).first<{ request_hash: string; job_id: string }>();
@@ -447,9 +437,7 @@ export const reserveSendMailIdempotency = async (
     idempotencyKey: string,
     requestHash: string,
 ): Promise<SendMailIdempotencyReservation> => {
-    for (const sql of GMAIL_REROUTE_IDEMPOTENCY_STATEMENTS) {
-        await db.prepare(sql).run();
-    }
+    await ensureGmailRerouteIdempotencyTable(db);
     try {
         await db.prepare(
             "INSERT INTO gmail_reroute_idempotency (idempotency_key, request_hash, job_id, created_at) " +

@@ -151,13 +151,16 @@ ALTER TABLE user_mail_accounts ADD COLUMN can_send INTEGER NOT NULL DEFAULT 0;
 - **归属强制**：调用方传的 `account_id` / `from` 一律忽略。发信账号由原信行决定——按 `reply_to_email_id` 查 `emails` 得 `account_id`，要求 `source='imap_gmail'`，反查 `user_mail_accounts` 须 `enabled=1 AND can_send=1`（否则 403），From 重写为该账号地址。
 - 账号解析与线程推导共用 `resolveGmailReplyTarget`（`mails_api/send_mail_api.ts`），与登录分支同一份实现，避免两处规则漂移。
 - 线程推导与登录分支一致：`in_reply_to` 取原信 `message_id_header`（经 `singleHeaderValue`，含 CR/LF 整条丢弃），`provider_thread_id` 取原信 threadId（`^[0-9a-f]{1,16}$` 校验），`references` 逐项过同一道 CR/LF 闸。
-- **幂等**：`x-idempotency-key` + `hashSendMailRequest`，哈希只覆盖**服务端实际采纳的归一化字段**（`route="admin_gmail_reply"` + `account_id` + 归一化 payload）。因此重试时额外带上被忽略的 `account_id` / `from` 不会变成 409；真正不同的正文才冲突。
+- **幂等**：`x-idempotency-key` 的哈希由**服务端在改道之后**用 `computeOutboundRequestHash({account_id, payload})` 从归一化 payload 推导，与 job 的 `request_hash` 是同一个值（唯一索引 `(account_id, request_hash)` 与占位表共用）。调用方不再自算哈希，所以重试时额外带上被忽略的 `account_id` / `from` 不会变成 409；改道结果（From、`in_reply_to`、thread id）与服务端实际发送的内容同源，也不会产生虚假冲突。
 - **幂等时序**：键在写入 `outbound_mail_jobs` **之前**先占位（`gmail_reroute_idempotency` 行，`job_id` 初始为空），冲突在同一步判定，所以「同键不同体」拿到 409 时不会有 job 已经排队；job 写入成功后回填 `job_id`，写入失败则释放占位供重试。
-- **状态码**：原信不存在 404、原信非 Gmail 400、账号不可发 403、`reply_to_email_id` 缺失或超 128 字节 400、`is_html` 非布尔 400（不静默降级为纯文本）、收件人命中黑名单 400、同键不同体 409。
+- **重放状态**：同键重放返回 `200` 与 job 的真实状态——`succeeded` → `already_sent`，`failed` → `failed`，`unsupported` → `unsupported`，其余 → `queued`。job 过了保留期已被清理时返回 `410`（键已无法证明），调用方需换新键。
+- **状态码**：原信不存在 404、原信非 Gmail 400、账号不可发 403、`reply_to_email_id` 缺失或超 128 字节 400、`is_html` 非布尔 400（不静默降级为纯文本）、`subject` 含 CR/LF 400、收件人命中黑名单 400、同键不同体 409、job 已被清理 410。
+- **展示名**：`from_name` / `to_name` 含 CR/LF 时整条丢弃（地址保留）——展示名是装饰性字段，不该因为它拒掉整封邮件。
 - 不扣域名配额、不动 `send_balance`；超时/408/429/5xx 保持 unknown 重试，401/403 记 unsupported 不退回 SMTP。
 - **审计**：入队成功时 Worker 打一条 `admin gmail reply queued` 结构化日志（`job_id` / `account_id` / `reply_to_email_id`）。admin 通道没有用户身份，这是该路径能记录的唯二溯源信息。
 - **前置条件**：原信必须能被 Worker 直连的库读到。分片模式（`SHARD_MODE`）下属于分片账号的邮件不在主库，此端点会返回 404；生产当前为 legacy-static，不受影响。
-- **路由内部**：实现复用 `enqueueExternalSend(c, userId, body, {idempotencyKey, requestHash})`，其中 userId 取自反查出的 `user_mail_accounts.user_id`，路由与 From 改写逻辑完全复用现有分支，不新增发信逻辑。
+- **路由内部**：admin 处理器只组装服务端采纳的字段（`account_id` / `from_addr` / 线程头全部由原信推导），校验、改道、哈希、占位、入队都在 `enqueueExternalSend(c, userId, body, {idempotencyKey})` 内完成；userId 取自反查出的 `user_mail_accounts.user_id`，不新增发信逻辑。
+- **保留**：`gmail_reroute_idempotency` 中已回填 `job_id` 的行永久保留（它是「同一把键不会发两封」的唯一凭据）；`job_id` 仍为空的行是进程在写 job 前死亡留下的占位，cron 在 30 天后回收。
 
 ### 5.2 认领/回写端点（复用语义，新增路径）
 
@@ -175,8 +178,8 @@ ALTER TABLE user_mail_accounts ADD COLUMN can_send INTEGER NOT NULL DEFAULT 0;
 
 ### 6.1 幂等键
 
-- `request_hash = SHA-256(canonical JSON{account_id, from_addr, to_addr/from_name/to_name, subject, content, is_html, in_reply_to, references, reply_to_email_id, provider_thread_id})`，与 `hashSendMailRequest` / `computeOutboundRequestHash` 同一思路（`send_mail_limit_utils.ts`、`core/outbound_mail.ts`）。
-- 前端发信请求带 `x-idempotency-key`；无 key 时按请求内容哈希。相同 `request_hash` 二次提交 → 直接返回已有 job 的 `provider_message_id`（replay），不再触发第二次发送。
+- `request_hash = SHA-256(canonical JSON{account_id, from_addr, from_name, to_mail, to_name, subject, content, is_html, in_reply_to, references, reply_to_email_id, provider_thread_id})`，唯一实现是 `computeOutboundRequestHash`（`core/outbound_mail.ts`），输入固定为**改道后的** payload；`x-idempotency-key` 的占位表复用同一个值，不存在第二套哈希。
+- 前端发信请求带 `x-idempotency-key`；无 key 时按请求内容哈希。相同 `request_hash` 二次提交 → 直接返回已有 job 的 `job_id` 与真实状态（`already_sent` / `failed` / `unsupported` / `queued`），不再触发第二次发送。job 过保留期被清理后，同一把键返回 `410`。
 
 ### 6.2 超时对账
 

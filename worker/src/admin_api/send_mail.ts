@@ -3,7 +3,7 @@ import { isSendMailBindingEnabled } from "../common";
 import i18n from "../i18n";
 import { enqueueExternalSend, resolveGmailReplyTarget, saveSendbox, saveSendboxIfMissing, sendMail } from "../mails_api/send_mail_api";
 import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, listUnknownSendMailReservations, countUnknownSendMailReservations, resolveUnknownSendMailReservation, refundResolvedSendMailBalance } from "../mails_api/send_mail_limit_utils";
-import { validateOutboundPayload } from "../core/outbound_mail";
+import { MAX_REPLY_TO_EMAIL_ID } from "../core/outbound_mail";
 import { getMailDomain } from "../utils";
 
 const getAdminSendMailErrorMessage = (
@@ -160,10 +160,6 @@ export const sendMailByBindingAdmin = async (c: Context<HonoCustomType>) => {
 }
 
 
-/** emails.id is a generated uuid; the same 128-octet ceiling the outbound
- * payload validator applies to reply_to_email_id. */
-const MAX_REPLY_TO_EMAIL_ID = 128;
-
 /**
  * POST /admin/send_mail/gmail_reply
  *
@@ -202,43 +198,33 @@ export const sendGmailReplyByAdmin = async (c: Context<HonoCustomType>) => {
         return c.text(msgs.ExternalAccountCannotSendMsg, 403);
     }
 
-    const references = Array.isArray(reqJson.references)
-        ? reqJson.references.filter((value): value is string => typeof value === "string")
-        : [];
-    const idempotencyKey = c.req.raw.headers.get("x-idempotency-key")?.trim() || "";
-    // Validate once here so the idempotency hash covers the fields the server
-    // actually honours. Hashing the raw body would let an ignored account_id or
-    // from turn a faithful retry into a 409.
-    const validation = validateOutboundPayload({
+    // Build the payload from the client fields the server honours only. The
+    // account and the thread headers come from the original row, so a caller
+    // still cannot choose them, and enqueueExternalSend validates this shape
+    // (rejecting a non-boolean is_html etc.) at its single validation site.
+    const outbound = {
         account_id: target.id,
         from_addr: target.username,
-        from_name: typeof reqJson.from_name === "string" ? reqJson.from_name : "",
+        from_name: reqJson.from_name,
         to_mail: reqJson.to_mail,
-        to_name: typeof reqJson.to_name === "string" ? reqJson.to_name : "",
+        to_name: reqJson.to_name,
         subject: reqJson.subject,
         content: reqJson.content,
-        // Left as-is when present so a non-boolean is rejected here instead of
-        // silently becoming plain text.
         is_html: reqJson.is_html === undefined ? false : reqJson.is_html,
         reply_to_email_id: replyToEmailId,
+        references: reqJson.references,
         ...(target.messageId ? { in_reply_to: target.messageId } : {}),
-        ...(references.length > 0 ? { references } : {}),
         ...(target.threadId ? { provider_thread_id: target.threadId } : {}),
-    });
-    if (!validation.ok) {
-        return c.text(validation.reason, 400);
-    }
-    const outbound = { ...validation.value, account_id: target.id };
+    };
+    const idempotencyKey = c.req.raw.headers.get("x-idempotency-key")?.trim() || "";
 
     try {
-        const response = await enqueueExternalSend(c, target.userId, outbound, idempotencyKey ? {
-            idempotencyKey,
-            requestHash: await hashSendMailRequest({
-                route: "admin_gmail_reply",
-                account_id: target.id,
-                payload: validation.value,
-            }),
-        } : undefined);
+        const response = await enqueueExternalSend(
+            c,
+            target.userId,
+            outbound,
+            idempotencyKey ? { idempotencyKey } : undefined,
+        );
         if (response.ok) {
             // The admin channel carries no user identity, so the account and the
             // original mail are the only provenance this path can record.

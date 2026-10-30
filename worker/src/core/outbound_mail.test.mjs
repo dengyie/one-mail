@@ -202,6 +202,39 @@ test("validateOutboundPayload drops a threading header that contains a line brea
   }
 });
 
+test("validateOutboundPayload rejects a subject that contains a line break", () => {
+  // The senders build the Subject header with libraries that raise on CR/LF
+  // (Python's EmailMessage does), so accepting it here would only turn a bad
+  // request into a job that fails after the aggregator picks it up.
+  for (const subject of ["Hi\r\nBcc: victim@example.com", "Hi\nBcc: victim@example.com"]) {
+    const result = validateOutboundPayload({ ...validPayload, subject });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /single line/);
+    }
+  }
+});
+
+test("validateOutboundPayload drops display names that carry a line break but keeps the address", () => {
+  const result = validateOutboundPayload({
+    ...validPayload,
+    from_name: "Me\r\nBcc: victim@example.com",
+    to_name: "Someone\nX-Evil: yes",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.value.from_name, undefined);
+    assert.equal(result.value.to_name, undefined);
+    assert.equal(result.value.from_addr, "me@qq.com");
+    assert.equal(result.value.to_mail, "someone@example.com");
+    assert.equal(JSON.stringify(result.value).includes("victim@example.com"), false);
+  }
+  // A name that is merely long is still allowed up to the ceiling and then dropped.
+  const kept = validateOutboundPayload({ ...validPayload, from_name: "  Me  " });
+  assert.equal(kept.ok, true);
+  if (kept.ok) assert.equal(kept.value.from_name, "Me");
+});
+
 test("a Gmail original is routed as its owning account even when another account was requested", () => {
   const routed = forceGmailReplyRoute(
     {

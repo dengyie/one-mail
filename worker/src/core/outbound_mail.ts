@@ -52,6 +52,8 @@ const MAX_SUBJECT = 998;
 const MAX_BODY = 10 * 1024 * 1024;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** emails.id is a generated uuid; 128 octets is its practical ceiling. */
+export const MAX_REPLY_TO_EMAIL_ID = 128;
 /** Gmail API threadId: unpadded lowercase hex. Decimal X-GM-THRID is converted once at IMAP ingest. */
 export const GMAIL_THREAD_RE = /^[0-9a-f]{1,16}$/;
 
@@ -171,6 +173,13 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
     if (!subject) {
         return { ok: false, reason: "subject is required" };
     }
+    // A CR/LF in a header value starts another header. The senders build headers
+    // with libraries that reject it (Python's EmailMessage raises ValueError), so
+    // accepting it here would only turn a bad request into a job that fails
+    // asynchronously. Reject it at the edge instead.
+    if (/[\r\n]/.test(subject)) {
+        return { ok: false, reason: "subject must be a single line" };
+    }
 
     const content = typeof record.content === "string" ? record.content : "";
     if (!content || content.length > MAX_BODY) {
@@ -188,7 +197,7 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
             .map((value) => singleLineHeader(value))
             .filter((value): value is string => Boolean(value))
         : undefined;
-    const reply_to_email_id = boundedString(record.reply_to_email_id, 128);
+    const reply_to_email_id = boundedString(record.reply_to_email_id, MAX_REPLY_TO_EMAIL_ID);
     // Hex only. A long decimal X-GM-THRID is not an API threadId and must be
     // dropped here rather than converted a second time.
     const provider_thread_id = boundedString(record.provider_thread_id, 16);
@@ -199,9 +208,11 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
         ok: true,
         value: {
             from_addr,
-            from_name: optionalName(record.from_name),
+            // Display names are cosmetic: drop one that could break out of its
+            // header instead of rejecting the whole send over it.
+            from_name: singleLineHeader(optionalName(record.from_name)),
             to_mail,
-            to_name: optionalName(record.to_name),
+            to_name: singleLineHeader(optionalName(record.to_name)),
             subject,
             content,
             is_html: record.is_html,
