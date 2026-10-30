@@ -25,8 +25,10 @@ import {
     type SendMailSource,
 } from '../core/sendbox_source';
 import { getSendBalanceState, requestSendMailAccess, reserveSendBalance, refundSendBalance } from './send_balance';
-import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, lookupSendMailIdempotency, reserveSendMailIdempotency, completeSendMailIdempotency, releaseSendMailIdempotency } from './send_mail_limit_utils';
+import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailRequest, SendMailDeliveryUnknownError, SendMailIdempotencyConflictError, reserveSendMailIdempotency, completeSendMailIdempotency, releaseSendMailIdempotency } from './send_mail_limit_utils';
 import {
+    GMAIL_THREAD_RE,
+    GmailReplyOriginal,
     OutboundPayload,
     computeOutboundRequestHash,
     forceGmailReplyRoute,
@@ -61,24 +63,15 @@ type SendMailBody = {
     reply_to_email_id?: string,
 };
 
-type OriginalMailRow = {
-    account_id: string | null;
-    source: string | null;
-    provider_thread_id: string | null;
-    message_id_header: string | null;
-};
-
-const GMAIL_THREAD_RE = /^[0-9a-f]{1,16}$/;
-
-export const loadOriginalMail = async (
+const loadOriginalMail = async (
     c: Context<HonoCustomType>,
     emailId: string | undefined,
-): Promise<OriginalMailRow | null> => {
+): Promise<GmailReplyOriginal | null> => {
     if (!emailId) return null;
     return await c.env.DB.prepare(
         `SELECT account_id, source, provider_thread_id, message_id_header
            FROM emails WHERE id = ?`,
-    ).bind(emailId).first<OriginalMailRow>();
+    ).bind(emailId).first<GmailReplyOriginal>();
 };
 
 export type GmailReplyTarget =
@@ -580,13 +573,7 @@ api.post('/api/send_mail', async (c) => {
                         ...(gmail.messageId ? { in_reply_to: gmail.messageId } : {}),
                         ...(references.length > 0 ? { references } : {}),
                         ...(gmail.threadId ? { provider_thread_id: gmail.threadId } : {}),
-                    }, {
-                        idempotencyKey,
-                        // Same key namespace as domain send, but this path never reserves balance.
-                        requestHash: idempotencyKey
-                            ? await hashSendMailRequest({ address, route: "gmail_reply", reqJson })
-                            : undefined,
-                    });
+                    }, idempotencyKey ? { idempotencyKey } : undefined);
                 } catch (e) {
                     const error = e as Error;
                     if (error instanceof SendMailIdempotencyConflictError) {
@@ -731,11 +718,37 @@ api.delete('/api/sendbox/:id', async (c) => {
     })
 })
 
+export type EnqueueExternalSendOptions = { idempotencyKey?: string };
+
+/**
+ * The client-visible outcome of a job that already exists. Reporting a terminal
+ * failure as "queued" would make the caller wait for a send that will never
+ * happen, so every known terminal state is passed through unchanged.
+ */
+const replayStatus = (status: string): string => {
+    if (status === "succeeded") return "already_sent";
+    if (status === "failed" || status === "unsupported") return status;
+    return "queued";
+};
+
+const existingJobResponse = (
+    c: Context<HonoCustomType>,
+    jobId: string,
+    status: string | null | undefined,
+): Response => {
+    // The row is gone: the key can no longer be honoured, and claiming "queued"
+    // would point the caller at a job id that will never be processed.
+    if (!status) {
+        return c.text("outbound job no longer exists", 410);
+    }
+    return c.json({ status: replayStatus(status), job_id: jobId });
+};
+
 export const enqueueExternalSend = async (
     c: Context<HonoCustomType>,
     userId: number | string,
     body: unknown,
-    options?: { idempotencyKey?: string; requestHash?: string },
+    options?: EnqueueExternalSendOptions,
 ): Promise<Response> => {
     const msgs = i18n.getMessagesbyContext(c);
     const record = body !== null && typeof body === "object" ? body as Record<string, unknown> : null;
@@ -744,31 +757,6 @@ export const enqueueExternalSend = async (
         return c.text("account_id is required", 400);
     }
     const idempotencyKey = options?.idempotencyKey?.trim() || "";
-    const requestHash = options?.requestHash;
-    const replayJob = async (jobId: string): Promise<Response> => {
-        const row = await c.env.DB.prepare(
-            `SELECT status FROM outbound_mail_jobs WHERE id = ?`,
-        ).bind(jobId).first<{ status: string }>();
-        return c.json({
-            status: row?.status === "succeeded" ? "already_sent" : "queued",
-            job_id: jobId,
-        });
-    };
-    const priorJob = async (): Promise<Response | null> => {
-        if (!idempotencyKey) return null;
-        if (!requestHash) {
-            throw new SendMailIdempotencyConflictError();
-        }
-        const prior = await lookupSendMailIdempotency(c.env.DB, idempotencyKey);
-        if (!prior) return null;
-        if (prior.request_hash !== requestHash) {
-            throw new SendMailIdempotencyConflictError();
-        }
-        // An empty job_id means another request holds this key and has not
-        // written its job yet; fall through and let the unique index pick one.
-        if (!prior.job_id) return null;
-        return await replayJob(prior.job_id);
-    };
 
     const validation = validateOutboundPayload(body);
     if (!validation.ok) {
@@ -779,8 +767,6 @@ export const enqueueExternalSend = async (
     if (recipientIsBlocked(payload.to_mail, sendBlockList)) {
         return c.text(msgs.AddressBlockedMsg, 400);
     }
-    const replay = await priorJob();
-    if (replay) return replay;
 
     // Ownership + send permission in one indexed lookup. A missing row is a
     // distinct outcome from a present-but-not-authorized row, so the client can
@@ -863,35 +849,41 @@ export const enqueueExternalSend = async (
         return c.text(`unsupported account source: ${ownerAccount.source}`, 400);
     }
 
+    // One hash for the request the server actually sends. It is derived after
+    // the reroute because a Gmail reply's From and thread headers come from the
+    // original row, not from the body, and it is the only hash in play: it keys
+    // both the unique job index and the x-idempotency-key reservation, so a
+    // faithful retry can never conflict over a field the server ignored.
+    const requestHash = await computeOutboundRequestHash({ account_id: accountId, payload: routedPayload });
+
     // Claim the key before the job row exists, so a second caller with the same
     // key and a different body is rejected here instead of after its job is
     // already queued and on its way to the aggregator.
     let keyOwned = false;
-    if (idempotencyKey && requestHash) {
+    if (idempotencyKey) {
         const reservation = await reserveSendMailIdempotency(c.env.DB, idempotencyKey, requestHash);
         if (reservation.status === "conflict") {
             throw new SendMailIdempotencyConflictError();
         }
         if (reservation.status === "replay") {
-            return await replayJob(reservation.jobId);
+            const row = await c.env.DB.prepare(
+                `SELECT status FROM outbound_mail_jobs WHERE id = ?`,
+            ).bind(reservation.jobId).first<{ status: string }>();
+            return existingJobResponse(c, reservation.jobId, row?.status);
         }
         keyOwned = reservation.owned;
     }
 
-    const contentHash = await computeOutboundRequestHash({ account_id: accountId, payload: routedPayload });
     const existing = await c.env.DB.prepare(
         `SELECT id, status FROM outbound_mail_jobs
           WHERE account_id = ? AND request_hash = ?
           ORDER BY rowid DESC LIMIT 1`,
-    ).bind(accountId, contentHash).first<{ id: string; status: string }>();
+    ).bind(accountId, requestHash).first<{ id: string; status: string }>();
     if (existing) {
-        if (idempotencyKey && requestHash) {
+        if (idempotencyKey) {
             await completeSendMailIdempotency(c.env.DB, idempotencyKey, existing.id);
         }
-        return c.json({
-            status: existing.status === "succeeded" ? "already_sent" : "queued",
-            job_id: existing.id,
-        });
+        return existingJobResponse(c, existing.id, existing.status);
     }
 
     const now = Date.now();
@@ -913,7 +905,7 @@ export const enqueueExternalSend = async (
             routedPayload.is_html ? null : routedPayload.content,
             routedPayload.is_html ? routedPayload.content : null,
             payloadJson,
-            contentHash,
+            requestHash,
             provider,
             now,
             now,
@@ -924,25 +916,22 @@ export const enqueueExternalSend = async (
         const winner = await c.env.DB.prepare(
             `SELECT id, status FROM outbound_mail_jobs
               WHERE account_id = ? AND request_hash = ? LIMIT 1`,
-        ).bind(accountId, contentHash).first<{ id: string; status: string }>();
+        ).bind(accountId, requestHash).first<{ id: string; status: string }>();
         if (winner) {
-            if (idempotencyKey && requestHash) {
+            if (idempotencyKey) {
                 await completeSendMailIdempotency(c.env.DB, idempotencyKey, winner.id);
             }
-            return c.json({
-                status: winner.status === "succeeded" ? "already_sent" : "queued",
-                job_id: winner.id,
-            });
+            return existingJobResponse(c, winner.id, winner.status);
         }
         // Nothing was queued, so hand the key back rather than pinning this
         // caller to a 409 on every retry.
-        if (idempotencyKey && requestHash && keyOwned) {
+        if (idempotencyKey && keyOwned) {
             await releaseSendMailIdempotency(c.env.DB, idempotencyKey).catch(() => undefined);
         }
         throw error;
     }
 
-    if (idempotencyKey && requestHash) {
+    if (idempotencyKey) {
         await completeSendMailIdempotency(c.env.DB, idempotencyKey, id);
     }
 
@@ -978,10 +967,7 @@ api.post('/api/send_mail/external', async (c) => {
     const body = await c.req.json().catch(() => null);
     const idempotencyKey = c.req.raw.headers.get("x-idempotency-key")?.trim() || "";
     try {
-        return await enqueueExternalSend(c, userPayload.user_id, body, idempotencyKey ? {
-            idempotencyKey,
-            requestHash: await hashSendMailRequest({ user_id: userPayload.user_id, route: "external", body }),
-        } : undefined);
+        return await enqueueExternalSend(c, userPayload.user_id, body, idempotencyKey ? { idempotencyKey } : undefined);
     } catch (e) {
         const error = e as Error;
         if (error instanceof SendMailIdempotencyConflictError) {

@@ -210,6 +210,25 @@ test('admin gmail reply routes as the original mail account and validates inputs
   expect(ignoredFieldsReplay.ok()).toBe(true);
   expect((await ignoredFieldsReplay.json() as { job_id: string }).job_id).toBe(queued.job_id);
 
+  // A replay reports the job's real outcome. A job that already failed must not
+  // come back as "queued", or the caller waits for a send that will never run.
+  // Claim once more so an expired lease is reissued under the same token.
+  await claimJobs(request);
+  const failedReport = await request.post(
+    WORKER_URL + `/admin/unified/outbound/${encodeURIComponent(queued.job_id)}/result`,
+    {
+      headers: ADMIN_HEADERS,
+      data: { lease_token: 'admin-gmail-reply-e2e', status: 'failed', error: 'e2e simulated failure' },
+    },
+  );
+  expect(failedReport.ok()).toBe(true);
+  const failedReplay = await request.post(WORKER_URL + '/admin/send_mail/gmail_reply', {
+    headers: { ...ADMIN_HEADERS, 'x-idempotency-key': idempotencyKey },
+    data: body,
+  });
+  expect(failedReplay.ok()).toBe(true);
+  expect(await failedReplay.json()).toMatchObject({ status: 'failed', job_id: queued.job_id });
+
   // Threading headers are sanitised on this path too: a value carrying CR/LF is
   // dropped rather than forwarded as a second header.
   const headerStamp = `${stamp}-headers`;
@@ -250,6 +269,14 @@ test('admin gmail reply routes as the original mail account and validates inputs
     data: replyBody(gmailEmailId, `Re: ${originalSubject} html`, { is_html: 'true' }),
   });
   expect(badHtml.status()).toBe(400);
+
+  // A CR/LF in the subject would start another header downstream. The senders
+  // reject it, so it is rejected here instead of becoming an async failure.
+  const badSubject = await request.post(WORKER_URL + '/admin/send_mail/gmail_reply', {
+    headers: ADMIN_HEADERS,
+    data: replyBody(gmailEmailId, 'Re: injected\r\nBcc: attacker@example.test'),
+  });
+  expect(badSubject.status()).toBe(400);
 
   // A non-Gmail original is not rerouted.
   const qqAddress = `admin-qq-${stamp}@qq.com`;

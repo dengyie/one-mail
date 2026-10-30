@@ -4,13 +4,19 @@ import { pruneTerminalJobs } from "./job_pruning.ts";
 
 function fakeDb({ changes = 0 } = {}) {
     const calls = [];
+    const ddl = [];
     return {
         calls,
+        ddl,
         prepare(sql) {
             return {
                 bind(...params) {
                     calls.push({ sql, params });
                     return { run: async () => ({ meta: { changes } }) };
+                },
+                async run() {
+                    ddl.push(sql);
+                    return { meta: { changes: 0 } };
                 },
             };
         },
@@ -20,18 +26,21 @@ function fakeDb({ changes = 0 } = {}) {
 const day = 24 * 60 * 60 * 1000;
 const now = Date.parse('2026-10-08T12:00:00Z');
 
-test("prunes both job tables with a cutoff derived from the retention window", async t => {
+test("prunes every job table with a cutoff derived from the retention window", async t => {
     t.mock.method(Date, 'now', () => now);
     const db = fakeDb({ changes: 7 });
     const result = await pruneTerminalJobs({ DB: db }, 30, 500);
-    assert.deepEqual(result, { mutation: 7, outbound: 7 });
+    assert.deepEqual(result, { mutation: 7, outbound: 7, idempotency: 7 });
 
-    assert.equal(db.calls.length, 2);
-    for (const call of db.calls) {
+    assert.equal(db.calls.length, 3);
+    const [mutation, outbound, idempotency] = db.calls;
+    for (const call of [mutation, outbound]) {
         assert.match(call.sql, /COALESCE\(completed_at, updated_at\) < \?/);
+    }
+    assert.match(idempotency.sql, /FROM gmail_reroute_idempotency/);
+    for (const call of db.calls) {
         assert.equal(call.params[1], 500, "batch limit must be passed as a bound parameter");
-        const cutoff = call.params[0];
-        assert.equal(cutoff, now - 30 * day);
+        assert.equal(call.params[0], now - 30 * day);
     }
 });
 
@@ -44,6 +53,25 @@ test("never deletes a live job: pending and processing are excluded", async () =
     for (const forbidden of ["'pending'", "'processing'"]) {
         assert.ok(!statuses.includes(forbidden), `${forbidden} must not be prunable`);
     }
+});
+
+test("only ids whose job is still missing are reclaimed; a filled id is kept forever", async () => {
+    const db = fakeDb();
+    await pruneTerminalJobs({ DB: db });
+    const idempotency = db.calls.find(call => /FROM gmail_reroute_idempotency/.test(call.sql));
+    assert.ok(idempotency, "the idempotency table must be pruned");
+    assert.match(idempotency.sql, /\(job_id IS NULL OR job_id = ''\)/);
+    assert.ok(
+        !/job_id (?:IS NOT NULL|!= '')/.test(idempotency.sql),
+        "a reservation that owns a job is what prevents a duplicate send and must survive",
+    );
+});
+
+test("the idempotency schema is ensured before it is pruned", async () => {
+    const db = fakeDb();
+    await pruneTerminalJobs({ DB: db });
+    assert.equal(db.ddl.length, 1);
+    assert.match(db.ddl[0], /CREATE TABLE IF NOT EXISTS gmail_reroute_idempotency/);
 });
 
 test("deletes are bounded by a rowid subquery so one cron tick cannot sweep the table", async () => {
