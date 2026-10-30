@@ -8,7 +8,9 @@ import {
   isOutboundProvider,
   isOutboundStatus,
   forceGmailReplyRoute,
+  outboundReplay,
   providerForAccountSource,
+  replayStatus,
   validateOutboundPayload,
 } from "./outbound_mail.ts";
 
@@ -31,13 +33,14 @@ test("provider and status constants are exhaustive", () => {
     "graph_outlook",
     "imap_custom",
   ]);
+  // "superseded" belongs to mail_mutation_jobs, not to the outbound queue, so it
+  // is deliberately absent here: an outbound job never leaves a superseded row.
   assert.deepEqual(OUTBOUND_STATUSES, [
     "pending",
     "processing",
     "succeeded",
     "failed",
     "unsupported",
-    "superseded",
   ]);
 });
 
@@ -50,6 +53,25 @@ test("guards accept known values and reject unknown ones", () => {
   assert.ok(isOutboundStatus("succeeded"));
   assert.equal(isOutboundStatus("queued"), false);
   assert.equal(isOutboundStatus(null), false);
+});
+
+test("replayStatus passes terminal outcomes through and treats in-flight work as queued", () => {
+  assert.equal(replayStatus("succeeded"), "already_sent");
+  assert.equal(replayStatus("failed"), "failed");
+  assert.equal(replayStatus("unsupported"), "unsupported");
+  assert.equal(replayStatus("pending"), "queued");
+  assert.equal(replayStatus("processing"), "queued");
+});
+
+test("outboundReplay reports a pruned job as gone instead of a status", () => {
+  assert.deepEqual(outboundReplay("succeeded"), { gone: false, status: "already_sent" });
+  assert.deepEqual(outboundReplay("failed"), { gone: false, status: "failed" });
+  assert.deepEqual(outboundReplay("pending"), { gone: false, status: "queued" });
+  // A missing row, an empty status and null/undefined all mean the same thing:
+  // the key can no longer be honoured because retention deleted the job.
+  assert.deepEqual(outboundReplay(undefined), { gone: true });
+  assert.deepEqual(outboundReplay(null), { gone: true });
+  assert.deepEqual(outboundReplay(""), { gone: true });
 });
 
 test("validateOutboundPayload accepts a well-formed request", () => {

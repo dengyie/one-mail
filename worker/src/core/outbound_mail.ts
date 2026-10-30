@@ -2,7 +2,7 @@
  * External-account outbound mail domain: payload validation, idempotency hash,
  * and the outbound job status machine.
  *
- * node --test loads this module directly, so it has zero imports.
+ * node --test loads this module directly, so its imports stay dependency-free.
  *
  * An outbound job is a request to send a message *as* an external account the
  * user already connected (QQ / 163 / Gmail / Outlook / custom IMAP). Sending is
@@ -10,6 +10,8 @@
  * so the idempotency key is the plain SHA-256 of the canonical request shape
  * and the unique (account_id, request_hash) index deduplicates re-submissions.
  */
+
+import { singleHeaderValue } from "./header_value.ts";
 
 export const OUTBOUND_PROVIDERS = [
     "imap_qq",
@@ -28,7 +30,6 @@ export const OUTBOUND_STATUSES = [
     "succeeded",
     "failed",
     "unsupported",
-    "superseded",
 ] as const;
 
 export type OutboundStatus = (typeof OUTBOUND_STATUSES)[number];
@@ -41,6 +42,29 @@ export const isOutboundProvider = (value: unknown): value is OutboundProvider =>
 
 export const isOutboundStatus = (value: unknown): value is OutboundStatus =>
     typeof value === "string" && STATUS_SET.has(value);
+
+/**
+ * The client-visible outcome of a job that already exists. Reporting a terminal
+ * failure as "queued" would make the caller wait for a send that will never
+ * happen, so every known terminal state is passed through unchanged.
+ */
+export const replayStatus = (status: string): string => {
+    if (status === "succeeded") return "already_sent";
+    if (status === "failed" || status === "unsupported") return status;
+    return "queued";
+};
+
+export type OutboundReplay =
+    | { gone: false; status: string }
+    | { gone: true };
+
+/**
+ * A job row that no longer exists cannot be described: the retention window
+ * deleted it, so neither "queued" nor any terminal value would be true, and the
+ * caller must reconcile with the provider instead of re-submitting.
+ */
+export const outboundReplay = (status: string | null | undefined): OutboundReplay =>
+    status ? { gone: false, status: replayStatus(status) } : { gone: true };
 
 // RFC 5321 addr-spec is at most 256 octets; 254 is the practical local+domain
 // ceiling (1 for the "@", one reserved for the length-specifier comment).
@@ -71,13 +95,6 @@ export type GmailReplyOriginal = {
  * that account. The requested account_id is ignored. A non-Gmail original
  * returns null so the caller keeps the explicit account and drops any thread id.
  */
-const singleLineHeader = (value: unknown): string | undefined => {
-    if (typeof value !== "string") return undefined;
-    const text = value.trim();
-    if (!text || /[\r\n]/.test(text)) return undefined;
-    return text;
-};
-
 export const forceGmailReplyRoute = (
     original: GmailReplyOriginal | null,
     owner: GmailReplyOwner | null,
@@ -88,7 +105,7 @@ export const forceGmailReplyRoute = (
     }
     const stored = original.provider_thread_id?.trim().toLowerCase() ?? "";
     const threadId = GMAIL_THREAD_RE.test(stored) ? stored : undefined;
-    const messageId = singleLineHeader(original.message_id_header) || singleLineHeader(payload.in_reply_to);
+    const messageId = singleHeaderValue(original.message_id_header) || singleHeaderValue(payload.in_reply_to);
     const routed: OutboundPayload = {
         ...payload,
         from_addr: owner.username,
@@ -190,11 +207,11 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
         return { ok: false, reason: "is_html must be a boolean" };
     }
 
-    const in_reply_to = singleLineHeader(boundedString(record.in_reply_to, 998));
+    const in_reply_to = singleHeaderValue(boundedString(record.in_reply_to, 998));
     const references = Array.isArray(record.references)
         ? record.references
             .filter((v): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 998)
-            .map((value) => singleLineHeader(value))
+            .map((value) => singleHeaderValue(value))
             .filter((value): value is string => Boolean(value))
         : undefined;
     const reply_to_email_id = boundedString(record.reply_to_email_id, MAX_REPLY_TO_EMAIL_ID);
@@ -210,9 +227,9 @@ export const validateOutboundPayload = (input: unknown): OutboundValidation => {
             from_addr,
             // Display names are cosmetic: drop one that could break out of its
             // header instead of rejecting the whole send over it.
-            from_name: singleLineHeader(optionalName(record.from_name)),
+            from_name: singleHeaderValue(optionalName(record.from_name)),
             to_mail,
-            to_name: singleLineHeader(optionalName(record.to_name)),
+            to_name: singleHeaderValue(optionalName(record.to_name)),
             subject,
             content,
             is_html: record.is_html,

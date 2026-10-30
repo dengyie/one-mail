@@ -153,7 +153,7 @@ ALTER TABLE user_mail_accounts ADD COLUMN can_send INTEGER NOT NULL DEFAULT 0;
 - 线程推导与登录分支一致：`in_reply_to` 取原信 `message_id_header`（经 `singleHeaderValue`，含 CR/LF 整条丢弃），`provider_thread_id` 取原信 threadId（`^[0-9a-f]{1,16}$` 校验），`references` 逐项过同一道 CR/LF 闸。
 - **幂等**：`x-idempotency-key` 的哈希由**服务端在改道之后**用 `computeOutboundRequestHash({account_id, payload})` 从归一化 payload 推导，与 job 的 `request_hash` 是同一个值（唯一索引 `(account_id, request_hash)` 与占位表共用）。调用方不再自算哈希，所以重试时额外带上被忽略的 `account_id` / `from` 不会变成 409；改道结果（From、`in_reply_to`、thread id）与服务端实际发送的内容同源，也不会产生虚假冲突。
 - **幂等时序**：键在写入 `outbound_mail_jobs` **之前**先占位（`gmail_reroute_idempotency` 行，`job_id` 初始为空），冲突在同一步判定，所以「同键不同体」拿到 409 时不会有 job 已经排队；job 写入成功后回填 `job_id`，写入失败则释放占位供重试。
-- **重放状态**：同键重放返回 `200` 与 job 的真实状态——`succeeded` → `already_sent`，`failed` → `failed`，`unsupported` → `unsupported`，其余 → `queued`。job 过了保留期已被清理时返回 `410`（键已无法证明），调用方需换新键。
+- **重放状态**：同键重放返回 `200` 与 job 的真实状态——`succeeded` → `already_sent`，`failed` → `failed`，`unsupported` → `unsupported`，其余 → `queued`。job 过了保留期已被清理时返回 `410`（键已无法证明），**此时不能直接换新键重发**：被清理的 job 可能已经发出，换键会再发一封。调用方应先在发信账号的已发送邮件（或 provider 侧 `messages.list`）里按收件人 + 主题对账，确认没发出去再换新键提交。
 - **状态码**：原信不存在 404、原信非 Gmail 400、账号不可发 403、`reply_to_email_id` 缺失或超 128 字节 400、`is_html` 非布尔 400（不静默降级为纯文本）、`subject` 含 CR/LF 400、收件人命中黑名单 400、同键不同体 409、job 已被清理 410。
 - **展示名**：`from_name` / `to_name` 含 CR/LF 时整条丢弃（地址保留）——展示名是装饰性字段，不该因为它拒掉整封邮件。
 - 不扣域名配额、不动 `send_balance`；超时/408/429/5xx 保持 unknown 重试，401/403 记 unsupported 不退回 SMTP。
