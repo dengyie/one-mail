@@ -201,6 +201,56 @@ test('admin gmail reply routes as the original mail account and validates inputs
   });
   expect(conflict.status()).toBe(409);
 
+  // The key covers only what the server honours, so a retry that also carries
+  // these ignored fields still replays instead of turning into a 409.
+  const ignoredFieldsReplay = await request.post(WORKER_URL + '/admin/send_mail/gmail_reply', {
+    headers: { ...ADMIN_HEADERS, 'x-idempotency-key': idempotencyKey },
+    data: { ...body, account_id: 'another-spoofed-account', from: 'other@example.test' },
+  });
+  expect(ignoredFieldsReplay.ok()).toBe(true);
+  expect((await ignoredFieldsReplay.json() as { job_id: string }).job_id).toBe(queued.job_id);
+
+  // Threading headers are sanitised on this path too: a value carrying CR/LF is
+  // dropped rather than forwarded as a second header.
+  const headerStamp = `${stamp}-headers`;
+  const headerIdempotencyKey = `admin-gmail-reply-headers-${stamp}`;
+  const headerReply = await request.post(WORKER_URL + '/admin/send_mail/gmail_reply', {
+    headers: { ...ADMIN_HEADERS, 'x-idempotency-key': headerIdempotencyKey },
+    data: replyBody(gmailEmailId, `Re: ${originalSubject} headers`, {
+      content: `Replied with a smuggled header ${headerStamp}`,
+      references: ['<list-1@mail.example.test>', '<inject@mail.example.test>\r\nBcc: attacker@example.test>'],
+    }),
+  });
+  expect(headerReply.ok()).toBe(true);
+  const headerQueued = await headerReply.json() as { job_id: string };
+  const headerJobs = await claimJobs(request);
+  const headerJob = headerJobs.find((entry) => entry.id === headerQueued.job_id);
+  expect(headerJob).toBeTruthy();
+  expect((JSON.parse(headerJob!.payload_json) as { references: string[] }).references)
+    .toEqual(['<list-1@mail.example.test>']);
+
+  // An unknown original id and a malformed body are rejected before any lookup
+  // side effect, and an unknown id is distinguishable from a bad request field.
+  const missing = await request.post(WORKER_URL + '/admin/send_mail/gmail_reply', {
+    headers: ADMIN_HEADERS,
+    data: replyBody('no-such-email-id', 'Re: missing'),
+  });
+  expect(missing.status()).toBe(404);
+
+  const tooLong = await request.post(WORKER_URL + '/admin/send_mail/gmail_reply', {
+    headers: ADMIN_HEADERS,
+    data: replyBody('x'.repeat(129), 'Re: too long'),
+  });
+  expect(tooLong.status()).toBe(400);
+
+  // is_html must be a JSON boolean; a string is rejected instead of quietly
+  // becoming a plain-text send.
+  const badHtml = await request.post(WORKER_URL + '/admin/send_mail/gmail_reply', {
+    headers: ADMIN_HEADERS,
+    data: replyBody(gmailEmailId, `Re: ${originalSubject} html`, { is_html: 'true' }),
+  });
+  expect(badHtml.status()).toBe(400);
+
   // A non-Gmail original is not rerouted.
   const qqAddress = `admin-qq-${stamp}@qq.com`;
   const qqAccountId = await createAccount(request, user, 'imap_qq', qqAddress);
