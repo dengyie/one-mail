@@ -90,6 +90,15 @@ jobs:
           pip install -e ".[dev]"
           pytest
 
+      # The root tests/ dir was never executed by CI, so a broken smoke helper or
+      # a workflow regression could merge green. They are stdlib-only apart from
+      # pytest, and they run from the repo root because scripts/ is a package
+      # imported as `scripts.smoke_log_checks`.
+      - name: Run repository Python tests
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest tests/ -q
+
       - name: Prepare Frontend env
         run: |
           cd frontend
