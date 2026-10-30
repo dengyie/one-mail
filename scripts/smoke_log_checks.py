@@ -11,10 +11,9 @@ _TIMESTAMP = re.compile(
     r"^(?P<value>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)"
 )
 _FETCH = re.compile(r"fetched\s+(?P<count>\d+)\s+user\s+mail\s+account", re.I)
-_WORKER_TIMEOUT_CONTEXT = re.compile(
-    r"(?:mail-api|worker|mail_accounts|report sync status|mutation claim|fetch user)",
-    re.I,
-)
+# Any timeout in the window is a failure to observe: the aggregator's own worker
+# calls, and its IMAP reads, both surface as "timed out". Scoping this to worker
+# wording only would silently drop an IMAP timeout from the verdict.
 _TIMEOUT = re.compile(r"(?:read\s+timed\s+out|timed\s*out|timeout)", re.I)
 
 
