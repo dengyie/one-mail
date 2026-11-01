@@ -31,3 +31,29 @@ it('keeps partial code cards visible and identifies the unavailable shard', asyn
   expect(host.textContent).toContain('123456')
   expect(host.textContent).toContain('shard-b')
 })
+
+it('displays the domain mail badge for cf_routing catch-all codes and allows clicking address to filter', async () => {
+  ctx.route.query = { tab: 'codes' }
+  ctx.api.unified.verifcodes.mockResolvedValue({
+    results: [{
+      code: '889900',
+      from_addr: 'service@github.com',
+      to_addr: 'muse@dengyie.tech',
+      source: 'cf_routing',
+      received_at: 1791334800000,
+    }],
+  })
+  const { host } = await mount(UnifiedInbox)
+  await flush()
+  expect(host.textContent).toContain('889900')
+  expect(host.textContent).toContain('Domain Mail')
+  expect(host.textContent).toContain('muse@dengyie.tech')
+
+  // Click on the address to filter
+  const addrEl = [...host.querySelectorAll('span')].find(el => el.textContent.includes('muse@dengyie.tech'))
+  expect(addrEl).toBeDefined()
+  ctx.api.unified.verifcodes.mockClear()
+  addrEl.click()
+  await flush()
+  expect(ctx.api.unified.verifcodes).toHaveBeenCalledWith('muse@dengyie.tech', 600000, undefined, expect.any(Object))
+})

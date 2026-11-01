@@ -591,6 +591,7 @@ type VerifRow = {
     subject?: unknown;
     received_at?: unknown;
     code?: unknown;
+    source?: unknown;
 };
 
 export const federatedVerifCodes = async (
@@ -599,7 +600,7 @@ export const federatedVerifCodes = async (
 ): Promise<Response> => {
     const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     const q = c.req.query();
-    const addr = typeof q.addr === "string" ? q.addr.trim() : "";
+    const addr = typeof q.addr === "string" ? q.addr.trim().toLowerCase() : "";
     const scoped = await localScopedWhere(c, map, { ...q, addr: undefined });
     let freshMs = 10 * 60 * 1000;
     if (q.fresh !== undefined) {
@@ -609,14 +610,33 @@ export const federatedVerifCodes = async (
     }
     if (freshMs > 0 && freshMs < 10000) freshMs = freshMs * 60 * 1000;
     const since = Date.now() - freshMs;
+
+    let addrClause = "";
+    const addrParams: (string | number)[] = [];
+    if (addr) {
+        if (addr.startsWith("@")) {
+            addrClause = " AND to_addr LIKE ?";
+            addrParams.push(`%${addr}`);
+        } else if (!addr.includes("@") && addr.includes(".")) {
+            addrClause = " AND (to_addr = ? OR to_addr LIKE ?)";
+            addrParams.push(addr, `%@${addr}`);
+        } else if (addr.includes("*")) {
+            addrClause = " AND to_addr LIKE ?";
+            addrParams.push(addr.replace(/\*/g, "%"));
+        } else {
+            addrClause = " AND to_addr = ?";
+            addrParams.push(addr);
+        }
+    }
+
     const { results: localRows } = await c.env.DB.prepare(
         `SELECT subject, text_body,
                 CASE WHEN (text_body IS NULL OR trim(text_body) = '')
                      THEN substr(html_body, 1, 8000)
                      ELSE '' END AS html_body,
-                from_addr, to_addr, received_at FROM emails
-         WHERE ${scoped.where}${addr ? " AND to_addr = ?" : ""} AND received_at >= ? ORDER BY received_at DESC LIMIT 50`,
-    ).bind(...scoped.params, ...(addr ? [addr] : []), since).all();
+                from_addr, to_addr, received_at, source FROM emails
+         WHERE ${scoped.where}${addrClause} AND received_at >= ? ORDER BY received_at DESC LIMIT 50`,
+    ).bind(...scoped.params, ...addrParams, since).all();
     const localOut = (localRows as Record<string, unknown>[]).map((row) => {
         const text = (typeof row.text_body === "string" && row.text_body.trim())
             ? row.text_body
@@ -626,6 +646,7 @@ export const federatedVerifCodes = async (
             to_addr: row.to_addr,
             subject: row.subject,
             received_at: row.received_at,
+            source: row.source,
             code: extractVerifCode(`${row.subject ?? ""}\n${text}`),
         };
     }).filter((row) => row.code);

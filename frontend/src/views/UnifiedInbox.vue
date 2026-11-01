@@ -48,6 +48,15 @@
         <div class="inbox-tab-content space-y-4">
           <div class="flex flex-wrap items-end gap-3 bg-zinc-50/60 dark:bg-zinc-900/40 p-4 rounded-2xl border border-zinc-200/60 dark:border-zinc-800/60">
             <div class="flex flex-col gap-1">
+              <span class="text-xs text-zinc-500">{{ t('codes.sourceLabel') }}</span>
+              <n-select
+                v-model:value="codesDomain"
+                size="small"
+                :options="codesDomainOptions"
+                style="width: 180px"
+              />
+            </div>
+            <div class="flex flex-col gap-1">
               <span class="text-xs text-zinc-500">{{ t('codes.addrLabel') }}</span>
               <n-input
                 v-model:value="codesAddr"
@@ -84,17 +93,27 @@
               class="group relative rounded-2xl border border-zinc-200/80 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-900/70 backdrop-blur-xl p-4 sm:p-5 flex items-start justify-between gap-4 shadow-xs hover:shadow-md hover:border-emerald-500/40 transition-all duration-200"
             >
               <div class="min-w-0 space-y-1.5 flex-1">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                   <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                   <div class="font-mono text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-wider break-all select-all">
                     {{ c.code }}
                   </div>
+                  <n-tag v-if="c.source === 'cf_routing'" size="tiny" type="info" :bordered="false" class="font-sans">
+                    {{ t('codes.domainBadge') }}
+                  </n-tag>
                 </div>
                 <div class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
                   {{ c.subject || t('list.noSubject') }}
                 </div>
                 <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate flex items-center gap-1.5">
-                  <span v-if="c.to_addr">{{ c.from_addr }} → {{ c.to_addr }}</span>
+                  <span
+                    v-if="c.to_addr"
+                    class="cursor-pointer hover:underline hover:text-emerald-600 dark:hover:text-emerald-400"
+                    :title="t('codes.filterByThisAddr')"
+                    @click="filterByAddr(c.to_addr)"
+                  >
+                    {{ c.from_addr }} → {{ c.to_addr }}
+                  </span>
                   <span v-else>{{ c.from_addr }}</span>
                   <span>·</span>
                   <span class="font-mono">{{ fmtTime(c.received_at) }}</span>
@@ -275,7 +294,8 @@ const { locale, t } = useScopedI18n('unified')
 const { t: w } = useScopedI18n('workspace')
 const showFilters = ref(false)
 const pendingRows = ref(new Set())
-const { unifiedApiKey, adminAuth, userJwt, userSettings, configAutoRefreshInterval } = useGlobalState()
+const { unifiedApiKey, adminAuth, userJwt, userSettings, configAutoRefreshInterval, openSettings: rawOpenSettings } = useGlobalState() || {}
+const openSettings = rawOpenSettings || ref({ domains: [] })
 const router = useRouter()
 const route = useRoute()
 const message = useMessage()
@@ -827,6 +847,7 @@ const retryOptions = () => {
 }
 
 // ---- 验证码视图 ----
+const codesDomain = ref('')
 const codesAddr = ref('')
 const codesFresh = ref(10)
 const codes = ref([])
@@ -839,6 +860,42 @@ const freshOptions = computed(() => [
   { label: t('codes.fresh1h'), value: 60 },
   { label: t('codes.fresh24h'), value: 1440 },
 ])
+
+const codesDomainOptions = computed(() => {
+  const options = [
+    { label: t('codes.allSources'), value: '' },
+    { label: t('codes.allDomainCatchAll'), value: 'cf_routing' },
+  ]
+  const domainSet = new Set()
+  const domainList = openSettings?.value?.domains || []
+  domainList.forEach(d => {
+    const val = typeof d === 'string' ? d : d.value
+    if (val && !domainSet.has(val)) {
+      domainSet.add(val)
+      options.push({
+        label: typeof d === 'object' && d.label ? d.label : val,
+        value: val,
+      })
+    }
+  })
+  boundAddresses.value.forEach(b => {
+    const name = typeof b === 'string' ? b : b?.name
+    if (name && name.includes('@')) {
+      const dom = name.split('@')[1]?.toLowerCase()
+      if (dom && !domainSet.has(dom)) {
+        domainSet.add(dom)
+        options.push({ label: dom, value: dom })
+      }
+    }
+  })
+  return options
+})
+
+const filterByAddr = (addr) => {
+  if (!addr) return
+  codesAddr.value = addr
+  loadCodes()
+}
 
 const loadCodes = async ({ background = false } = {}) => {
   if (background && backgroundCodesPending) return
@@ -858,7 +915,12 @@ const loadCodes = async ({ background = false } = {}) => {
     codesError.value = ''
   }
   try {
-    const res = await api.unified.verifcodes(codesAddr.value.trim(), codesFresh.value * 60 * 1000, undefined, { signal: controller.signal })
+    const res = await api.unified.verifcodes(
+      codesAddr.value.trim(),
+      codesFresh.value * 60 * 1000,
+      codesDomain.value || undefined,
+      { signal: controller.signal }
+    )
     if (!isCurrent()) return
     codes.value = res.results || []
     codesDegraded.value = res.degraded || []
@@ -1027,6 +1089,7 @@ watch(authIdentity, (identity, previousIdentity) => {
   loading.value = false
   listError.value = ''
   codesAddr.value = ''
+  codesDomain.value = ''
   codes.value = []
   codesError.value = ''
   codesDegraded.value = []
@@ -1063,6 +1126,12 @@ watch(refreshIntervalMs, () => {
 })
 
 watch(codesFresh, () => {
+  if (activeTab.value === 'codes') {
+    loadCodes()
+  }
+})
+
+watch(codesDomain, () => {
   if (activeTab.value === 'codes') {
     loadCodes()
   }

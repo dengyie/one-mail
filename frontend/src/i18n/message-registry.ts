@@ -4087,6 +4087,26 @@ export const MESSAGE_REGISTRY = {
       "en": "Verification codes (last 10 min)",
       "zh": "验证码（最近 10 分钟）"
     },
+    "codes.sourceLabel": {
+      "en": "Source / Domain",
+      "zh": "来源 / 域名"
+    },
+    "codes.allSources": {
+      "en": "All Sources",
+      "zh": "全部来源"
+    },
+    "codes.allDomainCatchAll": {
+      "en": "Domain Mailboxes (All Catch-All)",
+      "zh": "全部域名邮箱 (Catch-All)"
+    },
+    "codes.domainBadge": {
+      "en": "Domain Mail",
+      "zh": "域名邮箱"
+    },
+    "codes.filterByThisAddr": {
+      "en": "Filter by this address",
+      "zh": "点击过滤此地址"
+    },
     "codes.addrLabel": {
       "en": "Recipient address",
       "zh": "收件地址"

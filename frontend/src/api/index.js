@@ -496,7 +496,14 @@ export const api = {
             // addr 与 domain 可选；若均未指定，则在当前租户范围内聚合全部可用邮箱的近期验证码
             const s = new URLSearchParams();
             if (addr) s.set('addr', addr);
-            if (domain) s.set('domain', domain);
+            if (domain) {
+                if (domain === 'cf_routing' || domain === '__all_domains__') {
+                    s.set('source', 'cf_routing');
+                } else {
+                    s.set('domain', domain);
+                }
+            }
+            if (options.source) s.set('source', options.source);
             if (freshMs) s.set('fresh', String(freshMs));
             return unifiedAuthFetch(`/api/unified/verifcodes${s.toString() ? `?${s.toString()}` : ''}`, options);
         },

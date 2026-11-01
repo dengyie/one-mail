@@ -63,7 +63,7 @@ export function stripHtmlToText(html: string): string {
  */
 export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
-    const addr = typeof q.addr === "string" ? q.addr.trim() : "";
+    const addr = typeof q.addr === "string" ? q.addr.trim().toLowerCase() : "";
     // 鉴权作用域直接进入 SQL；addr 仍作为业务过滤条件单独绑定。
     // domain 模式下全域过滤仅限管理员访问（经 resolveScopedEmailFilter 严格校验 isAdmin/role=admin，非管理员直接拒绝）。
     const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, { ...q, addr: undefined }));
@@ -74,15 +74,34 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
         freshMs = freshMs * 60 * 1000;
     }
     const since = Date.now() - freshMs;
+
+    let addrClause = "";
+    const addrParams: (string | number)[] = [];
+    if (addr) {
+        if (addr.startsWith("@")) {
+            addrClause = " AND to_addr LIKE ?";
+            addrParams.push(`%${addr}`);
+        } else if (!addr.includes("@") && addr.includes(".")) {
+            addrClause = " AND (to_addr = ? OR to_addr LIKE ?)";
+            addrParams.push(addr, `%@${addr}`);
+        } else if (addr.includes("*")) {
+            addrClause = " AND to_addr LIKE ?";
+            addrParams.push(addr.replace(/\*/g, "%"));
+        } else {
+            addrClause = " AND to_addr = ?";
+            addrParams.push(addr);
+        }
+    }
+
     // 优化投影：仅当 text_body 为空时截取前 8000 字符 HTML，避免 50 封邮件全量传输大体积 HTML 造成 D1 吞吐浪费与内存抖动
     const { results } = await c.env.DB.prepare(
         `SELECT subject, text_body,
                 CASE WHEN (text_body IS NULL OR trim(text_body) = '')
                      THEN substr(html_body, 1, 8000)
                      ELSE '' END AS html_body,
-                from_addr, to_addr, received_at FROM emails
-         WHERE ${where}${addr ? " AND to_addr = ?" : ""} AND received_at >= ? ORDER BY received_at DESC LIMIT 50`
-    ).bind(...params, ...(addr ? [addr] : []), since).all();
+                from_addr, to_addr, received_at, source FROM emails
+         WHERE ${where}${addrClause} AND received_at >= ? ORDER BY received_at DESC LIMIT 50`
+    ).bind(...params, ...addrParams, since).all();
     const out = (results as Record<string, unknown>[]).map((r) => {
         const text = (typeof r.text_body === "string" && r.text_body.trim())
             ? r.text_body
@@ -92,6 +111,7 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
             to_addr: r.to_addr,
             subject: r.subject,
             received_at: r.received_at,
+            source: r.source,
             code: extractVerifCode(`${r.subject ?? ""}\n${text}`),
         };
     }).filter((r) => r.code);
