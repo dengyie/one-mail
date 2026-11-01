@@ -102,6 +102,9 @@ api.use("/api/unified/*", async (c, next) => {
         // API-key 未命中时，检查是否为合法有效的邮箱 Address JWT
         const addressPayload = await verifyActiveAddressJwt(c, token);
         if (addressPayload) {
+            if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+                return c.json({ error: "Address JWT is restricted to read-only requests" }, 403);
+            }
             c.set("addressAuth", addressPayload);
             await next();
             return;

@@ -28,7 +28,8 @@ export const fetchAddressVerifCodes = async (
     const since = Date.now() - freshMs;
 
     // 1. 优先走优化投影的 emails 表（利用索引 idx_emails_to_addr，截断前 3000 字符）
-    const fetchLimit = Math.max(lim * 2, 20);
+    // 扫描深度：lim * 5，下限 50，上限 100，确保在普通邮件干扰下仍能扫出验证码
+    const fetchLimit = Math.min(Math.max(lim * 5, 50), 100);
     const { results } = await c.env.DB.prepare(
         `SELECT subject,
                 CASE WHEN (text_body IS NOT NULL AND trim(text_body) != '')
@@ -44,56 +45,67 @@ export const fetchAddressVerifCodes = async (
 
     const out = mapVerifCodeRows((results || []) as Record<string, unknown>[], stripHtmlToText);
 
-    // 2. 兜底逻辑：若 emails 表未命中（如历史未镜像邮件或镜像任务积压中），从 raw_mails 读取
-    if (out.length === 0) {
-        try {
-            const rawRows = await listRawMails(c, address, { limit: Math.min(lim, 10), offset: 0 });
-            if (rawRows && rawRows.length > 0) {
-                const resolved = await resolveRawEmailList(rawRows);
-                for (const row of resolved) {
-                    const rawStr = typeof row.raw === "string" ? row.raw : "";
-                    const createdTime = row.created_at ? new Date(row.created_at).getTime() : Date.now();
-                    if (Number.isFinite(createdTime) && createdTime < since) continue;
+    // 2. 检查 raw_mails 是否有更新但尚未镜像到 emails 的邮件，或补全未填满的验证码
+    try {
+        const rawRows = await listRawMails(c, address, { limit: Math.min(Math.max(lim * 2, 10), 20), offset: 0 });
+        if (rawRows && rawRows.length > 0) {
+            const resolved = await resolveRawEmailList(rawRows);
+            for (const row of resolved) {
+                const rawStr = typeof row.raw === "string" ? row.raw : "";
+                const createdTime = row.created_at ? new Date(row.created_at).getTime() : Date.now();
+                if (Number.isFinite(createdTime) && createdTime < since) continue;
 
-                    let code: string | null = null;
-                    let subject = "";
-                    let sender = "";
+                let code: string | null = null;
+                let subject = "";
+                let sender = "";
 
-                    // 若 metadata 已有 ai_extract 识别结果直接复用
-                    if (row.metadata) {
-                        try {
-                            const meta = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
-                            if (meta?.ai_extract?.result) {
-                                code = String(meta.ai_extract.result);
-                            }
-                        } catch { /* ignore invalid json */ }
-                    }
+                // 若 metadata 明确为 auth_code 类型且通过验证码提取校验才复用
+                if (row.metadata) {
+                    try {
+                        const meta = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
+                        if (meta?.ai_extract?.type === "auth_code" && meta.ai_extract.result) {
+                            const candidate = extractVerifCode(String(meta.ai_extract.result).trim());
+                            if (candidate) code = candidate;
+                        }
+                    } catch { /* ignore invalid json */ }
+                }
 
-                    if (!code && rawStr) {
-                        const parsed = await commonParseMail({ rawEmail: rawStr });
-                        subject = parsed?.subject ?? "";
-                        sender = parsed?.sender ?? "";
-                        const textContent = `${subject}\n${parsed?.text ?? ""}\n${stripHtmlToText(parsed?.html ?? "")}`;
-                        code = extractVerifCode(textContent);
-                    }
+                if (!code && rawStr) {
+                    const parsed = await commonParseMail({ rawEmail: rawStr });
+                    subject = parsed?.subject ?? "";
+                    sender = parsed?.sender ?? "";
+                    const textContent = `${subject}\n${parsed?.text ?? ""}\n${stripHtmlToText(parsed?.html ?? "")}`;
+                    code = extractVerifCode(textContent);
+                }
 
-                    if (code) {
+                if (code) {
+                    const rowSender = sender || (row.source && row.source !== "raw_mails" ? row.source : "") || "";
+                    // 查重：若 emails 投影中已有同验证码、同邮箱且时间相差 <10 秒的记录，则跳过
+                    const isDup = out.some(
+                        (existing) =>
+                            existing.code === code &&
+                            Math.abs(existing.received_at - createdTime) < 10000 &&
+                            (!rowSender || !existing.from_addr || existing.from_addr === rowSender)
+                    );
+                    if (!isDup) {
                         out.push({
                             code,
-                            from_addr: sender || row.source || "",
+                            from_addr: rowSender,
                             to_addr: address,
                             subject: subject,
                             received_at: createdTime,
                             source: row.source || "raw_mails",
                         });
-                        if (out.length >= lim) break;
                     }
                 }
             }
-        } catch {
-            // raw_mails 兜底错误静默降级
         }
+    } catch {
+        // raw_mails 降级处理
     }
+
+    // 按接收时间降序排序（确保最新收到的验证码排在首位）
+    out.sort((a, b) => b.received_at - a.received_at);
 
     return out.slice(0, lim);
 };

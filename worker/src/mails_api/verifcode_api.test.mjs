@@ -40,6 +40,9 @@ const makeCtx = ({ address = "agent@dengyie.tech", query = {}, emailRows = [], r
                     if (sql.includes("FROM emails")) {
                         return { results: emailRows };
                     }
+                    if (sql.includes("FROM raw_mails")) {
+                        return { results: rawRows };
+                    }
                     return { results: [] };
                 },
                 async first() {
@@ -142,4 +145,130 @@ test("verifcode_api parses fresh minutes and milliseconds properly", async () =>
     // since should be approx now - 60 * 60 * 1000
     const diffMin = Math.round((now - since) / 60000);
     assert.equal(diffMin, 60);
+});
+
+test("verifcode_api computes bounded fetchLimit between 50 and 100", async () => {
+    // limit = 2 => fetchLimit = Math.min(Math.max(2 * 5, 50), 100) = 50
+    const { c: c1, getCapturedEmail: cap1 } = makeCtx({ query: { limit: "2" } });
+    await fetchAddressVerifCodes(c1, "test@dengyie.tech", undefined, "2");
+    assert.equal(cap1().binds[2], 50);
+
+    // limit = 15 => fetchLimit = Math.min(Math.max(15 * 5, 50), 100) = 75
+    const { c: c2, getCapturedEmail: cap2 } = makeCtx({ query: { limit: "15" } });
+    await fetchAddressVerifCodes(c2, "test@dengyie.tech", undefined, "15");
+    assert.equal(cap2().binds[2], 75);
+
+    // limit = 30 => fetchLimit = Math.min(Math.max(30 * 5, 50), 100) = 100
+    const { c: c3, getCapturedEmail: cap3 } = makeCtx({ query: { limit: "30" } });
+    await fetchAddressVerifCodes(c3, "test@dengyie.tech", undefined, "30");
+    assert.equal(cap3().binds[2], 100);
+});
+
+test("verifcode_api merges unmirrored raw_mails and sorts newest first", async () => {
+    const now = Date.now();
+    const emailRows = [
+        {
+            subject: "Old code: 111222",
+            text_body: "Your verification code is 111222",
+            html_body: "",
+            from_addr: "service-a@example.com",
+            to_addr: "agent@dengyie.tech",
+            received_at: now - 30000,
+            source: "cf_routing",
+        },
+    ];
+
+    const rawRows = [
+        {
+            id: 101,
+            address: "agent@dengyie.tech",
+            raw: "Subject: New code\n\nYour code is 999888",
+            created_at: new Date(now - 1000).toISOString(),
+            source: "raw_mails",
+            metadata: JSON.stringify({
+                ai_extract: { type: "auth_code", result: "999888" },
+            }),
+        },
+    ];
+
+    const { c } = makeCtx({
+        address: "agent@dengyie.tech",
+        query: { limit: "5" },
+        emailRows,
+        rawRows,
+    });
+
+    const results = await fetchAddressVerifCodes(c, "agent@dengyie.tech", "10", "5");
+    assert.equal(results.length, 2);
+    // Newest code (from raw_mails) must come first
+    assert.equal(results[0].code, "999888");
+    assert.equal(results[0].source, "raw_mails");
+    // Older code (from emails) comes second
+    assert.equal(results[1].code, "111222");
+});
+
+test("verifcode_api deduplicates raw_mails against emails projection", async () => {
+    const now = Date.now();
+    const emailRows = [
+        {
+            subject: "GitHub: 887766",
+            text_body: "Your GitHub verification code is 887766",
+            html_body: "",
+            from_addr: "support@github.com",
+            to_addr: "agent@dengyie.tech",
+            received_at: now - 2000,
+            source: "cf_routing",
+        },
+    ];
+
+    // Same code, same sender, timestamp within 10s
+    const rawRows = [
+        {
+            id: 102,
+            address: "agent@dengyie.tech",
+            raw: "Subject: GitHub: 887766\n\nYour GitHub verification code is 887766",
+            created_at: new Date(now - 3000).toISOString(),
+            source: "support@github.com",
+            metadata: JSON.stringify({
+                ai_extract: { type: "auth_code", result: "887766" },
+            }),
+        },
+    ];
+
+    const { c } = makeCtx({
+        address: "agent@dengyie.tech",
+        emailRows,
+        rawRows,
+    });
+
+    const results = await fetchAddressVerifCodes(c, "agent@dengyie.tech", "10", "5");
+    assert.equal(results.length, 1, "must deduplicate identical verification codes");
+    assert.equal(results[0].code, "887766");
+});
+
+test("verifcode_api rejects non-auth_code ai_extract results (auth_link protection)", async () => {
+    const now = Date.now();
+    const rawRows = [
+        {
+            id: 103,
+            address: "agent@dengyie.tech",
+            raw: "Please click the link below:\nhttps://example.com/verify?token=abcdef123456",
+            created_at: new Date(now - 1000).toISOString(),
+            source: "raw_mails",
+            // ai_extract is an auth_link, NOT an auth_code
+            metadata: JSON.stringify({
+                ai_extract: { type: "auth_link", result: "https://example.com/verify?token=abcdef123456" },
+            }),
+        },
+    ];
+
+    const { c } = makeCtx({
+        address: "agent@dengyie.tech",
+        emailRows: [],
+        rawRows,
+    });
+
+    const results = await fetchAddressVerifCodes(c, "agent@dengyie.tech", "10", "5");
+    // Since metadata is auth_link (not auth_code) and raw mail text contains no OTP code pattern, it should return 0 results
+    assert.equal(results.length, 0);
 });
