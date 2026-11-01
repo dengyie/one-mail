@@ -893,6 +893,7 @@ const codesDomainOptions = computed(() => {
 
 const filterByAddr = (addr) => {
   if (!addr) return
+  codesDomain.value = ''
   codesAddr.value = addr
   loadCodes()
 }
@@ -922,7 +923,20 @@ const loadCodes = async ({ background = false } = {}) => {
       { signal: controller.signal }
     )
     if (!isCurrent()) return
-    codes.value = res.results || []
+    const nextCodes = res.results || []
+    if (background) {
+      const isSame = codes.value.length === nextCodes.length &&
+        codes.value.every((item, i) =>
+          item.code === nextCodes[i]?.code &&
+          item.to_addr === nextCodes[i]?.to_addr &&
+          item.received_at === nextCodes[i]?.received_at
+        )
+      if (!isSame) {
+        codes.value = nextCodes
+      }
+    } else {
+      codes.value = nextCodes
+    }
     codesDegraded.value = res.degraded || []
     connected.value = codesDegraded.value.length === 0
     codesError.value = ''

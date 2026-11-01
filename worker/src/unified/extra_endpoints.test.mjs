@@ -5,7 +5,7 @@ import { verifCodes, getMetaOptions } from "./extra_endpoints.ts";
 // 端点级回归：verifCodes 的 addr / domain 双模式与 fail-closed 行为。
 // domain 子句经 buildEmailFilters 注入，这里重点锁 SQL 形状与 bind 顺序。
 
-const makeCtx = (query, rows = []) => {
+const makeCtx = (query, rows = [], auth = { isAdmin: true }) => {
     let captured = null;
     const db = {
         prepare(sql) {
@@ -20,8 +20,8 @@ const makeCtx = (query, rows = []) => {
         req: { query: () => query },
         env: { DB: db },
         // resolveScopedEmailFilter 读 c.get("unifiedUserAuth") / c.get("apiKey")；
-        // 这里注入管理员用户通道，使 base 过滤 = buildEmailFilters(q) 原样生效。
-        get: (key) => (key === "unifiedUserAuth" ? { isAdmin: true } : undefined),
+        // 默认注入管理员用户通道；也可传入普通用户 auth 测试租户隔离边界。
+        get: (key) => (key === "unifiedUserAuth" ? auth : undefined),
         json: (body, status) => ({ body, status }),
     };
     return { c, captured: () => captured };
@@ -51,21 +51,28 @@ test("verifCodes domain mode suffix-matches whole domain and returns source", as
     assert.equal(typeof binds[binds.length - 1], "number", "last bind is the fresh-window since");
 });
 
-test("verifCodes addr mode handles @domain and naked domain patterns", async () => {
+test("verifCodes addr mode handles @domain and naked domain patterns with ESCAPE", async () => {
     // 1. @dengyie.tech
     const ctxAt = makeCtx({ addr: "@dengyie.tech" }, [CODE_ROW]);
     await verifCodes(ctxAt.c);
     const capAt = ctxAt.captured();
-    assert.ok(capAt.sql.includes("to_addr LIKE ?"));
+    assert.ok(capAt.sql.includes("to_addr LIKE ? ESCAPE '\\'"));
     assert.equal(capAt.binds[0], "%@dengyie.tech");
 
     // 2. dengyie.tech
     const ctxDomain = makeCtx({ addr: "dengyie.tech" }, [CODE_ROW]);
     await verifCodes(ctxDomain.c);
     const capDomain = ctxDomain.captured();
-    assert.ok(capDomain.sql.includes("(to_addr = ? OR to_addr LIKE ?)"));
+    assert.ok(capDomain.sql.includes("(to_addr = ? OR to_addr LIKE ? ESCAPE '\\')"));
     assert.equal(capDomain.binds[0], "dengyie.tech");
     assert.equal(capDomain.binds[1], "%@dengyie.tech");
+
+    // 3. 通配符转义与 * 转换
+    const ctxWildcard = makeCtx({ addr: "user_test*@dengyie.tech" }, [CODE_ROW]);
+    await verifCodes(ctxWildcard.c);
+    const capWildcard = ctxWildcard.captured();
+    assert.ok(capWildcard.sql.includes("to_addr LIKE ? ESCAPE '\\'"));
+    assert.equal(capWildcard.binds[0], "user\\_test%@dengyie.tech");
 });
 
 test("verifCodes addr mode keeps exact to_addr pin", async () => {
@@ -76,6 +83,19 @@ test("verifCodes addr mode keeps exact to_addr pin", async () => {
     const { sql, binds } = captured();
     assert.ok(sql.includes("AND to_addr = ?"), "addr mode must pin to_addr");
     assert.equal(binds[0], "user@mangoqwq.com");
+});
+
+test("verifCodes non-admin user domain filter stays scoped to tenant ownership without 0=1 breaker", async () => {
+    const nonAdminAuth = { isAdmin: false, userPayload: { user_id: "u_tenant_42" } };
+    const { c, captured } = makeCtx({ domain: "dengyie.tech" }, [CODE_ROW], nonAdminAuth);
+    const res = await verifCodes(c);
+    assert.deepEqual(res.body.results.map((r) => r.code), ["123456"]);
+    const { sql, binds } = captured();
+    assert.ok(!sql.includes("0=1"), "must not trigger 0=1 fail-closed breaker for valid domain query");
+    assert.ok(sql.includes("emails.account_id IN"), "must contain tenant ownership clause");
+    assert.ok(sql.includes("emails.source = 'cf_routing' AND emails.to_addr LIKE ? ESCAPE '\\'"));
+    assert.ok(binds.includes("%@dengyie.tech"), "must bind domain suffix parameter");
+    assert.ok(binds.includes("u_tenant_42"), "must bind tenant user_id");
 });
 
 test("verifCodes unified mode allows query without addr or domain, returning to_addr", async () => {

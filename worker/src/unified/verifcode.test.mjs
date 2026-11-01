@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractVerifCode } from "./verifcode.ts";
+import {
+  extractVerifCode,
+  escapeSqlLike,
+  buildVerifAddrClause,
+  mapVerifCodeRows,
+} from "./verifcode.ts";
 
 test("extracts 6-digit code", () => {
   assert.equal(extractVerifCode("Your verification code is 123456, valid 5 min"), "123456");
@@ -57,4 +62,77 @@ test("does not truncate long numbers (phone numbers, order ids, timestamps) into
   assert.equal(extractVerifCode("验证码已发送至 13812345678，验证码是 889900"), "889900");
   assert.equal(extractVerifCode("安全码：99887766（8位安全码有效）"), "99887766");
   assert.equal(extractVerifCode("安全码：998877665（9位长数字不应被截断）"), null);
+});
+
+test("escapeSqlLike correctly escapes SQL LIKE special characters", () => {
+  assert.equal(escapeSqlLike("normal_text%with\\slash"), "normal\\_text\\%with\\\\slash");
+  assert.equal(escapeSqlLike("100%_guaranteed"), "100\\%\\_guaranteed");
+});
+
+test("buildVerifAddrClause constructs parameterized and escaped clauses", () => {
+  // Empty
+  assert.deepEqual(buildVerifAddrClause("   "), { clause: "", params: [] });
+
+  // @domain
+  assert.deepEqual(buildVerifAddrClause("@dengyie.tech"), {
+    clause: " AND to_addr LIKE ? ESCAPE '\\'",
+    params: ["%@dengyie.tech"],
+  });
+
+  // Naked domain
+  assert.deepEqual(buildVerifAddrClause("dengyie.tech"), {
+    clause: " AND (to_addr = ? OR to_addr LIKE ? ESCAPE '\\')",
+    params: ["dengyie.tech", "%@dengyie.tech"],
+  });
+
+  // Wildcard with special LIKE characters
+  assert.deepEqual(buildVerifAddrClause("user_sub%*@dengyie.tech"), {
+    clause: " AND to_addr LIKE ? ESCAPE '\\'",
+    params: ["user\\_sub\\%%@dengyie.tech"],
+  });
+
+  // Exact address
+  assert.deepEqual(buildVerifAddrClause("Admin@dengyie.tech"), {
+    clause: " AND to_addr = ?",
+    params: ["admin@dengyie.tech"],
+  });
+});
+
+test("mapVerifCodeRows extracts codes and handles HTML fallback", () => {
+  const rows = [
+    {
+      subject: "Your code is 654321",
+      text_body: "Use 654321 to login",
+      html_body: "",
+      from_addr: "a@test.com",
+      to_addr: "b@test.com",
+      received_at: 1000,
+      source: "cf_routing",
+    },
+    {
+      subject: "HTML only email",
+      text_body: "",
+      html_body: "<p>Verification Code: <strong>998811</strong></p>",
+      from_addr: "c@test.com",
+      to_addr: "d@test.com",
+      received_at: 2000,
+      source: "cf_routing",
+    },
+    {
+      subject: "No code here",
+      text_body: "Just some newsletter",
+      html_body: "",
+      from_addr: "e@test.com",
+      to_addr: "f@test.com",
+      received_at: 3000,
+      source: "cf_routing",
+    },
+  ];
+
+  const stripHtml = (html) => html.replace(/<[^>]+>/g, " ").trim();
+  const res = mapVerifCodeRows(rows, stripHtml);
+
+  assert.equal(res.length, 2);
+  assert.equal(res[0].code, "654321");
+  assert.equal(res[1].code, "998811");
 });
