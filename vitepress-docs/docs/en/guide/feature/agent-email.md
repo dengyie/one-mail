@@ -89,7 +89,24 @@ curl -s "$BASE/api/parsed_mails?limit=20&offset=0" \
   -H "Authorization: Bearer $JWT"
 ```
 
-### 3. Send mail
+### 3. One-shot Verification Code Extraction (Recommended for AI Agents)
+
+Instead of manually parsing MIME or executing complex regex on the client, you can retrieve the verification code directly in one HTTP call:
+
+```bash
+# Get the single latest verification code (ideal for agent registration/sign-in loops)
+curl -s "$BASE/api/verifcode" \
+  -H "Authorization: Bearer $JWT"
+# If found:
+# { "code": "887766", "from_addr": "service@github.com", "to_addr": "abc@example.com", "subject": "...", "received_at": 1740000000000 }
+# If none in the fresh window: { "code": null }
+
+# List recent verification codes (supports fresh in minutes or ms, defaults to 10 min)
+curl -s "$BASE/api/verifcodes?fresh=10&limit=5" \
+  -H "Authorization: Bearer $JWT"
+```
+
+### 4. Send mail
 
 Requires `send_balance > 0` (check via `/api/settings`). The deployment must have a send method configured (Resend / SMTP / Cloudflare Email Routing binding).
 

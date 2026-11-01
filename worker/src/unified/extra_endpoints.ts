@@ -1,7 +1,9 @@
 import { Context } from "hono";
 import { resolveScopedEmailFilter } from "./auth_scope.ts";
-import { buildVerifAddrClause, escapeSqlLike, mapVerifCodeRows } from "./verifcode.ts";
+import { buildVerifAddrClause, escapeSqlLike, mapVerifCodeRows, stripHtmlToText } from "./verifcode.ts";
 import { boundedEmailFilter } from "./unified_sql.ts";
+
+export { stripHtmlToText };
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
 const intOr400 = (c: Context<HonoCustomType>, v: string | undefined, fallback: number): number => {
@@ -33,24 +35,6 @@ export const statsEmails = async (c: Context<HonoCustomType>) => {
         unread: Number(row?.unread || 0),
     });
 };
-
-export function stripHtmlToText(html: string): string {
-    if (!html) return "";
-    return html
-        .replace(/<\s*(script|style|head|svg)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
-        .replace(/<!--[\s\S]*?-->/g, " ")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/&nbsp;/gi, " ")
-        .replace(/&amp;/gi, "&")
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, "'")
-        .replace(/&lt;/gi, "<")
-        .replace(/&gt;/gi, ">")
-        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
-        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-        .replace(/\s+/g, " ")
-        .trim();
-}
 
 /**
  * 获取指定邮箱近期的验证码列表。

@@ -21,7 +21,7 @@ res = requests.get(
 
 ## admin 邮件 API
 
-支持 `address` 过滤
+支持 `address`（精准匹配、`@domain` 后缀或通配符 `*@domain`）与 `domain` 域名级全域过滤：
 
 ```python
 import requests
@@ -29,16 +29,18 @@ import requests
 url = "https://<你的worker地址>/admin/mails"
 
 querystring = {
-    "limit":"20",
-    "offset":"0",
-    # address 为可选参数
-    "address":"xxxx@mangoqwq.cc.cd"
+    "limit": "20",
+    "offset": "0",
+    # 可选：按指定域名过滤（例如 dengyie.tech 或 @dengyie.tech）
+    "domain": "dengyie.tech",
+    # 可选：精准地址匹配或通配符（如 admin@dengyie.tech、@dengyie.tech、*@dengyie.tech）
+    # "address": "admin@dengyie.tech"
 }
 
 headers = {
-        "x-admin-auth": "<你的Admin密码>",
-        # "x-custom-auth": "<你的网站密码>", # 如果启用了私有站点密码
-    }
+    "x-admin-auth": "<你的Admin密码>",
+    # "x-custom-auth": "<你的网站密码>", # 如果启用了私有站点密码
+}
 
 response = requests.get(url, headers=headers, params=querystring)
 

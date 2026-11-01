@@ -21,7 +21,7 @@ res = requests.get(
 
 ## Admin Mail API
 
-Supports `address` filter
+Supports `address` (exact match, `@domain` suffix, or wildcard `*@domain`) and `domain` domain-wide filters:
 
 ```python
 import requests
@@ -29,16 +29,18 @@ import requests
 url = "https://<your-worker-address>/admin/mails"
 
 querystring = {
-    "limit":"20",
-    "offset":"0",
-    # address is optional parameter
-    "address":"xxxx@mangoqwq.cc.cd"
+    "limit": "20",
+    "offset": "0",
+    # Optional: filter by whole domain (e.g. dengyie.tech or @dengyie.tech)
+    "domain": "dengyie.tech",
+    # Optional: exact address or wildcard (e.g. admin@dengyie.tech, @dengyie.tech, *@dengyie.tech)
+    # "address": "admin@dengyie.tech"
 }
 
 headers = {
-        "x-admin-auth": "<your-Admin-password>",
-        # "x-custom-auth": "<your-website-password>", # If private site password is enabled
-    }
+    "x-admin-auth": "<your-Admin-password>",
+    # "x-custom-auth": "<your-website-password>", # If private site password is enabled
+}
 
 response = requests.get(url, headers=headers, params=querystring)
 

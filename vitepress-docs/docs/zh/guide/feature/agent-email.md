@@ -89,7 +89,24 @@ curl -s "$BASE/api/parsed_mails?limit=20&offset=0" \
   -H "Authorization: Bearer $JWT"
 ```
 
-### 3. 发送邮件
+### 3. 一键提取验证码（AI Agent 极速获取）
+
+无需在客户端编写正则表达式或遍历邮件文本，后端直接提取 4~8 位数字/分段验证码并做智能降噪过滤：
+
+```bash
+# 获取最新单个验证码（极适合 Agent 轮询注册或登录）
+curl -s "$BASE/api/verifcode" \
+  -H "Authorization: Bearer $JWT"
+# 命中返回：
+# { "code": "887766", "from_addr": "service@github.com", "to_addr": "abc@example.com", "subject": "...", "received_at": 1740000000000 }
+# 未收到返回：{ "code": null }
+
+# 列出近期验证码列表（可指定 fresh 分钟数，默认 10 分钟）
+curl -s "$BASE/api/verifcodes?fresh=10&limit=5" \
+  -H "Authorization: Bearer $JWT"
+```
+
+### 4. 发送邮件
 
 需要 `send_balance > 0`（通过 `/api/settings` 查看），且部署方已配置发送方式（Resend / SMTP / Cloudflare Email Routing binding）。
 
