@@ -30,7 +30,7 @@ async function mount(View) {
 const button = (host, text) => [...host.querySelectorAll('button')].find(node => node.textContent.trim() === text)
 
 beforeEach(() => {
-  ctx.state = { userJwt: ref('user-a'), adminAuth: ref(''), unifiedApiKey: ref(''), userSettings: ref({ user_id: 1 }), configAutoRefreshInterval: ref(10), autoLoadRemoteImages: ref(false) }
+  ctx.state = { userJwt: ref('user-a'), adminAuth: ref(''), unifiedApiKey: ref(''), userSettings: ref({ user_id: 1 }), configAutoRefreshInterval: ref(10), autoLoadRemoteImages: ref(false), openSettings: ref({ domains: [] }) }
   ctx.route = reactive({ path: '/unified', fullPath: '/unified', query: {}, params: { id: 'mail-a' } })
   ctx.api = {
     getUserSettings: vi.fn().mockResolvedValue(undefined),

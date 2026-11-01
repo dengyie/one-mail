@@ -33,20 +33,39 @@ const CODE_ROW = {
     html_body: "",
     from_addr: "noreply@example.com",
     to_addr: "user@mangoqwq.com",
+    source: "cf_routing",
     received_at: Date.now() - 1000,
 };
 
-test("verifCodes domain mode suffix-matches whole domain and never pins to_addr", async () => {
+test("verifCodes domain mode suffix-matches whole domain and returns source", async () => {
     const { c, captured } = makeCtx({ domain: "Mangoqwq.com", fresh: "1440" }, [CODE_ROW]);
     const res = await verifCodes(c);
     assert.deepEqual(res.body.results.map((r) => r.code), ["123456"]);
     assert.equal(res.body.results[0].to_addr, "user@mangoqwq.com");
+    assert.equal(res.body.results[0].source, "cf_routing");
     const { sql, binds } = captured();
     assert.ok(sql.includes("source = 'cf_routing'"), "domain mode must pin cf_routing");
     assert.ok(sql.includes("to_addr LIKE ?"), "domain mode must suffix-match to_addr");
     assert.ok(!sql.includes("to_addr = ?"), "domain mode must not pin a single to_addr");
     assert.equal(binds[0], "%@mangoqwq.com");
     assert.equal(typeof binds[binds.length - 1], "number", "last bind is the fresh-window since");
+});
+
+test("verifCodes addr mode handles @domain and naked domain patterns", async () => {
+    // 1. @dengyie.tech
+    const ctxAt = makeCtx({ addr: "@dengyie.tech" }, [CODE_ROW]);
+    await verifCodes(ctxAt.c);
+    const capAt = ctxAt.captured();
+    assert.ok(capAt.sql.includes("to_addr LIKE ?"));
+    assert.equal(capAt.binds[0], "%@dengyie.tech");
+
+    // 2. dengyie.tech
+    const ctxDomain = makeCtx({ addr: "dengyie.tech" }, [CODE_ROW]);
+    await verifCodes(ctxDomain.c);
+    const capDomain = ctxDomain.captured();
+    assert.ok(capDomain.sql.includes("(to_addr = ? OR to_addr LIKE ?)"));
+    assert.equal(capDomain.binds[0], "dengyie.tech");
+    assert.equal(capDomain.binds[1], "%@dengyie.tech");
 });
 
 test("verifCodes addr mode keeps exact to_addr pin", async () => {
