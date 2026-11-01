@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS emails (
     imap_uid TEXT, updated_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
+CREATE INDEX IF NOT EXISTS idx_emails_source_received ON emails(source, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_source_order_cursor
     ON emails(source, COALESCE(internal_date, received_at) DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);

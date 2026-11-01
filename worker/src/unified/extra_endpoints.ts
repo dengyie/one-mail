@@ -1,6 +1,6 @@
 import { Context } from "hono";
 import { resolveScopedEmailFilter } from "./auth_scope.ts";
-import { extractVerifCode } from "./verifcode.ts";
+import { buildVerifAddrClause, escapeSqlLike, mapVerifCodeRows } from "./verifcode.ts";
 import { boundedEmailFilter } from "./unified_sql.ts";
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
@@ -64,9 +64,26 @@ export function stripHtmlToText(html: string): string {
 export const verifCodes = async (c: Context<HonoCustomType>) => {
     const q = c.req.query();
     const addr = typeof q.addr === "string" ? q.addr.trim().toLowerCase() : "";
+    const rawDomain = typeof q.domain === "string" ? q.domain.trim().toLowerCase() : "";
+    const hasValidDomain = Boolean(rawDomain && /^[a-z0-9.-]+$/.test(rawDomain) && rawDomain.includes("."));
+    const isAdmin = Boolean(c.get("unifiedUserAuth")?.isAdmin || c.get("apiKey")?.role === "admin");
+
     // 鉴权作用域直接进入 SQL；addr 仍作为业务过滤条件单独绑定。
-    // domain 模式下全域过滤仅限管理员访问（经 resolveScopedEmailFilter 严格校验 isAdmin/role=admin，非管理员直接拒绝）。
-    const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, { ...q, addr: undefined }));
+    // 非管理员指定域名时，避免 resolveScopedEmailFilter 直接熔断 0=1：
+    // 剥离 domain 走租户身份所有权解析，再在业务层补充安全域名子句，将非管理员限定在其名下该域名的地址中。
+    const scopedInput: Record<string, string | undefined> = { ...q, addr: undefined };
+    if (!isAdmin && hasValidDomain) {
+        scopedInput.domain = undefined;
+    }
+    const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, scopedInput));
+
+    let nonAdminDomainClause = "";
+    const nonAdminDomainParams: (string | number)[] = [];
+    if (!isAdmin && hasValidDomain) {
+        nonAdminDomainClause = " AND emails.source = 'cf_routing' AND emails.to_addr LIKE ? ESCAPE '\\'";
+        nonAdminDomainParams.push(`%@${escapeSqlLike(rawDomain)}`);
+    }
+
     let freshMs = 10 * 60 * 1000;                        // 默认 10 分钟内
     try { freshMs = intOr400(c, q.fresh, freshMs); } catch { return c.json({ error: "invalid fresh" }, 400); }
     // 兼容自适应：若用户通过 API 传入较小数值（如 fresh=10 或 fresh=60），自动识别为分钟并换算为毫秒
@@ -75,46 +92,22 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     }
     const since = Date.now() - freshMs;
 
-    let addrClause = "";
-    const addrParams: (string | number)[] = [];
-    if (addr) {
-        if (addr.startsWith("@")) {
-            addrClause = " AND to_addr LIKE ?";
-            addrParams.push(`%${addr}`);
-        } else if (!addr.includes("@") && addr.includes(".")) {
-            addrClause = " AND (to_addr = ? OR to_addr LIKE ?)";
-            addrParams.push(addr, `%@${addr}`);
-        } else if (addr.includes("*")) {
-            addrClause = " AND to_addr LIKE ?";
-            addrParams.push(addr.replace(/\*/g, "%"));
-        } else {
-            addrClause = " AND to_addr = ?";
-            addrParams.push(addr);
-        }
-    }
+    const { clause: addrClause, params: addrParams } = buildVerifAddrClause(addr);
 
-    // 优化投影：仅当 text_body 为空时截取前 8000 字符 HTML，避免 50 封邮件全量传输大体积 HTML 造成 D1 吞吐浪费与内存抖动
+    // 优化投影：验证码仅出现在前几千字符中，将 text_body 与 html_body 截取前 3000 字符，避免大邮件全量传输造成 D1 吞吐浪费与内存抖动
     const { results } = await c.env.DB.prepare(
-        `SELECT subject, text_body,
+        `SELECT subject,
+                CASE WHEN (text_body IS NOT NULL AND trim(text_body) != '')
+                     THEN substr(text_body, 1, 3000)
+                     ELSE '' END AS text_body,
                 CASE WHEN (text_body IS NULL OR trim(text_body) = '')
-                     THEN substr(html_body, 1, 8000)
+                     THEN substr(html_body, 1, 3000)
                      ELSE '' END AS html_body,
                 from_addr, to_addr, received_at, source FROM emails
-         WHERE ${where}${addrClause} AND received_at >= ? ORDER BY received_at DESC LIMIT 50`
-    ).bind(...params, ...addrParams, since).all();
-    const out = (results as Record<string, unknown>[]).map((r) => {
-        const text = (typeof r.text_body === "string" && r.text_body.trim())
-            ? r.text_body
-            : stripHtmlToText(typeof r.html_body === "string" ? r.html_body : "");
-        return {
-            from_addr: r.from_addr,
-            to_addr: r.to_addr,
-            subject: r.subject,
-            received_at: r.received_at,
-            source: r.source,
-            code: extractVerifCode(`${r.subject ?? ""}\n${text}`),
-        };
-    }).filter((r) => r.code);
+         WHERE ${where}${nonAdminDomainClause}${addrClause} AND received_at >= ? ORDER BY received_at DESC LIMIT 50`
+    ).bind(...params, ...nonAdminDomainParams, ...addrParams, since).all();
+
+    const out = mapVerifCodeRows(results as Record<string, unknown>[], stripHtmlToText);
     return c.json({ results: out });
 };
 

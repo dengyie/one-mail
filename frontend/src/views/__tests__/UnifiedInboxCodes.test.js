@@ -57,3 +57,29 @@ it('displays the domain mail badge for cf_routing catch-all codes and allows cli
   await flush()
   expect(ctx.api.unified.verifcodes).toHaveBeenCalledWith('muse@dengyie.tech', 600000, undefined, expect.any(Object))
 })
+
+it('clears conflicting domain filter when filterByAddr is clicked', async () => {
+  ctx.route.query = { tab: 'codes' }
+  ctx.api.unified.verifcodes.mockResolvedValue({
+    results: [{
+      code: '889900',
+      to_addr: 'user@otherdomain.com',
+      source: 'cf_routing',
+      received_at: 1791334800000,
+    }],
+  })
+  const { host } = await mount(UnifiedInbox)
+  await flush()
+  const domainSelect = host.querySelector('.codes-filter-group select')
+  if (domainSelect) {
+    domainSelect.value = 'dengyie.tech'
+    domainSelect.dispatchEvent(new Event('change'))
+    await flush()
+  }
+  const addrEl = [...host.querySelectorAll('span')].find(el => el.textContent.includes('user@otherdomain.com'))
+  expect(addrEl).toBeDefined()
+  ctx.api.unified.verifcodes.mockClear()
+  addrEl.click()
+  await flush()
+  expect(ctx.api.unified.verifcodes).toHaveBeenCalledWith('user@otherdomain.com', 600000, undefined, expect.any(Object))
+})

@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS emails (
     sync_version INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
+CREATE INDEX IF NOT EXISTS idx_emails_source_received ON emails(source, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);

@@ -33,3 +33,88 @@ export function extractVerifCode(text: string): string | null {
     const m2 = text.match(FALLBACK_6DIGIT_REGEX);
     return m2 ? m2[1] : null;
 }
+
+export interface VerifRow {
+    from_addr?: unknown;
+    to_addr?: unknown;
+    subject?: unknown;
+    received_at?: unknown;
+    code?: unknown;
+    source?: unknown;
+}
+
+export interface VerifAddrClause {
+    clause: string;
+    params: (string | number)[];
+}
+
+/**
+ * 安全转义 SQL LIKE 特殊字符（% 和 _），默认转义符为反斜杠 \
+ */
+export function escapeSqlLike(str: string): string {
+    return str.replace(/([%_\\])/g, "\\$1");
+}
+
+/**
+ * 构造验证码查询的收件人地址过滤子句，安全处理通配符与域名模式
+ */
+export function buildVerifAddrClause(addrInput: string): VerifAddrClause {
+    const addr = addrInput.trim().toLowerCase();
+    if (!addr) return { clause: "", params: [] };
+
+    // 1. @domain 后缀模式（如 @dengyie.tech）
+    if (addr.startsWith("@")) {
+        const domainPart = addr.slice(1);
+        const escaped = escapeSqlLike(domainPart);
+        return {
+            clause: " AND to_addr LIKE ? ESCAPE '\\'",
+            params: [`%@${escaped}`],
+        };
+    }
+
+    // 2. 裸域名模式（如 dengyie.tech）
+    if (!addr.includes("@") && addr.includes(".")) {
+        const escaped = escapeSqlLike(addr);
+        return {
+            clause: " AND (to_addr = ? OR to_addr LIKE ? ESCAPE '\\')",
+            params: [addr, `%@${escaped}`],
+        };
+    }
+
+    // 3. 通配符模式（支持用户友好的 * 映射为 %，并对已有 % 与 _ 进行安全转义）
+    if (addr.includes("*")) {
+        const escaped = escapeSqlLike(addr).replace(/\*/g, "%");
+        return {
+            clause: " AND to_addr LIKE ? ESCAPE '\\'",
+            params: [escaped],
+        };
+    }
+
+    // 4. 精准单地址匹配（使用参数化全等）
+    return {
+        clause: " AND to_addr = ?",
+        params: [addr],
+    };
+}
+
+/**
+ * 将 D1 数据库查询结果转换为带验证码的结构化对象列表
+ */
+export function mapVerifCodeRows(
+    rows: Record<string, unknown>[],
+    stripHtmlFn: (html: string) => string,
+): VerifRow[] {
+    return rows.map((r) => {
+        const text = (typeof r.text_body === "string" && r.text_body.trim())
+            ? r.text_body
+            : stripHtmlFn(typeof r.html_body === "string" ? r.html_body : "");
+        return {
+            from_addr: r.from_addr,
+            to_addr: r.to_addr,
+            subject: r.subject,
+            received_at: r.received_at,
+            source: r.source,
+            code: extractVerifCode(`${r.subject ?? ""}\n${text}`),
+        };
+    }).filter((r) => r.code);
+}
