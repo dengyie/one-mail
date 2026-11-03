@@ -397,9 +397,18 @@ export const getMutationStatus = async (c: Context<HonoCustomType>) => {
     });
 };
 
-const collapseDuplicatePendingIntents = async (c: Context<HonoCustomType>, now: number) => {
-    // Defensive repair for racing/legacy duplicate desired-state intents.
-    await c.env.DB.prepare(
+/**
+ * Defensive repair for racing/legacy duplicate desired-state intents.
+ *
+ * Returned as prepared statements instead of executed inline so the claim path
+ * can run lease recovery and both repairs inside a single D1 round trip. D1 bills
+ * and times every round trip, and a claim must never fan out into O(batch)
+ * statements (see the claim timeout regression note on claimMutationJobs).
+ */
+const collapseDuplicatePendingIntents = (
+    c: Context<HonoCustomType>, now: number,
+): D1PreparedStatement[] => [
+    c.env.DB.prepare(
         `UPDATE mail_mutation_jobs AS current
             SET status = 'superseded', completed_at = ?, updated_at = ?
           WHERE current.status = 'pending'
@@ -411,8 +420,8 @@ const collapseDuplicatePendingIntents = async (c: Context<HonoCustomType>, now: 
                    AND newer.status = 'pending'
                    AND newer.rowid > current.rowid
             )`,
-    ).bind(now, now).run();
-    await c.env.DB.prepare(
+    ).bind(now, now),
+    c.env.DB.prepare(
         `UPDATE mail_mutation_jobs AS current
             SET status = 'superseded', completed_at = ?, updated_at = ?
           WHERE current.status = 'pending'
@@ -425,8 +434,8 @@ const collapseDuplicatePendingIntents = async (c: Context<HonoCustomType>, now: 
                    AND newer.status = 'pending'
                    AND newer.rowid > current.rowid
             )`,
-    ).bind(now, now).run();
-};
+    ).bind(now, now),
+];
 
 export const claimMutationJobs = async (c: Context<HonoCustomType>) => {
     const body = await c.req.json<ClaimBody>().catch((): ClaimBody => ({}));
@@ -439,14 +448,17 @@ export const claimMutationJobs = async (c: Context<HonoCustomType>) => {
     const now = Date.now();
     const leaseUntil = now + LEASE_MS;
 
-    // Recover crashed workers. Desired-state operations can be retried. Move and
-    // delete adapters must also implement absence/same-destination recovery.
-    await c.env.DB.prepare(
-        `UPDATE mail_mutation_jobs
-            SET status = 'pending', lease_token = NULL, lease_until = NULL, updated_at = ?
-          WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?`,
-    ).bind(now, now).run();
-    await collapseDuplicatePendingIntents(c, now);
+    // Recover crashed workers, then collapse stale duplicate intents, in one round
+    // trip. Desired-state operations can be retried. Move and delete adapters must
+    // also implement absence/same-destination recovery.
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `UPDATE mail_mutation_jobs
+                SET status = 'pending', lease_token = NULL, lease_until = NULL, updated_at = ?
+              WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?`,
+        ).bind(now, now),
+        ...collapseDuplicatePendingIntents(c, now),
+    ]);
 
     // Only one job per email may be processing. A move can replace an IMAP UID;
     // later read/star/delete jobs must not leave the Worker in the same claim
@@ -470,17 +482,23 @@ export const claimMutationJobs = async (c: Context<HonoCustomType>) => {
           LIMIT ?`,
     ).bind(now, requested).all<{ id: string; email_id: string; operation: MailMutationOperation }>();
 
-    for (const candidate of results || []) {
-        await c.env.DB.prepare(
-            `UPDATE mail_mutation_jobs
-                SET status = 'processing', attempts = attempts + 1,
-                    lease_token = ?, lease_until = ?, updated_at = ?
-              WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?
-                AND NOT EXISTS (
-                    SELECT 1 FROM mail_mutation_jobs p
-                     WHERE p.email_id = ? AND p.status = 'processing'
-                )`,
-        ).bind(leaseToken, leaseUntil, now, candidate.id, now, candidate.email_id).run();
+    // Lease every candidate in ONE round trip. batch() runs the statements
+    // sequentially inside one implicit transaction, so the per-email "no other
+    // processing job" guard still observes the leases created earlier in this
+    // batch. A per-candidate `await` here costs one D1 round trip each and, once a
+    // batch fills up, exceeds the aggregator's fixed claim read timeout.
+    const claimStatements = (results || []).map((candidate) => c.env.DB.prepare(
+        `UPDATE mail_mutation_jobs
+            SET status = 'processing', attempts = attempts + 1,
+                lease_token = ?, lease_until = ?, updated_at = ?
+          WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?
+            AND NOT EXISTS (
+                SELECT 1 FROM mail_mutation_jobs p
+                 WHERE p.email_id = ? AND p.status = 'processing'
+            )`,
+    ).bind(leaseToken, leaseUntil, now, candidate.id, now, candidate.email_id));
+    if (claimStatements.length) {
+        await c.env.DB.batch(claimStatements);
     }
 
     const claimed = await c.env.DB.prepare(

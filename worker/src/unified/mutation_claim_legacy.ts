@@ -24,28 +24,29 @@ export const claimLegacyMutationJobs = async (c: Context<HonoCustomType>) => {
     const now = Date.now();
     const leaseUntil = now + LEASE_MS;
 
-    // Recover expired leases for every operation. New operations remain pending
-    // but are intentionally invisible to this legacy endpoint.
-    await c.env.DB.prepare(
-        `UPDATE mail_mutation_jobs
-            SET status = 'pending', lease_token = NULL, lease_until = NULL, updated_at = ?
-          WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?`,
-    ).bind(now, now).run();
-
-    // Defensive collapse of old duplicate desired-state rows.
-    await c.env.DB.prepare(
-        `UPDATE mail_mutation_jobs AS current
-            SET status = 'superseded', completed_at = ?, updated_at = ?
-          WHERE current.status = 'pending'
-            AND current.operation IN ('set_read', 'set_starred')
-            AND EXISTS (
-                SELECT 1 FROM mail_mutation_jobs newer
-                 WHERE newer.email_id = current.email_id
-                   AND newer.operation = current.operation
-                   AND newer.status = 'pending'
-                   AND newer.rowid > current.rowid
-            )`,
-    ).bind(now, now).run();
+    // Recover expired leases for every operation, then collapse old duplicate
+    // desired-state rows, in one round trip. New operations remain pending but are
+    // intentionally invisible to this legacy endpoint.
+    await c.env.DB.batch([
+        c.env.DB.prepare(
+            `UPDATE mail_mutation_jobs
+                SET status = 'pending', lease_token = NULL, lease_until = NULL, updated_at = ?
+              WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?`,
+        ).bind(now, now),
+        c.env.DB.prepare(
+            `UPDATE mail_mutation_jobs AS current
+                SET status = 'superseded', completed_at = ?, updated_at = ?
+              WHERE current.status = 'pending'
+                AND current.operation IN ('set_read', 'set_starred')
+                AND EXISTS (
+                    SELECT 1 FROM mail_mutation_jobs newer
+                     WHERE newer.email_id = current.email_id
+                       AND newer.operation = current.operation
+                       AND newer.status = 'pending'
+                       AND newer.rowid > current.rowid
+                )`,
+        ).bind(now, now),
+    ]);
 
     const { results } = await c.env.DB.prepare(
         `SELECT id, email_id FROM mail_mutation_jobs j
@@ -66,18 +67,22 @@ export const claimLegacyMutationJobs = async (c: Context<HonoCustomType>) => {
           LIMIT ?`,
     ).bind(now, requested).all<{ id: string; email_id: string }>();
 
-    for (const candidate of results || []) {
-        await c.env.DB.prepare(
-            `UPDATE mail_mutation_jobs
-                SET status = 'processing', attempts = attempts + 1,
-                    lease_token = ?, lease_until = ?, updated_at = ?
+    // Lease every candidate in ONE round trip (see claimMutationJobs): a
+    // per-candidate `await` costs one D1 round trip each and overflows the
+    // aggregator's fixed claim read timeout once a batch fills up.
+    const claimStatements = (results || []).map((candidate) => c.env.DB.prepare(
+        `UPDATE mail_mutation_jobs
+            SET status = 'processing', attempts = attempts + 1,
+                lease_token = ?, lease_until = ?, updated_at = ?
               WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?
                 AND operation IN ('set_read', 'set_starred')
                 AND NOT EXISTS (
                     SELECT 1 FROM mail_mutation_jobs p
                      WHERE p.email_id = ? AND p.status = 'processing'
                 )`,
-        ).bind(leaseToken, leaseUntil, now, candidate.id, now, candidate.email_id).run();
+    ).bind(leaseToken, leaseUntil, now, candidate.id, now, candidate.email_id));
+    if (claimStatements.length) {
+        await c.env.DB.batch(claimStatements);
     }
 
     const claimed = await c.env.DB.prepare(
