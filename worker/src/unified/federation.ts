@@ -31,7 +31,7 @@ import { executeCursorList, executeUnboundedOffsetList, type UnifiedListRow } fr
 import { UNIFIED_EMAIL_ORDER, boundedEmailFilter } from "./unified_sql.ts";
 import { listFolders } from "./folders.ts";
 import { buildVerifAddrClause, escapeSqlLike, mapVerifCodeRows, type VerifRow } from "./verifcode.ts";
-import { stripHtmlToText } from "./extra_endpoints.ts";
+import { stripHtmlToText, type MailboxOption } from "./extra_endpoints.ts";
 import { safeAttachmentId } from "./attachments.ts";
 
 export { hasRemoteShards, loadShardMap };
@@ -546,6 +546,37 @@ const withDegraded = (body: Record<string, unknown>, degraded: string[]): Record
     return body;
 };
 
+/**
+ * 分片邮箱合并：同一 account_id 只保留一条并累加邮件量。
+ *
+ * 计数用于排序（主力邮箱优先），来源地址取首个非空值；分片侧旧版本没有
+ * mailboxes 字段，此时由 accounts 兜底成无标签条目，避免直接丢失筛选项。
+ */
+const mergeMailboxSets = (sets: MailboxOption[][]): MailboxOption[] => {
+    const merged = new Map<string, MailboxOption>();
+    for (const set of sets) {
+        for (const row of set) {
+            if (!row || typeof row.account_id !== "string" || !row.account_id) continue;
+            const existing = merged.get(row.account_id);
+            if (!existing) {
+                merged.set(row.account_id, {
+                    account_id: row.account_id,
+                    source: row.source ?? null,
+                    to_addr: row.to_addr ?? null,
+                    count: Number(row.count) || 0,
+                });
+                continue;
+            }
+            existing.count += Number(row.count) || 0;
+            existing.source ??= row.source ?? null;
+            existing.to_addr ??= row.to_addr ?? null;
+        }
+    }
+    return [...merged.values()]
+        .sort((a, b) => b.count - a.count || a.account_id.localeCompare(b.account_id))
+        .slice(0, 100);
+};
+
 export const federatedCount = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
@@ -657,25 +688,39 @@ export const federatedMeta = async (
 ): Promise<Response> => {
     const limits = requestLimits(c, SHARD_LIST_MAX_BYTES);
     const scoped = await localScopedWhere(c, map, {});
-    const [sourceRes, accountRes, toAddrRes] = await Promise.all([
+    const [sourceRes, mailboxRes, toAddrRes] = await Promise.all([
         c.env.DB.prepare(`SELECT DISTINCT source FROM emails WHERE ${scoped.where} AND source IS NOT NULL LIMIT 50`).bind(...scoped.params).all<{ source: string }>(),
-        c.env.DB.prepare(`SELECT DISTINCT account_id FROM emails WHERE ${scoped.where} AND account_id IS NOT NULL LIMIT 100`).bind(...scoped.params).all<{ account_id: string }>(),
+        c.env.DB.prepare(
+            `SELECT account_id, MAX(source) AS source, MAX(to_addr) AS to_addr, count(*) AS total
+             FROM emails
+             WHERE ${scoped.where} AND account_id IS NOT NULL AND account_id != '' AND (source IS NULL OR source != 'cf_routing')
+             GROUP BY account_id ORDER BY total DESC, account_id LIMIT 100`,
+        ).bind(...scoped.params).all<{ account_id: string; source: string | null; to_addr: string | null; total: number | string }>(),
         c.env.DB.prepare(`SELECT DISTINCT to_addr FROM emails WHERE ${scoped.where} AND to_addr IS NOT NULL LIMIT 200`).bind(...scoped.params).all<{ to_addr: string }>(),
     ]);
     const { results, degraded } = await fanOutExtra<{
         sources?: string[];
         accounts?: string[];
+        mailboxes?: MailboxOption[];
         to_addrs?: string[];
     }>(c, map, "/shard/meta", {}, limits);
+    const mailboxes = mergeMailboxSets([
+        (mailboxRes.results || []).map((row) => ({
+            account_id: row.account_id,
+            source: row.source ?? null,
+            to_addr: row.to_addr ?? null,
+            count: Number(row.total) || 0,
+        })),
+        ...results.map((result) => result.data.mailboxes || []),
+    ]);
     return c.json(withDegraded({
         sources: mergeStringSets([
             (sourceRes.results || []).map((row) => row.source),
             ...results.map((result) => result.data.sources),
         ], 50),
-        accounts: mergeStringSets([
-            (accountRes.results || []).map((row) => row.account_id),
-            ...results.map((result) => result.data.accounts),
-        ], 100),
+        // accounts 由 mailboxes 派生，保证两个字段恒一致（mailbox 数量远小于 100）。
+        accounts: mailboxes.map((row) => row.account_id),
+        mailboxes,
         to_addrs: mergeStringSets([
             (toAddrRes.results || []).map((row) => row.to_addr),
             ...results.map((result) => result.data.to_addrs),

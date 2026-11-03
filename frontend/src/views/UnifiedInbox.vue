@@ -255,7 +255,9 @@
       <aside class="inbox-context">
         <section v-if="hasAccess" class="inbox-context-card">
           <h3><MailIcon name="layers" :size="16" />{{ w('connectedAccounts') }}</h3>
-          <div v-for="account in contextAccounts.slice(0, 4)" :key="account.value" class="inbox-account"><span class="inbox-account__icon"><MailIcon name="mail" :size="15" /></span><span class="inbox-account__label" :title="account.label">{{ account.label }}</span></div>
+          <div class="inbox-account-list">
+            <div v-for="account in contextAccounts" :key="account.value" class="inbox-account"><span class="inbox-account__icon"><MailIcon name="mail" :size="15" /></span><span class="inbox-account__label" :title="account.label">{{ account.label }}</span></div>
+          </div>
           <p v-if="!contextAccounts.length">{{ w('noAccounts') }}</p>
           <button v-if="isLoggedIn" type="button" class="workspace-link mt-4" @click="router.push(getRouterPathWithLang('/user/external-accounts', locale))">{{ w('manageAccounts') }}<MailIcon name="arrow-right" :size="13" /></button>
         </section>
@@ -700,7 +702,19 @@ const SOURCE_MAP = {
 
 const userAccounts = ref([])
 const boundAddresses = ref([])
+const metaMailboxes = ref([])
 const optionRows = ref([])
+
+// 外部邮箱的可读名：优先用户自建账户的 label，退化为「来源 + 收件地址」。
+// 静态同步账号（例如 config.json 里的 qq-main）没有 user_mail_accounts 行，
+// 只能靠 meta.mailboxes 反推，这里统一补上可读标签，避免下拉框出现裸 account_id。
+const mailboxLabel = (mailbox) => {
+  const sourceKey = mailbox.source ? SOURCE_MAP[mailbox.source] : ''
+  const prefix = sourceKey ? t(sourceKey) : (mailbox.source || '')
+  const addr = mailbox.to_addr || mailbox.account_id
+  if (prefix && addr) return `${prefix} (${addr})`
+  return prefix || addr || ''
+}
 
 const sourceOptions = computed(() => {
   const set = new Set()
@@ -715,31 +729,46 @@ const sourceOptions = computed(() => {
 const accountOptions = computed(() => {
   const list = []
   const seenValues = new Set()
+  const seenAddrs = new Set()
 
   // 1. 用户配置的外部邮箱（最优先，显示 label + username）
   userAccounts.value.forEach(a => {
     const val = a.id
     if (val && !seenValues.has(val)) {
       seenValues.add(val)
+      if (a.username) seenAddrs.add(a.username.toLowerCase())
       const label = a.label ? `${a.label} (${a.username})` : a.username
       list.push({ label, value: val })
     }
   })
 
-  // 2. 绑定的本站域名邮箱
+  // 2. 邮件投影里的真实外部邮箱（覆盖 config.json 静态账号，D1 无账户行）
+  metaMailboxes.value.forEach(m => {
+    const val = m.account_id
+    if (!val || seenValues.has(val)) return
+    const addr = m.to_addr ? m.to_addr.toLowerCase() : ''
+    if (addr && seenAddrs.has(addr)) return
+    seenValues.add(val)
+    if (addr) seenAddrs.add(addr)
+    list.push({ label: mailboxLabel(m), value: val })
+  })
+
+  // 3. 绑定的本站域名邮箱
   boundAddresses.value.forEach(b => {
     const name = typeof b === 'string' ? b : b?.name
-    if (name && !seenValues.has(name)) {
+    if (name && !seenValues.has(name) && !seenAddrs.has(name)) {
       seenValues.add(name)
+      seenAddrs.add(name)
       list.push({ label: t('domainPrefix', { name }), value: name })
     }
   })
 
-  // 3. 从邮件样本中发现的 account_id / to_addr（兜底兼容）
+  // 4. 从邮件样本中发现的 account_id / to_addr（兜底兼容）
   optionRows.value.forEach(r => {
     const val = r.to_addr || r.account_id
-    if (val && !seenValues.has(val)) {
+    if (val && !seenValues.has(val) && !seenAddrs.has(val)) {
       seenValues.add(val)
+      seenAddrs.add(val)
       list.push({ label: val, value: val })
     }
   })
@@ -748,13 +777,9 @@ const accountOptions = computed(() => {
 })
 
 const contextAccounts = computed(() => {
-  const accounts = new Map()
-  userAccounts.value.forEach(account => accounts.set(account.username || account.id, { value: account.username || account.id, label: account.label || account.username || account.id }))
-  boundAddresses.value.forEach(address => {
-    const value = typeof address === 'string' ? address : address.name
-    if (value && !accounts.has(value)) accounts.set(value, { value, label: value })
-  })
-  return accounts.size ? [...accounts.values()] : accountOptions.value
+  // 侧栏与筛选下拉共用同一份去重结果：静态 config 邮箱以前既没有 D1 账户行、
+  // 又会因聚合键不同而在侧栏重复展示，直接复用 accountOptions 保证恒等。
+  return accountOptions.value
 })
 
 const optionsError = ref('')
@@ -778,6 +803,7 @@ const resetOptions = () => {
   optionsError.value = ''
   userAccounts.value = []
   boundAddresses.value = []
+  metaMailboxes.value = []
   optionRows.value = []
 }
 
@@ -812,6 +838,7 @@ const loadOptions = async () => {
       ;(res.accounts || []).forEach(account_id => rows.push({ account_id }))
       ;(res.to_addrs || []).forEach(to_addr => rows.push({ to_addr }))
       optionRows.value = rows
+      metaMailboxes.value = res.mailboxes || []
       if (res.degraded?.length) throw new Error(`${t('list.incompleteResults')} (${res.degraded.join(', ')})`)
     }))
     const results = await Promise.allSettled(tasks)

@@ -423,6 +423,9 @@ test("gateway and real SQLite shard isolate detail/delete/status/meta for two te
             assert.equal((await app.request(`https://gateway.invalid/api/unified/mutations/${job_id}`, { headers }, env)).status, 200);
             const meta = await (await app.request("https://gateway.invalid/api/unified/meta", { headers }, env)).json();
             assert.deepEqual(meta.accounts, ["mine"]);
+            assert.deepEqual(meta.mailboxes, [
+                { account_id: "mine", source: "imap_gmail", to_addr: "mine@test", count: 1 },
+            ]);
             assert.deepEqual(meta.to_addrs, ["mine@test"]);
             const list = await (await federation.federatedListEmails(context(readonly), map, { rest: {}, limit: 10, withCount: false })).json();
             assert.deepEqual(list.results.map(row => row.id), ["owned"]);

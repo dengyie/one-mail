@@ -191,9 +191,21 @@ VITE_CF_WEB_ANALY_TOKEN=
 | `/api/unified/emails/:id` | GET | 单封邮件（含 raw，执行归属校验） | 用户 JWT / API-key |
 | `/api/unified/count` | GET | 邮件计数 | 用户 JWT / API-key |
 | `/api/unified/verifcodes` | GET | 验证码邮件查询（`addr`/`fresh`，执行归属校验） | 用户 JWT / API-key |
+| `/api/unified/meta` | GET | 筛选项：`sources`、`accounts`、`mailboxes`、`to_addrs`（按当前鉴权作用域聚合） | 用户 JWT / API-key |
 | `/api/unified/emails/:id/read` | POST | 标记已读（执行归属校验，readonly key 被 403） | 用户 JWT / API-key |
 | `/api/unified/ingest` | POST | 聚合器写入 | `x-admin-auth` |
 | `/admin/unified/keys` | POST | 创建 API-key | `x-admin-auth` |
+
+`/api/unified/meta` 的 `mailboxes` 是「按邮箱筛选」下拉框的数据源：按 `account_id` 聚合邮件投影，返回
+`{ account_id, source, to_addr, count }`，并按邮件量倒序（长尾的一次性收件地址不会把主力邮箱挤出 `LIMIT`）。
+它覆盖**只存在于聚合器 `config.json` 的静态账号**（例如 `qq-main`）——这类账号没有 `user_mail_accounts`
+行，`/user_api/mail_accounts` 永远查不到，只能从 `emails` 反推。`cf_routing` 本站地址不进入这一组
+（它们由 `/user_api/bind_address` 提供，避免重复）；`accounts` 保持字符串数组以兼容旧调用方，内容与
+`mailboxes` 一一对应。
+
+列表排序为 `COALESCE(internal_date, received_at) DESC`。ingest 写入前会把超出 24 小时时钟容差的未来时间戳
+收敛（`received_at` 回退到 `Received` 头里的收信服务器时间，再回退到入库时刻；`internal_date` 置空），
+因此伪造 `Date` 头的邮件无法长期占据列表首行。
 
 ---
 

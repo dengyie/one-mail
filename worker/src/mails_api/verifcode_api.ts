@@ -84,7 +84,7 @@ export const fetchAddressVerifCodes = async (
                     const isDup = out.some(
                         (existing) =>
                             existing.code === code &&
-                            Math.abs(existing.received_at - createdTime) < 10000 &&
+                            Math.abs(Number(existing.received_at) - createdTime) < 10000 &&
                             (!rowSender || !existing.from_addr || existing.from_addr === rowSender)
                     );
                     if (!isDup) {
@@ -105,7 +105,7 @@ export const fetchAddressVerifCodes = async (
     }
 
     // 按接收时间降序排序（确保最新收到的验证码排在首位）
-    out.sort((a, b) => b.received_at - a.received_at);
+    out.sort((a, b) => Number(b.received_at) - Number(a.received_at));
 
     return out.slice(0, lim);
 };
