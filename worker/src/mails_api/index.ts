@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 
 import parsed_mail_api from './parsed_mail_api';
 import mails_crud from './mails_crud';
+import verifcode_api from './verifcode_api';
 import new_address from './new_address';
 import auto_reply from './auto_reply'
 import webhook_settings from './webhook_settings';
@@ -33,6 +34,10 @@ api.delete('/api/mails/:id', mails_crud.deleteMail)
 // parsed mail (server-side parsed subject/text/html/attachments)
 api.get('/api/parsed_mails', parsed_mail_api.listParsedMails)
 api.get('/api/parsed_mail/:mail_id', parsed_mail_api.getParsedMail)
+
+// verification code (one-shot extraction for AI agents / automation)
+api.get('/api/verifcodes', verifcode_api.listVerifCodes)
+api.get('/api/verifcode', verifcode_api.getLatestVerifCode)
 
 // address settings / lifecycle
 api.get('/api/settings', mails_crud.getSettings)

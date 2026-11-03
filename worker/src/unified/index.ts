@@ -18,6 +18,7 @@ import { claimLegacyMutationJobs } from "./mutation_claim_legacy.ts";
 import { listFolders } from "./folders.ts";
 import { createKey } from "./key_admin";
 import { lookupKey, canAccess } from "./api_keys";
+import { verifyActiveAddressJwt } from "../core/auth.ts";
 import { wantsEmailCount } from "../core/count_opt_in.ts";
 import { resolveScopedEmailFilter, checkRowAccess } from "./auth_scope";
 import { cursorPredicate, decodeEmailCursor, encodeEmailCursor } from "./cursor";
@@ -92,12 +93,24 @@ api.use("/api/unified/*", async (c, next) => {
         return;
     }
 
-    // 回退：Bearer API-key
+    // 回退：Bearer API-key 或 Address JWT
     const auth = c.req.raw.headers.get("authorization") || "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
     if (!token) return c.json({ error: "missing bearer token or login" }, 401);
     const keyRow = await lookupKey(c.env, token);
-    if (!keyRow) return c.json({ error: "invalid api key" }, 401);
+    if (!keyRow) {
+        // API-key 未命中时，检查是否为合法有效的邮箱 Address JWT
+        const addressPayload = await verifyActiveAddressJwt(c, token);
+        if (addressPayload) {
+            if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+                return c.json({ error: "Address JWT is restricted to read-only requests" }, 403);
+            }
+            c.set("addressAuth", addressPayload);
+            await next();
+            return;
+        }
+        return c.json({ error: "invalid api key" }, 401);
+    }
     // 校验 method + 用户显式传入的 source/account_id 是否在白名单内
     const q = c.req.query();
     if (!canAccess(keyRow, c.req.method, q.source, q.account_id)) {
@@ -111,6 +124,9 @@ const getUnifiedPageQuota = async (c: Context<HonoCustomType>): Promise<number> 
     const userAuth = c.get("unifiedUserAuth");
     if (userAuth) {
         return getMaxUnifiedPageSize(c, userAuth.userRole);
+    }
+    if (c.get("addressAuth")) {
+        return DEFAULT_MAX_UNIFIED_PAGE_SIZE;
     }
     // API key 没有用户 role：admin key 使用 Worker 硬上限，readonly key 使用普通用户默认值。
     return c.get("apiKey")?.role === "admin"

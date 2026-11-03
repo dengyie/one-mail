@@ -68,6 +68,34 @@ describe('unified inbox isolation and lifecycle', () => {
   })
 })
 
+describe('account filter options', () => {
+  it('lists a config-only mailbox that has no user_mail_accounts row', async () => {
+    ctx.api.unified.meta.mockResolvedValue({
+      sources: ['imap_qq'], accounts: ['qq-main'], to_addrs: ['601560588@qq.com'],
+      mailboxes: [{ account_id: 'qq-main', source: 'imap_qq', to_addr: '601560588@qq.com', count: 12 }],
+    })
+    const { host } = await mount(UnifiedInbox)
+    const labels = [...host.querySelectorAll('.inbox-account__label')].map(node => node.textContent)
+    expect(labels).toContain('QQ Mail (601560588@qq.com)')
+  })
+
+  it('prefers the configured account label and never duplicates the same mailbox', async () => {
+    ctx.api.userMailAccounts.list.mockResolvedValue({ results: [{ id: 'qq-main', label: 'QQ 主邮箱', username: '601560588@qq.com' }] })
+    ctx.api.unified.meta.mockResolvedValue({
+      sources: ['imap_qq', 'imap_163'], accounts: ['qq-main', 'mail163-main'], to_addrs: ['601560588@qq.com'],
+      mailboxes: [
+        { account_id: 'qq-main', source: 'imap_qq', to_addr: '601560588@qq.com', count: 12 },
+        { account_id: 'mail163-main', source: 'imap_163', to_addr: 'mango9502@163.com', count: 4 },
+      ],
+    })
+    const { host } = await mount(UnifiedInbox)
+    const labels = [...host.querySelectorAll('.inbox-account__label')].map(node => node.textContent)
+    expect(labels).toContain('QQ 主邮箱 (601560588@qq.com)')
+    expect(labels).toContain('NetEase 163 (mango9502@163.com)')
+    expect(labels.filter(label => label.includes('601560588@qq.com'))).toHaveLength(1)
+  })
+})
+
 describe('cursor pagination', () => {
   it('walks beyond 500 rows using cursors and no repeated count', async () => {
     ctx.api.unified.listEmails.mockImplementation(async params => {

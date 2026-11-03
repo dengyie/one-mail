@@ -208,9 +208,22 @@ cross-origin to the Worker via `VITE_API_BASE`, so the page host needs no revers
 | `/api/unified/emails/:id` | GET | Single mail (incl. raw, scoped) | User JWT / API-key |
 | `/api/unified/count` | GET | Mail count | User JWT / API-key |
 | `/api/unified/verifcodes` | GET | Verification-code mail query (`addr`/`fresh`, scoped) | User JWT / API-key |
+| `/api/unified/meta` | GET | Filter options: `sources`, `accounts`, `mailboxes`, `to_addrs` (aggregated within the current auth scope) | User JWT / API-key |
 | `/api/unified/emails/:id/read` | POST | Mark as read (scoped; `readonly` key → 403) | User JWT / API-key |
 | `/api/unified/ingest` | POST | Ingest from aggregator | `x-admin-auth` |
 | `/admin/unified/keys` | POST | Create API-key | `x-admin-auth` |
+
+`mailboxes` in `/api/unified/meta` is the data source for the "filter by mailbox" dropdown: it groups the mail
+projection by `account_id` and returns `{ account_id, source, to_addr, count }` ordered by mail volume, so
+long-tail throwaway recipients cannot push primary mailboxes out of the `LIMIT`. It also covers **static accounts
+that only exist in the aggregator `config.json`** (e.g. `qq-main`): those have no `user_mail_accounts` row, are
+invisible to `/user_api/mail_accounts`, and can only be derived from `emails`. `cf_routing` addresses are kept out
+of this group (they come from `/user_api/bind_address`, avoiding duplicates); `accounts` stays a string array for
+backward compatibility and mirrors `mailboxes`.
+
+List ordering is `COALESCE(internal_date, received_at) DESC`. Before writing, ingest collapses future timestamps
+beyond a 24-hour clock-skew window (`received_at` falls back to the receiving-server time in the `Received` header,
+then to ingest time; `internal_date` is nulled), so a forged `Date` header cannot pin a mail to the top of the list.
 
 ---
 

@@ -393,3 +393,58 @@ test("distinct accounts in one batch each get their own lifecycle lookup", async
   await insertEmails({ env: fakeEnv }, [...batchOf("qq", 3), ...batchOf("gmail", 2)]);
   assert.deepEqual(lifecycleQueries.sort(), ["gmail", "qq"]);
 });
+
+test("future-dated emails fall back to the Received header time", () => {
+  const now = Date.UTC(2026, 10, 3, 4, 0, 0); // 2026-11-03T04:00:00Z
+  const forged = Date.UTC(2026, 10, 23, 11, 47, 49); // sender Date header, +20d
+  const received = Date.UTC(2026, 9, 23, 11, 47, 50); // QQ Received header
+  const headers = JSON.stringify({
+    Received: "from tintgate.com ([2001:df1:7880:100::1973])\r\n\tby mx.qq.com (NewMX) with SMTP id X\r\n\tfor <me@qq.com>; Fri, 23 Oct 2026 19:47:50 +0800",
+    Date: "Mon, 23 Nov 2026 11:47:49 +0000",
+  });
+  const p = toEmailInsertParams({
+    source: "imap_qq", account_id: "qq-main", from_addr: "a@b.com", to_addr: "me@qq.com",
+    received_at: forged, internal_date: forged, headers_json: headers,
+  }, "uuid-future", now);
+  assert.equal(p[8], received, "received_at is pulled back to the receiving server time");
+  assert.equal(p[9], null, "untrusted future internal_date is dropped so COALESCE uses received_at");
+});
+
+test("future-dated emails without a usable Received header fall back to ingest time", () => {
+  const now = Date.UTC(2026, 10, 3, 4, 0, 0);
+  const forged = now + 20 * 24 * 60 * 60 * 1000;
+  const p = toEmailInsertParams({
+    source: "imap_qq", account_id: "qq", from_addr: "a@b.com", to_addr: "me@qq.com",
+    received_at: forged, internal_date: forged,
+  }, "uuid-future-2", now);
+  assert.equal(p[8], now);
+  assert.equal(p[9], null);
+});
+
+test("timestamps within the clock-skew window and past timestamps are untouched", () => {
+  const now = Date.UTC(2026, 10, 3, 4, 0, 0);
+  const nearFuture = now + 60 * 60 * 1000; // +1h sender clock skew
+  const past = Date.UTC(2025, 0, 1, 0, 0, 0);
+  const a = toEmailInsertParams({
+    source: "imap_qq", account_id: "qq", from_addr: "a@b.com", to_addr: "me@qq.com",
+    received_at: nearFuture, internal_date: nearFuture,
+  }, "uuid-skew", now);
+  assert.equal(a[8], nearFuture);
+  assert.equal(a[9], nearFuture);
+  const b = toEmailInsertParams({
+    source: "imap_qq", account_id: "qq", from_addr: "a@b.com", to_addr: "me@qq.com",
+    received_at: past, internal_date: past,
+  }, "uuid-past", now);
+  assert.equal(b[8], past);
+  assert.equal(b[9], past);
+});
+
+test("pre-write validation (nowMs = 0) never rewrites timestamps", () => {
+  const future = Date.UTC(2030, 0, 1);
+  const p = toEmailInsertParams({
+    source: "imap_qq", account_id: "qq", from_addr: "a@b.com", to_addr: "me@qq.com",
+    received_at: future, internal_date: future,
+  }, "validation", 0);
+  assert.equal(p[8], future);
+  assert.equal(p[9], future);
+});

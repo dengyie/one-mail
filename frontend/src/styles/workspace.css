@@ -173,6 +173,7 @@ html.dark .inbox-sender-avatar.tone-4 { background: #473432; color: #d4aeaa; }
 .inbox-context { display: flex; flex-direction: column; gap: 17px; }
 .inbox-context-card { padding: 19px; border: 1px solid var(--mail-line); border-radius: var(--mail-radius); background: var(--mail-surface); }
 .inbox-context-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 16px; color: var(--mail-text); font-size: 12px; font-weight: 600; }
+.inbox-account-list { max-height: 268px; overflow-y: auto; }
 .inbox-account { display: flex; align-items: center; gap: 9px; padding: 10px 0; border-bottom: 1px solid var(--mail-line); font-size: 11px; }
 .inbox-account:last-of-type { border-bottom: none; }
 .inbox-account__icon { height: 29px; width: 29px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--mail-surface-soft); color: var(--mail-accent); }

@@ -61,6 +61,22 @@ export const resolveScopedEmailFilter = async (
         };
     }
 
+    const addressAuth = c.get("addressAuth");
+    if (addressAuth) {
+        // Address JWT 凭据严格隔离在其专属地址内，禁止跨域或跨地址刺探
+        if (q.domain) {
+            return { where: "0=1", params: [] };
+        }
+        if (q.addr && q.addr.trim().toLowerCase() !== addressAuth.address.toLowerCase()) {
+            return { where: "0=1", params: [] };
+        }
+        const base = buildEmailFilters(q);
+        return {
+            where: `(${base.where}) AND emails.to_addr = ?`,
+            params: [...base.params, addressAuth.address.toLowerCase()],
+        };
+    }
+
     const key = c.get("apiKey");
     if (!key) return { where: "0=1", params: [] };
     if (q.domain && key.role !== "admin") {
@@ -110,6 +126,11 @@ export const checkRowAccess = async (
             row.to_addr ?? "",
         ).first<number>("allowed");
         return Number(allowed ?? 0) === 1;
+    }
+
+    const addressAuth = c.get("addressAuth");
+    if (addressAuth) {
+        return (row.to_addr ?? "").toLowerCase() === addressAuth.address.toLowerCase();
     }
 
     const key = c.get("apiKey");

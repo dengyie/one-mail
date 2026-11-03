@@ -8,6 +8,10 @@
 
 ## v1.11.0(main)
 
+- fix: |Worker| 统一收件箱不再被伪造未来时间戳的邮件长期置顶：列表按 `COALESCE(internal_date, received_at) DESC` 排序，一封把 `Date`/INTERNALDATE 写到 20 天后的广告邮件会一直排第一直到那个时刻。ingest 的统一写入口 `toEmailInsertParams` 现在把超出 24 小时时钟容差的未来时间戳收敛：`received_at` 回退到 `Received` 头末尾的收信服务器时间，再回退到入库时刻；`internal_date` 直接置空，避免 `COALESCE` 继续取到未来值；仅用于写入前参数校验的 `nowMs = 0` 路径保持原值不动。同时修正 `verifcode_api` 中对 `unknown` 时间戳做算术导致的类型错误。
+
+- fix: |Worker/Frontend| 统一收件箱「按邮箱筛选」现在能列出只存在于聚合器 `config.json` 的静态邮箱（如 QQ）：`/api/unified/meta` 新增 `mailboxes`（按 `account_id` 聚合邮件量、排除 `cf_routing` 域名地址、按邮件量倒序），静态账号没有 `user_mail_accounts` 行，此前只能从被截断的 `accounts`/`to_addrs` 里碰运气，`qq-main` 会被长尾一次性收件地址挤出 `LIMIT 100`；`accounts` 由 `mailboxes` 派生保持兼容。前端按「用户账户 → meta 邮箱 → 绑定域名地址 → 兜底」合并并按 `account_id` 与收件地址去重，静态邮箱以「来源 + 地址」显示可读标签；侧栏不再硬性只显示 4 个邮箱，并改为复用同一份去重结果。
+
 - feat: |Frontend/Worker| 管理端新增「附件管理」Tab，按统一收件箱的附件标记列出邮件并复用现有 VPS 存储下载接口；兼容附件字段迁移前 `has_attachments` 为空的历史邮件，不新增 R2 存储或删除操作。
 
 - feat: |Worker/Aggregator/Frontend| 统一收件箱附件现在保存真实字节并支持鉴权下载：聚合器先按稳定邮件/附件 ID 幂等上传到自有 VPS 存储，再提交 ingest；原生 Email Routing 同样在写 unified 行前保存对象。下载接口复用邮件行权限，分片请求带账号作用域并通过真正的有界流式代理，浏览器不接触存储 URL；下载按鉴权主体限频。补上 30 MiB 限制、GC 宽限期、失败清理、水位不前移、旧元数据不可下载状态和下载按钮。

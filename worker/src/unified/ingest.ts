@@ -16,6 +16,63 @@ const nullableText = (value: unknown): string | null =>
 const nullableInteger = (value: unknown): number | null =>
     typeof value === "number" && Number.isInteger(value) ? value : null;
 
+// 未来时间戳容忍窗口：发送方钟表略快是常态，但「伪造 Date 头」会把邮件永久钉在
+// 收件箱顶部（列表按 COALESCE(internal_date, received_at) DESC 排序，未来时间戳
+// 在到期前永远排第一）。超过一天的未来时间一律视为不可信。
+export const MAX_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 从 Received 头里取接收服务器的真实时间。
+ *
+ * Date 头由发件人控制，可能被伪造成未来；Received 头是本侧/上游收信服务器在
+ * 投递时追加的，末尾那段 RFC 2822 时间才是可信的收信时刻。
+ */
+const receivedHeaderTime = (headersJson: unknown): number | null => {
+    if (headersJson == null) return null;
+    let headers: unknown = headersJson;
+    if (typeof headersJson === "string") {
+        if (!headersJson) return null;
+        try {
+            headers = JSON.parse(headersJson);
+        } catch {
+            return null;
+        }
+    }
+    if (!headers || typeof headers !== "object" || Array.isArray(headers)) return null;
+    const received = (headers as Record<string, unknown>).Received;
+    if (typeof received !== "string") return null;
+    const separator = received.lastIndexOf(";");
+    if (separator < 0) return null;
+    const time = Date.parse(received.slice(separator + 1).trim());
+    return Number.isSafeInteger(time) && time > 0 ? time : null;
+};
+
+/**
+ * 把不可信的未来时间戳收敛到可排序的真实时刻。
+ *
+ * 优先级：Received 头时间 → 入库时间(now)。`internal_date` 与 `received_at` 同步
+ * 处理，否则 COALESCE 仍会取到那个未来值继续置顶。nowMs <= 0 表示只是写入前
+ * 的参数校验（没有真实时钟），必须保持原样，不能把正常数据改成 1970。
+ */
+export const sanitizeFutureTimestamps = (
+    receivedAt: number | null,
+    internalDate: number | null,
+    headersJson: unknown,
+    nowMs: number,
+): { receivedAt: number | null; internalDate: number | null } => {
+    if (nowMs <= 0) return { receivedAt, internalDate };
+    const limit = nowMs + MAX_FUTURE_SKEW_MS;
+    const future = (value: number | null) => value != null && value > limit;
+    if (!future(receivedAt) && !future(internalDate)) return { receivedAt, internalDate };
+    const fallback = receivedHeaderTime(headersJson) ?? nowMs;
+    // Received 头本身也可能来自一台钟快的主机；同样只接受不超窗的值。
+    const settled = fallback > limit ? nowMs : fallback;
+    return {
+        receivedAt: future(receivedAt) ? settled : receivedAt,
+        internalDate: future(internalDate) ? null : internalDate,
+    };
+};
+
 const hasAttachments = (e: Record<string, unknown>): number | null => {
     if (e.has_attachments === 0 || e.has_attachments === 1) return e.has_attachments;
     const value = e.attachments_json;
@@ -54,6 +111,13 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
     if (providerMessageId && !provider) {
         throw new Error("provider required when provider_message_id is set");
     }
+    // 排序字段先过一遍未来时间戳收敛：伪造的 Date 头不能让邮件长期占住列表首行。
+    const timestamps = sanitizeFutureTimestamps(
+        nullableInteger(e.received_at),
+        nullableInteger(e.internal_date),
+        e.headers_json,
+        nowMs,
+    );
     return [
         id,
         e.source ?? "imap_unknown",
@@ -62,8 +126,8 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
         e.subject ?? "",
         e.text_body ?? "",
         e.html_body ?? "",
-        e.received_at ?? nowMs,
-        e.internal_date ?? null,
+        timestamps.receivedAt ?? nowMs,
+        timestamps.internalDate,
         jsonText(e.headers_json, {}),
         e.is_read ?? 0,
         jsonText(e.flags_json, []),

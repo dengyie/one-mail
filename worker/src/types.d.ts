@@ -183,6 +183,12 @@ type Variables = {
         // 普通用户的收件地址归属作用域（逗号多值，配合 buildEmailFilters 的 to_addr IN）。
         // 管理员不设此字段（看全部）。无绑定地址时为 "__none__" 哨兵（fail-closed 返回 0 行）。
         toAddrScope?: string,
+    },
+    // 邮箱地址 JWT（Authorization: Bearer <Address JWT>）鉴权上下文，将统一收件箱查询收敛至该单地址
+    addressAuth?: {
+        address: string,
+        address_id: number,
+        exp?: number,
     }
 }
 

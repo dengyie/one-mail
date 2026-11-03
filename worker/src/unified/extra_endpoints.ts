@@ -1,7 +1,9 @@
 import { Context } from "hono";
 import { resolveScopedEmailFilter } from "./auth_scope.ts";
-import { buildVerifAddrClause, escapeSqlLike, mapVerifCodeRows } from "./verifcode.ts";
+import { buildVerifAddrClause, escapeSqlLike, mapVerifCodeRows, stripHtmlToText } from "./verifcode.ts";
 import { boundedEmailFilter } from "./unified_sql.ts";
+
+export { stripHtmlToText };
 
 /** 校验参数为十进制整数，失败抛 400 响应。 */
 const intOr400 = (c: Context<HonoCustomType>, v: string | undefined, fallback: number): number => {
@@ -33,24 +35,6 @@ export const statsEmails = async (c: Context<HonoCustomType>) => {
         unread: Number(row?.unread || 0),
     });
 };
-
-export function stripHtmlToText(html: string): string {
-    if (!html) return "";
-    return html
-        .replace(/<\s*(script|style|head|svg)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
-        .replace(/<!--[\s\S]*?-->/g, " ")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/&nbsp;/gi, " ")
-        .replace(/&amp;/gi, "&")
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, "'")
-        .replace(/&lt;/gi, "<")
-        .replace(/&gt;/gi, ">")
-        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
-        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-        .replace(/\s+/g, " ")
-        .trim();
-}
 
 /**
  * 获取指定邮箱近期的验证码列表。
@@ -111,20 +95,55 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     return c.json({ results: out });
 };
 
+export interface MailboxOption {
+    account_id: string;
+    source: string | null;
+    to_addr: string | null;
+    count: number;
+}
+
+/**
+ * 由邮件投影反推「可筛选的邮箱」。
+ *
+ * 外部邮箱的归属键是 account_id。静态 config 账号（如 qq-main）只存在于
+ * aggregator 的 config.json，没有 user_mail_accounts 行，账户接口永远查不到，
+ * 因此只能从 emails 聚合。cf_routing 本站地址由 /user_api/bind_address 提供，
+ * 这里排除，避免与 to_addrs 重复并且用一堆一次性收件地址把主力邮箱挤出 LIMIT。
+ *
+ * 按邮件量倒序：长尾地址（临时/catch-all）排在真实邮箱之后，LIMIT 100 截断时
+ * 先牺牲长尾。
+ */
+const MAILBOX_SELECT = (where: string) => `SELECT account_id, MAX(source) AS source, MAX(to_addr) AS to_addr, count(*) AS total
+        FROM emails
+        WHERE ${where} AND account_id IS NOT NULL AND account_id != '' AND (source IS NULL OR source != 'cf_routing')
+        GROUP BY account_id
+        ORDER BY total DESC, account_id
+        LIMIT 100`;
+
 export const getMetaOptions = async (
     c: Context<HonoCustomType>,
     query: Record<string, string | undefined> = {},
 ) => {
     const { where, params } = boundedEmailFilter(await resolveScopedEmailFilter(c, query));
-    // 分别获取 source、account_id 与 to_addr：
-    // source 与 account_id 基数极小，独立 DISTINCT 避免被海量不同的 to_addr 挤出截断
-    const [sourceRes, accountRes, toAddrRes] = await Promise.all([
+    // 分别获取 source、mailbox 与 to_addr：
+    // source 基数极小，独立 DISTINCT 避免被海量不同的 to_addr 挤出截断。
+    const [sourceRes, mailboxRes, toAddrRes] = await Promise.all([
         c.env.DB.prepare(`SELECT DISTINCT source FROM emails WHERE ${where} AND source IS NOT NULL LIMIT 50`).bind(...params).all<{ source: string }>(),
-        c.env.DB.prepare(`SELECT DISTINCT account_id FROM emails WHERE ${where} AND account_id IS NOT NULL LIMIT 100`).bind(...params).all<{ account_id: string }>(),
+        c.env.DB.prepare(MAILBOX_SELECT(where)).bind(...params)
+            .all<{ account_id: string; source: string | null; to_addr: string | null; total: number | string }>(),
         c.env.DB.prepare(`SELECT DISTINCT to_addr FROM emails WHERE ${where} AND to_addr IS NOT NULL LIMIT 200`).bind(...params).all<{ to_addr: string }>(),
     ]);
     const sources = (sourceRes.results || []).map((r) => r.source).filter(Boolean);
-    const accounts = (accountRes.results || []).map((r) => r.account_id).filter(Boolean);
+    const mailboxes: MailboxOption[] = (mailboxRes.results || [])
+        .filter((r) => typeof r.account_id === "string" && r.account_id !== "")
+        .map((r) => ({
+            account_id: r.account_id,
+            source: typeof r.source === "string" ? r.source : null,
+            to_addr: typeof r.to_addr === "string" ? r.to_addr : null,
+            count: Number(r.total) || 0,
+        }));
+    // accounts 保持字符串数组以兼容旧调用方（含分片聚合）。
+    const accounts = mailboxes.map((m) => m.account_id);
     const to_addrs = (toAddrRes.results || []).map((r) => r.to_addr).filter(Boolean);
-    return c.json({ sources, accounts, to_addrs });
+    return c.json({ sources, accounts, mailboxes, to_addrs });
 };

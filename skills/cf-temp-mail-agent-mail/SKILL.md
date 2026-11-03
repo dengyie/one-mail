@@ -39,15 +39,26 @@ On first use, if the file exists, read and use it. If not, ask the user and save
 
 Do not send the Address JWT as `x-user-token` — that is a different JWT type and will yield `401 InvalidAddressCredentialMsg`.
 
-## Primary path: parsed endpoints
+## Primary path: parsed & verification code endpoints
 
-| Task                | Method | Path                               | Returns                                   |
-| ------------------- | ------ | ---------------------------------- | ----------------------------------------- |
-| Address info        | GET    | `/api/settings`                    | `{ address, send_balance }`               |
-| List parsed mails   | GET    | `/api/parsed_mails?limit=&offset=` | `{ results: [parsedMail], count }`        |
-| Get one parsed mail | GET    | `/api/parsed_mail/:id`             | `parsedMail`                              |
+| Task                     | Method | Path                               | Returns                                   |
+| ------------------------ | ------ | ---------------------------------- | ----------------------------------------- |
+| Address info             | GET    | `/api/settings`                    | `{ address, send_balance }`               |
+| Latest verification code | GET    | `/api/verifcode`                   | `{ code: "123456", ... }` or `{ code: null }` |
+| List verification codes  | GET    | `/api/verifcodes?fresh=10&limit=`  | `{ results: [verifRow] }`                 |
+| List parsed mails        | GET    | `/api/parsed_mails?limit=&offset=` | `{ results: [parsedMail], count }`        |
+| Get one parsed mail      | GET    | `/api/parsed_mail/:id`             | `parsedMail`                              |
 
 `limit` 1–100, `offset` 0-based. On `429`, back off.
+
+### One-shot Verification Code (Best for Agents)
+
+```bash
+# Get the single latest OTP code (no parsing or regex needed)
+curl -s "$BASE/api/verifcode" -H "Authorization: Bearer $JWT"
+# Returns: { "code": "887766", "from_addr": "service@github.com", "to_addr": "...", "received_at": 1740000000000 }
+# Or when pending: { "code": null }
+```
 
 `parsedMail` shape:
 

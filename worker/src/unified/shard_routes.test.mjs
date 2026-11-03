@@ -66,11 +66,14 @@ test("scoped delete queues only the owned email and job status honors snapshot s
 });
 test("meta and list preserve account/source scope; empty scope is empty", async () => {
     const f = await fixture();
-    assert.deepEqual(await (await f.request("/shard/meta?account_id=acctA")).json(), { sources: ["imap_qq"], accounts: ["acctA"], to_addrs: ["mine@example"] });
+    assert.deepEqual(await (await f.request("/shard/meta?account_id=acctA")).json(), {
+        sources: ["imap_qq"], accounts: ["acctA"], to_addrs: ["mine@example"],
+        mailboxes: [{ account_id: "acctA", source: "imap_qq", to_addr: "mine@example", count: 1 }],
+    });
     const list = await f.request("/shard/emails", { method: "POST", body: { limit: 20, account_ids: ["acctA", "acctB"], with_count: 0 } });
     assert.equal(list.status, 200);
     assert.deepEqual((await list.json()).results.map(row => row.id), ["a"]);
-    assert.deepEqual(await (await f.request("/shard/meta", { scope: { account_ids: [], sources: null } })).json(), { sources: [], accounts: [], to_addrs: [] });
+    assert.deepEqual(await (await f.request("/shard/meta", { scope: { account_ids: [], sources: null } })).json(), { sources: [], accounts: [], mailboxes: [], to_addrs: [] });
     assert.equal((await f.request("/shard/meta?account_id=acctB")).status, 403);
     f.sqlite.close();
 });
@@ -97,6 +100,7 @@ test("150-account/source scope headers keep meta and folders bounded and interse
     f.bindings.length = 0;
     assert.deepEqual(await (await f.request("/shard/meta", { scope })).json(), {
         sources: ["imap_qq"], accounts: ["acctA"], to_addrs: ["mine@example"],
+        mailboxes: [{ account_id: "acctA", source: "imap_qq", to_addr: "mine@example", count: 1 }],
     });
     const folders = await f.request("/shard/folders", { scope });
     assert.equal(folders.status, 200);

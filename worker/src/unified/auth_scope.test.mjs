@@ -9,10 +9,11 @@ const userAuth = (userId, isAdmin = false) => ({
   userRole: isAdmin ? "admin" : "user",
 });
 
-const makeContext = ({ auth, apiKey, accountOwners = {}, nativeAddressOwners = {} } = {}) => ({
+const makeContext = ({ auth, apiKey, addressAuth, accountOwners = {}, nativeAddressOwners = {} } = {}) => ({
   get(key) {
     if (key === "unifiedUserAuth") return auth;
     if (key === "apiKey") return apiKey;
+    if (key === "addressAuth") return addressAuth;
     return undefined;
   },
   env: {
@@ -193,3 +194,25 @@ test("admin row access bypasses business ownership but anonymous context never d
     to_addr: "any@example.test",
   }), false);
 });
+
+test("addressAuth scopes email query strictly to its own to_addr", async () => {
+  const c = makeContext({
+    addressAuth: { address: "bot@dengyie.tech", address_id: 123 },
+  });
+  const filter = await resolveScopedEmailFilter(c, {});
+  assert.equal(filter.where, "(1=1) AND emails.to_addr = ?");
+  assert.deepEqual(filter.params, ["bot@dengyie.tech"]);
+
+  // Passing domain under addressAuth must fail closed
+  const domainFilter = await resolveScopedEmailFilter(c, { domain: "dengyie.tech" });
+  assert.deepEqual(domainFilter, { where: "0=1", params: [] });
+
+  // Passing a mismatched addr must fail closed
+  const mismatchFilter = await resolveScopedEmailFilter(c, { addr: "other@dengyie.tech" });
+  assert.deepEqual(mismatchFilter, { where: "0=1", params: [] });
+
+  // checkRowAccess with addressAuth
+  assert.equal(await checkRowAccess(c, { to_addr: "bot@dengyie.tech" }), true);
+  assert.equal(await checkRowAccess(c, { to_addr: "other@dengyie.tech" }), false);
+});
+

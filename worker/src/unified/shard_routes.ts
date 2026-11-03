@@ -87,7 +87,7 @@ shard.use("/shard/*", async (c, next) => {
         // Empty whitelist means unrestricted in legacy API-key helpers: deny explicitly.
         if (scope.account_ids?.length === 0 || scope.sources?.length === 0) {
             if (rowPath) return c.json({ error: "forbidden" }, 403);
-            if (c.req.path === "/shard/meta") return c.json({ sources: [], accounts: [], to_addrs: [] });
+            if (c.req.path === "/shard/meta") return c.json({ sources: [], accounts: [], mailboxes: [], to_addrs: [] });
             if (c.req.path === "/shard/count") return c.json({ count: 0 });
             if (c.req.path === "/shard/stats") return c.json({ count: 0, unread: 0 });
             return c.json({ results: [], count: 0, has_more: false, next_cursor: null });

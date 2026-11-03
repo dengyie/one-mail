@@ -117,7 +117,7 @@ test("verifCodes domain wildcard injection fails closed", async () => {
     assert.ok(captured().sql.includes("1=0"), "invalid domain must compile to 1=0");
 });
 
-test("getMetaOptions independently queries source, account_id and to_addr to prevent crowding out", async () => {
+test("getMetaOptions returns labeled mailboxes ordered by volume", async () => {
     const capturedSqls = [];
     const db = {
         prepare(sql) {
@@ -126,10 +126,15 @@ test("getMetaOptions independently queries source, account_id and to_addr to pre
                 bind(...args) { return stmt; },
                 async all() {
                     if (sql.includes("DISTINCT source")) {
-                        return { results: [{ source: "cf_routing" }, { source: "imap" }] };
+                        return { results: [{ source: "cf_routing" }, { source: "imap_qq" }] };
                     }
-                    if (sql.includes("DISTINCT account_id")) {
-                        return { results: [{ account_id: "acc_1" }, { account_id: "acc_2" }] };
+                    if (sql.includes("GROUP BY account_id")) {
+                        return {
+                            results: [
+                                { account_id: "qq-main", source: "imap_qq", to_addr: "601560588@qq.com", total: 812 },
+                                { account_id: "acc_2", source: "imap_163", to_addr: "mango9502@163.com", total: 3 },
+                            ],
+                        };
                     }
                     if (sql.includes("DISTINCT to_addr")) {
                         return { results: [{ to_addr: "u1@example.com" }] };
@@ -148,11 +153,23 @@ test("getMetaOptions independently queries source, account_id and to_addr to pre
     };
 
     const res = await getMetaOptions(c);
-    assert.deepEqual(res.body.sources, ["cf_routing", "imap"]);
-    assert.deepEqual(res.body.accounts, ["acc_1", "acc_2"]);
+    assert.deepEqual(res.body.sources, ["cf_routing", "imap_qq"]);
+    // accounts 保持字符串数组契约，内容与 mailboxes 一一对应
+    assert.deepEqual(res.body.accounts, ["qq-main", "acc_2"]);
+    assert.deepEqual(res.body.mailboxes, [
+        { account_id: "qq-main", source: "imap_qq", to_addr: "601560588@qq.com", count: 812 },
+        { account_id: "acc_2", source: "imap_163", to_addr: "mango9502@163.com", count: 3 },
+    ]);
     assert.deepEqual(res.body.to_addrs, ["u1@example.com"]);
+
+    // 邮箱列表必须由 account_id 聚合得出，且按邮件量倒序；cf_routing 地址不进这一组，
+    // 否则一次性收件地址会把静止账号挤出 LIMIT。
+    const mailboxSql = capturedSqls.find(sql => sql.includes("GROUP BY account_id"));
+    assert.ok(mailboxSql, "meta must aggregate mailboxes by account_id");
+    assert.ok(mailboxSql.includes("count(*) AS total"));
+    assert.ok(mailboxSql.includes("source != 'cf_routing'"));
+    assert.ok(mailboxSql.includes("ORDER BY total DESC"));
+    assert.equal(capturedSqls.filter(sql => sql.includes("DISTINCT account_id")).length, 0,
+        "the truncated DISTINCT account_id query must be gone");
     assert.equal(capturedSqls.length, 3);
-    assert.ok(capturedSqls.some(sql => sql.includes("DISTINCT source")));
-    assert.ok(capturedSqls.some(sql => sql.includes("DISTINCT account_id")));
-    assert.ok(capturedSqls.some(sql => sql.includes("DISTINCT to_addr")));
 });

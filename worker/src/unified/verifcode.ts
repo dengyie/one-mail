@@ -98,11 +98,32 @@ export function buildVerifAddrClause(addrInput: string): VerifAddrClause {
 }
 
 /**
+ * 纯文本剥离 HTML 标签及常见字符实体，用于降级匹配纯 HTML 邮件中的验证码
+ */
+export function stripHtmlToText(html: string): string {
+    if (!html) return "";
+    return html
+        .replace(/<\s*(script|style|head|svg)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
+        .replace(/<!--[\s\S]*?-->/g, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
+        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
+        .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+/**
  * 将 D1 数据库查询结果转换为带验证码的结构化对象列表
  */
 export function mapVerifCodeRows(
     rows: Record<string, unknown>[],
-    stripHtmlFn: (html: string) => string,
+    stripHtmlFn: (html: string) => string = stripHtmlToText,
 ): VerifRow[] {
     return rows.map((r) => {
         const text = (typeof r.text_body === "string" && r.text_body.trim())
