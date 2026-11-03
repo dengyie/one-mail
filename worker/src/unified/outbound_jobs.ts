@@ -59,13 +59,17 @@ export const claimOutboundJobs = async (c: Context<HonoCustomType>) => {
           LIMIT ?`,
     ).bind(now, requested).all<{ id: string }>();
 
-    for (const candidate of results || []) {
-        await c.env.DB.prepare(
-            `UPDATE outbound_mail_jobs
-                SET status = 'processing', attempts = attempts + 1,
-                    lease_token = ?, lease_until = ?, updated_at = ?
-              WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?`,
-        ).bind(leaseToken, leaseUntil, now, candidate.id, now).run();
+    // Lease the whole batch in ONE round trip. With the 50-job ceiling a
+    // per-candidate `await` would otherwise issue 50 serial D1 round trips and
+    // exceed the aggregator's fixed claim read timeout.
+    const leaseStatements = (results || []).map((candidate) => c.env.DB.prepare(
+        `UPDATE outbound_mail_jobs
+            SET status = 'processing', attempts = attempts + 1,
+                lease_token = ?, lease_until = ?, updated_at = ?
+          WHERE id = ? AND status = 'pending' AND next_attempt_at <= ?`,
+    ).bind(leaseToken, leaseUntil, now, candidate.id, now));
+    if (leaseStatements.length) {
+        await c.env.DB.batch(leaseStatements);
     }
 
     const claimed = await c.env.DB.prepare(

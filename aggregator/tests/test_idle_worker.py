@@ -722,6 +722,33 @@ def test_netease_163_safe_noop_polling_interval(tmp_path):
         noop_poll_interval_seconds=30,  # 即使传入 30s
     )
     assert worker.noop_poll_interval_seconds >= 240
+    assert worker.noop_poll_interval_seconds < 300
+
+
+def test_netease_163_noop_interval_clamps_oversized_poll_config(tmp_path):
+    """回归：poll_interval 不得把网易轮询周期推到服务端断连阈值上。
+
+    网易 IMAP 在空闲 ~300s 后单方面断开 TCP。历史上 mail163-main 配置了
+    poll_interval=300，于是每次 NOOP 都打在服务端已关闭的 socket 上：
+    日志累计 4162 次 Broken pipe、858 次降级到 60s 轮询。NOOP 周期必须被压回
+    240s（严格早于 300s 阈值，同时不低于网易 >=240s 的频控安全下限）。
+    """
+    config = _config(tmp_path)
+    state = SyncState(str(tmp_path / "state.json"))
+
+    acc_163 = AccountConfig(
+        id="test-163-oversized",
+        source="imap_163",
+        host="imap.163.com",
+        port=993,
+        username="test@163.com",
+        password="pwd",
+        folders=["INBOX"],
+        use_ssl=True,
+        poll_interval=300,
+    )
+    worker = ImapIdleWorker(config=config, account=acc_163, state=state)
+    assert worker.noop_poll_interval_seconds == 240
 
 
 def test_qq_mail_fast_idle_refresh_cadence(tmp_path):

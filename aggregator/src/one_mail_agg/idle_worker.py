@@ -19,6 +19,7 @@ _IDLE_FAILURE_THRESHOLD = 5
 _IDLE_RETRY_COOLDOWN_SECONDS = 60
 _MAX_IDLE_SESSION_SECONDS = 900  # 15 分钟平滑置换连接，防上游推信静默脱钩
 _MAX_IDLE_SESSION_CYCLES = 15    # 默认 15 次唤醒周期置换（随 idle_refresh_seconds 自适应）
+_NETEASE_NOOP_INTERVAL_SECONDS = 240  # 网易 IMAP 在空闲 ~300s 后单方面断开 TCP；轮询必须严格早于该阈值
 _SECONDARY_FOLDER_SYNC_INTERVAL_SECONDS = 60.0  # 每 60 秒检查一次次要目录（如 Junk），防频繁切目录且确保垃圾箱不漏信
 _D1_STATUS_HEARTBEAT_SECONDS = 900.0  # 15 分钟状态心跳，防高频 IDLE 探测打爆 Cloudflare D1 写入配额
 
@@ -153,9 +154,12 @@ class ImapIdleWorker(threading.Thread):
 
         if _is_netease(account):
             # 网易 163/126 严禁短频轮询；网易 IMAP 服务端在空闲 300 秒时会主动单方面断开 TCP 连接（Broken pipe）。
-            # 采用 240 秒（4分钟）安全轮询周期，既恪守网易频控安全防线，又能在连接被服务端切断前发出 NOOP 保活，
-            # 避免每 5 分钟断线重连导致的高额 TLS 握手流量与“登录太频繁”风控。
-            self.noop_poll_interval_seconds = max(240, getattr(account, "poll_interval", 240) or 240)
+            # 轮询周期必须压回严格早于该阈值的安全值。历史教训：config.json 里给 mail163-main
+            # 配过 poll_interval=300，恰好等于服务端断连阈值，导致每次 NOOP 都落在已关闭的 socket
+            # 上（累计 4000+ 次 Broken pipe、反复降级到 60s 轮询）。这里固定为 240s——既恪守网易
+            # 频控安全防线（>=240s），又能在连接被服务端切断前发出 NOOP 保活，避免每 5 分钟断线
+            # 重连导致的高额 TLS 握手流量与”登录太频繁”风控。任何更大的显式 poll_interval 一律不生效。
+            self.noop_poll_interval_seconds = _NETEASE_NOOP_INTERVAL_SECONDS
         elif getattr(account, "poll_interval", None) is not None and 10 <= account.poll_interval <= 60:
             self.noop_poll_interval_seconds = account.poll_interval
         else:
