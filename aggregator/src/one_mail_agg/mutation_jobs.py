@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import uuid
 from urllib.parse import quote
 
@@ -58,6 +59,27 @@ def _claim_response(config: Config | WorkerDestination, path: str, lease_token: 
     )
 
 
+# A claim only takes a short lease, so a request whose response was lost cannot
+# cause double processing (the orphaned lease simply expires). One immediate
+# retry absorbs the sporadic D1/proxy transport jitter seen in production and
+# keeps the caller's 60-300s queue backoff from delaying pending mutations.
+_CLAIM_ATTEMPTS = 2
+_CLAIM_RETRY_DELAY_SECONDS = 0.5
+_CLAIM_TRANSPORT_ERRORS = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+
+
+def _claim_response_with_retry(
+    destination: WorkerDestination, path: str, lease_token: str, limit: int,
+):
+    for attempt in range(_CLAIM_ATTEMPTS):
+        try:
+            return _claim_response(destination, path, lease_token, limit)
+        except _CLAIM_TRANSPORT_ERRORS:
+            if attempt + 1 >= _CLAIM_ATTEMPTS:
+                raise
+            time.sleep(_CLAIM_RETRY_DELAY_SECONDS)
+
+
 def claim_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> tuple[str, list[dict]]:
     """Claim with the v2 operation set, falling back to old Workers safely.
 
@@ -73,9 +95,9 @@ def _claim_destination_jobs(
     destination: Config | WorkerDestination, *, limit: int,
 ) -> tuple[str, list[dict]]:
     lease_token = str(uuid.uuid4())
-    response = _claim_response(destination, "/mutations/v2/claim", lease_token, limit)
+    response = _claim_response_with_retry(destination, "/mutations/v2/claim", lease_token, limit)
     if response.status_code == 404:
-        response = _claim_response(destination, "/mutations/claim", lease_token, limit)
+        response = _claim_response_with_retry(destination, "/mutations/claim", lease_token, limit)
     response.raise_for_status()
     payload = response.json()
     jobs = payload.get("jobs", []) if isinstance(payload, dict) else []

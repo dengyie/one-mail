@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 import one_mail_agg.mutation_jobs as mutations
 from one_mail_agg.config import Config
 
@@ -83,3 +85,78 @@ def test_shard_v2_claim_fallback_keeps_lease_and_bearer_auth(monkeypatch):
     assert calls[2][1]["json"]["lease_token"] == calls[3][1]["json"]["lease_token"]
     assert calls[0][1]["json"]["lease_token"] != calls[2][1]["json"]["lease_token"]
     assert calls[2][1]["headers"] == calls[3][1]["headers"] == {"Authorization": "Bearer " + "x" * 32}
+
+
+# ---------------------------------------------------------- transient claim retry
+
+def test_claim_retries_once_on_transport_timeout(monkeypatch):
+    """A transient ReadTimeout must be retried instead of surfacing as a queue
+    failure: a failed claim backs the drain off for 60-300s, delaying every
+    pending user mutation. The claim is only a lease, so the retry is safe."""
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise mutations.requests.exceptions.ReadTimeout("read timed out")
+        return _Response(200, {"jobs": [{"id": "read-1"}]})
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+
+    _lease, jobs = mutations.claim_mutation_jobs(_config(), limit=5)
+
+    assert jobs == [{"id": "read-1"}]
+    assert len(calls) == 2
+
+
+def test_claim_retry_covers_ssl_and_proxy_errors(monkeypatch):
+    """SSLError and ProxyError subclass ConnectionError, so the same retry applies."""
+    for error_cls in (
+        mutations.requests.exceptions.SSLError,
+        mutations.requests.exceptions.ProxyError,
+    ):
+        calls = []
+
+        def fake_post(url, **kwargs):
+            calls.append(url)
+            if len(calls) == 1:
+                raise error_cls("transient")
+            return _Response(200, {"jobs": []})
+
+        monkeypatch.setattr(mutations.requests, "post", fake_post)
+        monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+
+        _lease, jobs = mutations.claim_mutation_jobs(_config(), limit=5)
+        assert jobs == []
+        assert len(calls) == 2, error_cls.__name__
+
+
+def test_claim_does_not_retry_http_error_status(monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        return _Response(500)
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(AssertionError):  # fake _Response raises for >=400
+        mutations.claim_mutation_jobs(_config(), limit=5)
+    assert len(calls) == 1
+
+
+def test_claim_raises_after_retry_budget_exhausted(monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        raise mutations.requests.exceptions.ConnectionError("down")
+
+    monkeypatch.setattr(mutations.requests, "post", fake_post)
+    monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(mutations.requests.exceptions.ConnectionError):
+        mutations.claim_mutation_jobs(_config(), limit=5)
+    assert len(calls) == 2

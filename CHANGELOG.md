@@ -10,6 +10,8 @@
 
 - fix: |Worker| 聚合器回写队列的 `claim` 端点不再随批次大小线性膨胀 D1 往返：`mutation batch incomplete: primary claim: ReadTimeout` 累计 2000+ 次，根因是 v2 claim、legacy claim 与 outbound claim 都逐个候选 `await` 执行 `UPDATE`——满批次（20/50 条）意味着 20~50 次串行 D1 往返，叠加实测逐语句延迟（空 claim 4 条语句 1.2~6.5s）必然突破聚合器固定 15s 读超时。三个端点改为单次 `DB.batch()` 领取（`batch()` 在同一隐式事务内顺序执行，逐邮箱「同时最多一条 processing」的守卫语义不变），往返次数与批次大小无关（恒 4 次）；新增回归测试断言往返预算恒定（修复前 20/50 条分别为 25/54/53 次）。
 
+- fix: |Aggregator| claim 请求的瞬时传输抖动不再直接触发队列退避：pxed 上按生产路径实测，空 claim 的延迟在 0.55~5.85s 之间波动、偶发 8~15s 顶到 15s 读超时（`mutation batch incomplete: primary claim: ReadTimeout`，网络健康时约 10~20 条/小时，叠加 SSLError/ProxyError 的时段更密集）；一旦失败，drain 会按 60~300s 指数退避，所有待回写的已读/星标/移动与出站发信都被推迟。mutation 与 outbound 的 claim 现在对 `Timeout`/`ConnectionError`（含 SSLError、ProxyError）自动重试一次（间隔 0.5s）——claim 只取短租约，响应丢失不会造成重复处理，孤儿租约会自然过期；HTTP 4xx/5xx 不重试，避免放大限流。
+
 - fix: |Aggregator| 网易 163/126 轮询周期不再贴着服务端空闲断连阈值：生产探针实测网易 IMAP 在空闲约 240s 后单方面关闭 TCP——30s 间隔可连续保活 400s+，180s 间隔首轮写入仍成功，而 240s 与 300s 间隔都会在「等待后的第一次写入」撞上已关闭的 socket。`mail163-main` 曾配 `poll_interval=300`，累计 4162 次 `Broken pipe` 并反复降级到 60s 轮询；仅把周期压到 240s 仍恰好贴在真实 cutoff 上、断连照旧。网易系（163/126/yeah）NOOP 周期现在固定为 120s（实测 cutoff 的一半，留足抖动/服务端调度余量），不再被更大的显式 `poll_interval` 带偏；回归测试锁住 `<240s` 硬护栏。
 
 - fix: |Worker| 统一收件箱不再被伪造未来时间戳的邮件长期置顶：列表按 `COALESCE(internal_date, received_at) DESC` 排序，一封把 `Date`/INTERNALDATE 写到 20 天后的广告邮件会一直排第一直到那个时刻。ingest 的统一写入口 `toEmailInsertParams` 现在把超出 24 小时时钟容差的未来时间戳收敛：`received_at` 回退到 `Received` 头末尾的收信服务器时间，再回退到入库时刻；`internal_date` 直接置空，避免 `COALESCE` 继续取到未来值；仅用于写入前参数校验的 `nowMs = 0` 路径保持原值不动。同时修正 `verifcode_api` 中对 `unknown` 时间戳做算术导致的类型错误。
