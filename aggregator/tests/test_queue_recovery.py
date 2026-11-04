@@ -3,9 +3,11 @@
 from collections import deque
 
 import pytest
+import requests
 
 import one_mail_agg.main as main_mod
 from one_mail_agg.config import Config
+from one_mail_agg.mutation_jobs import MutationBatchError
 from one_mail_agg.outbound_jobs import OutboundBatchError
 
 
@@ -132,5 +134,119 @@ def test_outbound_partial_batch_is_a_failure_not_an_empty_or_successful_claim(
         raise OutboundBatchError([("claim", TimeoutError("upstream unavailable"))], result)
 
     monkeypatch.setattr(main_mod, "process_outbound_jobs", fail)
-    assert main_mod._drain_outbound_jobs(object()) is None
+    outcome = main_mod._drain_outbound_jobs(object())
+    assert outcome.claimed is None
     assert "outbound batch error" in caplog.text
+
+
+# ------------------------------------------------- transient claim scheduling
+
+_TRANSPORT = (
+    requests.exceptions.ReadTimeout("read timed out"),
+    requests.exceptions.ConnectionError("connection reset"),
+    requests.exceptions.SSLError("tls eof"),
+    requests.exceptions.ProxyError("proxy refused"),
+)
+
+
+def test_transient_claim_failure_retries_at_base_interval_not_error_backoff():
+    """A single 15s stall must not cost the queue a 60s penalty: the lease is
+    safe to reclaim, so the next attempt stays on the 5s cadence."""
+    schedule = main_mod.ClaimSchedule().after_claim(5, None, completed_at=100, transient=True)
+    assert schedule.next_at == 105
+    assert schedule.transient_retries == 1
+    assert schedule.error_delay == 0
+
+
+def test_transient_retries_are_bounded_then_revert_to_error_backoff():
+    schedule = main_mod.ClaimSchedule()
+    for _ in range(main_mod._QUEUE_TRANSIENT_RETRY_LIMIT):
+        schedule = schedule.after_claim(5, None, completed_at=0, transient=True)
+        assert schedule.next_at == 5
+    schedule = schedule.after_claim(5, None, completed_at=0, transient=True)
+    assert schedule.next_at == 60
+    assert schedule.error_delay == 60
+
+
+def test_success_resets_the_transient_retry_budget():
+    schedule = main_mod.ClaimSchedule()
+    for _ in range(main_mod._QUEUE_TRANSIENT_RETRY_LIMIT):
+        schedule = schedule.after_claim(5, None, completed_at=0, transient=True)
+    schedule = schedule.after_claim(5, 1, completed_at=0)
+    assert schedule.transient_retries == 0
+    schedule = schedule.after_claim(5, None, completed_at=0, transient=True)
+    assert schedule.next_at == 5
+
+
+def test_hard_claim_failure_still_backs_off_immediately():
+    schedule = main_mod.ClaimSchedule().after_claim(5, None, completed_at=100)
+    assert schedule.next_at == 160
+    assert schedule.error_delay == 60
+
+
+@pytest.mark.parametrize("transport_error", _TRANSPORT)
+def test_mutation_drain_marks_pure_claim_transport_failures_transient(monkeypatch, transport_error):
+    def fail(_config):
+        raise MutationBatchError([("primary claim", transport_error)], {"claimed": 0})
+
+    monkeypatch.setattr(main_mod, "process_mutation_jobs", fail)
+    outcome = main_mod._drain_mutation_jobs(object())
+    assert outcome.claimed is None
+    assert outcome.transient is True
+
+
+@pytest.mark.parametrize("transport_error", _TRANSPORT)
+def test_outbound_drain_marks_pure_claim_transport_failures_transient(monkeypatch, transport_error):
+    def fail(_config):
+        raise OutboundBatchError([("primary claim", transport_error)], {"claimed": 0})
+
+    monkeypatch.setattr(main_mod, "process_outbound_jobs", fail)
+    outcome = main_mod._drain_outbound_jobs(object())
+    assert outcome.claimed is None
+    assert outcome.transient is True
+
+
+def test_non_claim_failure_is_not_transient(monkeypatch):
+    """A failed result report can mean a job was executed; never treat it as a
+    cheap retry, or the queue would hammer the provider."""
+    def fail(_config):
+        raise MutationBatchError([
+            ("primary claim", requests.exceptions.ReadTimeout("read timed out")),
+            ("primary result job 1", RuntimeError("report failed")),
+        ], {"claimed": 1})
+
+    monkeypatch.setattr(main_mod, "process_mutation_jobs", fail)
+    outcome = main_mod._drain_mutation_jobs(object())
+    assert outcome.claimed is None
+    assert outcome.transient is False
+
+
+def test_daemon_retries_transient_claim_failures_at_the_base_cadence(tmp_path, monkeypatch):
+    """End-to-end: repeated transient failures are retried at 5s for the budget,
+    then fall back to the exponential 60/120s error backoff."""
+    clock = _Clock(200)
+    calls = []
+    config = Config(worker_base_url="https://worker.invalid", admin_token="test",
+                    accounts=[], state_path=str(tmp_path / "state.json"))
+
+    def transient_drain(_config):
+        calls.append(clock.now)
+        return main_mod.QueueDrain(claimed=None, transient=True, error="ReadTimeout")
+
+    def poll(_config, _state, *, now):
+        pass
+
+    monkeypatch.setattr(main_mod, "load_config", lambda _path: config)
+    monkeypatch.setattr(main_mod.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(main_mod.time, "sleep", clock.sleep)
+    monkeypatch.setattr(main_mod, "_poll_pass", poll)
+    monkeypatch.setattr(main_mod, "_drain_mutation_jobs", transient_drain)
+    monkeypatch.setattr(main_mod, "_drain_outbound_jobs",
+                        lambda _config: main_mod.QueueDrain(claimed=1))
+
+    with pytest.raises(_StopDaemon):
+        main_mod.run_daemon("test.json")
+
+    limit = main_mod._QUEUE_TRANSIENT_RETRY_LIMIT
+    assert calls[:limit + 1] == [5 * (i + 1) for i in range(limit + 1)]
+    assert calls[limit + 1] == (limit + 1) * 5 + 60

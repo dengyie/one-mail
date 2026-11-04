@@ -4,6 +4,8 @@ import logging
 import random
 from dataclasses import dataclass
 
+import requests
+
 from .config import AccountConfig, Config, load_config
 from .state import SyncState
 from .sync import sync_account, sync_warning, default_client_factory
@@ -295,6 +297,48 @@ _QUEUE_IDLE_CONFIRMATIONS = 3
 _QUEUE_ERROR_BACKOFF_SECONDS = 60
 _QUEUE_ERROR_BACKOFF_CAP_SECONDS = 300
 
+# A claim is only a short lease, so a transport stall ("ReadTimeout" on the
+# proxy/Worker path) loses nothing: the orphaned lease expires on its own. Such
+# failures are retried on the base cadence instead of paying the 60-300s error
+# backoff, which would delay every pending user mutation and outbound mail for
+# a stall that is usually over within one tick. The budget bounds that cadence
+# so a genuinely down Worker still falls back to the exponential backoff.
+_QUEUE_TRANSIENT_RETRY_LIMIT = 5
+_CLAIM_TRANSPORT_ERRORS = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+
+
+@dataclass(frozen=True, slots=True)
+class QueueDrain:
+    """Outcome of one queue drain: ``claimed is None`` means the batch failed."""
+
+    claimed: int | None = 0
+    transient: bool = False
+    error: str | None = None
+
+
+def _claim_failure_is_transient(error: BaseException) -> bool:
+    """True when every failure in the batch is a transport stall while claiming.
+
+    ``*BatchError.failures`` pairs a context with the exception. Only a batch
+    whose failures are *all* claim-phase transport errors is safe to retry on
+    the base cadence: a failed result report means a provider write may have
+    happened, which must keep the slower backoff.
+    """
+    failures = getattr(error, "failures", None)
+    if not failures:
+        return isinstance(error, _CLAIM_TRANSPORT_ERRORS)
+    claim_failures = [(context, failure) for context, failure in failures
+                      if str(context).endswith(" claim")]
+    if not claim_failures or len(claim_failures) != len(failures):
+        return False
+    return all(isinstance(failure, _CLAIM_TRANSPORT_ERRORS)
+               for _context, failure in claim_failures)
+
+
+def _as_drain(value: "QueueDrain | int | None") -> QueueDrain:
+    """Normalise a drain result; plain ints keep older callers/tests working."""
+    return value if isinstance(value, QueueDrain) else QueueDrain(claimed=value)
+
 
 @dataclass(frozen=True, slots=True)
 class ClaimSchedule:
@@ -303,10 +347,14 @@ class ClaimSchedule:
     next_at: float = 0.0
     empty_claims: int = 0
     error_delay: float = 0.0
+    transient_retries: int = 0
 
     def after_claim(self, base_interval: float, claimed: int | None,
-                    *, completed_at: float) -> "ClaimSchedule":
+                    *, completed_at: float, transient: bool = False) -> "ClaimSchedule":
         if claimed is None:
+            if transient and self.transient_retries < _QUEUE_TRANSIENT_RETRY_LIMIT:
+                return ClaimSchedule(completed_at + base_interval,
+                                     transient_retries=self.transient_retries + 1)
             delay = max(base_interval, min(_QUEUE_ERROR_BACKOFF_CAP_SECONDS,
                         max(_QUEUE_ERROR_BACKOFF_SECONDS, self.error_delay * 2)))
             return ClaimSchedule(completed_at + delay, error_delay=delay)
@@ -319,48 +367,55 @@ class ClaimSchedule:
         return ClaimSchedule(completed_at + delay, empty_claims=empty_claims)
 
 
-def _drain_mutation_jobs(config: Config) -> int | None:
+def _drain_mutation_jobs(config: Config) -> QueueDrain:
     """排空 provider mutation 队列（已读/星标/移动的回写）。
 
     与同步同进程、不并发：mutation 需要为账号兑换 refresh_token，与同步并发兑换
     会让其中一份拿到的 RT 立刻失效。单进程 tick 串行天然只有一个写者。
-    返回本批领到的任务数；请求失败时返回 None，调用方据此做有上限的指数退避。
+    返回本批领到的任务数；请求失败时 ``claimed=None``，调用方据此退避——纯传输
+    停顿标记为 transient，按基础节奏重试而不是吃 60-300s 的错误退避。
     """
     try:
         result = process_mutation_jobs(config)
     except Exception as e:
-        log.error("mutation claim error: %s", e)
-        return None
+        transient = _claim_failure_is_transient(e)
+        if transient:
+            log.warning("mutation claim transient error: %s", e)
+        else:
+            log.error("mutation claim error: %s", e)
+        return QueueDrain(claimed=None, transient=transient, error=str(e))
     claimed = int(result.get("claimed", 0) or 0)
     if claimed:
         log.info("mutation batch claimed=%d succeeded=%d retried=%d failed=%d unsupported=%d",
                  claimed, result.get("succeeded", 0), result.get("retried", 0),
                  result.get("failed", 0), result.get("unsupported", 0))
-    return claimed
+    return QueueDrain(claimed=claimed)
 
 
-def _drain_outbound_jobs(config: Config) -> int | None:
+def _drain_outbound_jobs(config: Config) -> QueueDrain:
     """排空外部账号的出站发送队列。
 
     与 mutation 在同一个循环内串行执行，复用同一 redemption_lock；领取失败或
-    批次未完整处理时返回 None，不能把部分结果当成可信的空队列或成功。
+    批次未完整处理时 ``claimed=None``，不能把部分结果当成可信的空队列或成功。
     """
-    incomplete = False
     try:
         result = process_outbound_jobs(config)
     except OutboundBatchError as e:
-        result = e.result
-        incomplete = True
-        log.error("outbound batch error: %s", e)
+        transient = _claim_failure_is_transient(e)
+        if transient:
+            log.warning("outbound batch transient error: %s", e)
+        else:
+            log.error("outbound batch error: %s", e)
+        return QueueDrain(claimed=None, transient=transient, error=str(e))
     except Exception as e:
         log.error("outbound claim error: %s", e)
-        return None
+        return QueueDrain(claimed=None, transient=_claim_failure_is_transient(e), error=str(e))
     claimed = int(result.get("claimed", 0) or 0)
     if claimed:
         log.info("outbound batch claimed=%d succeeded=%d retried=%d failed=%d unsupported=%d",
                  claimed, result.get("succeeded", 0), result.get("retried", 0),
                  result.get("failed", 0), result.get("unsupported", 0))
-    return None if incomplete else claimed
+    return QueueDrain(claimed=claimed)
 
 
 def run_daemon(config_path: str, poll_interval: int = 60,
@@ -390,13 +445,15 @@ def run_daemon(config_path: str, poll_interval: int = 60,
             if poll_due:
                 _poll_pass(config, state, now=tick_started)
             if not poll_due and time.monotonic() >= mutation_schedule.next_at:
-                claimed = _drain_mutation_jobs(config)
+                drain = _as_drain(_drain_mutation_jobs(config))
                 mutation_schedule = mutation_schedule.after_claim(
-                    mutation_interval, claimed, completed_at=time.monotonic())
+                    mutation_interval, drain.claimed, completed_at=time.monotonic(),
+                    transient=drain.transient)
             if not poll_due and time.monotonic() >= outbound_schedule.next_at:
-                claimed = _drain_outbound_jobs(config)
+                drain = _as_drain(_drain_outbound_jobs(config))
                 outbound_schedule = outbound_schedule.after_claim(
-                    mutation_interval, claimed, completed_at=time.monotonic())
+                    mutation_interval, drain.claimed, completed_at=time.monotonic(),
+                    transient=drain.transient)
         except Exception as e:
             log.error("daemon iteration error: %s", e)
         finally:
