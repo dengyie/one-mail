@@ -8,6 +8,7 @@
 
 ## v1.11.0(main)
 
+- fix: |Aggregator| 单次 claim 传输停顿不再让回写/发信队列白等 60–300 秒：上一版「重试一次」只能吸收亚秒级抖动，生产实测的 ≥15s 整段链路停顿（代理节点偶发劣化，2026-11-04 19:00 前后 10 分钟内反复停顿 8 次）会让两次尝试都超时，随后 drain 仍按 60→300s 指数退避，把本可立刻执行的已读/星标/移动回写与出站发信推迟最多 5 分钟。调度层现在区分「瞬时传输失败」与「真错误」：claim 阶段纯 `Timeout`/`ConnectionError`（含 SSLError/ProxyError）失败标记为 transient，按 5s 基础节奏重试（预算 5 次），预算耗尽才回落到原有的 60–300s 指数退避，领到任务即重置预算；失败批次里只要混入 result 上报失败就仍走慢退避（那意味着 provider 写可能已发生，不能激进重试）。效果：转瞬即逝的停顿最多延后一个 tick（约 20s），错误日志降为 WARNING 并标注 transient，改善不回真断网。
 - fix: |Worker| 聚合器回写队列的 `claim` 端点不再随批次大小线性膨胀 D1 往返：`mutation batch incomplete: primary claim: ReadTimeout` 累计 2000+ 次，根因是 v2 claim、legacy claim 与 outbound claim 都逐个候选 `await` 执行 `UPDATE`——满批次（20/50 条）意味着 20~50 次串行 D1 往返，叠加实测逐语句延迟（空 claim 4 条语句 1.2~6.5s）必然突破聚合器固定 15s 读超时。三个端点改为单次 `DB.batch()` 领取（`batch()` 在同一隐式事务内顺序执行，逐邮箱「同时最多一条 processing」的守卫语义不变），往返次数与批次大小无关（恒 4 次）；新增回归测试断言往返预算恒定（修复前 20/50 条分别为 25/54/53 次）。
 
 - fix: |Aggregator| claim 请求的瞬时传输抖动不再直接触发队列退避：pxed 上按生产路径实测，空 claim 的延迟在 0.55~5.85s 之间波动、偶发 8~15s 顶到 15s 读超时（`mutation batch incomplete: primary claim: ReadTimeout`，网络健康时约 10~20 条/小时，叠加 SSLError/ProxyError 的时段更密集）；一旦失败，drain 会按 60~300s 指数退避，所有待回写的已读/星标/移动与出站发信都被推迟。mutation 与 outbound 的 claim 现在对 `Timeout`/`ConnectionError`（含 SSLError、ProxyError）自动重试一次（间隔 0.5s）——claim 只取短租约，响应丢失不会造成重复处理，孤儿租约会自然过期；HTTP 4xx/5xx 不重试，避免放大限流。

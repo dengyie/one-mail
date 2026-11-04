@@ -680,7 +680,9 @@ def test_incomplete_batch_keeps_daemon_polling_at_base_interval(monkeypatch):
         raise mutations.MutationBatchError([("s1 claim", requests.Timeout())], {"claimed": 0})
 
     monkeypatch.setattr(main, "process_mutation_jobs", incomplete)
-    assert main._drain_mutation_jobs(_config()) is None
+    outcome = main._drain_mutation_jobs(_config())
+    assert outcome.claimed is None
+    assert outcome.transient is True
 
 
 def test_batch_retains_all_claim_metadata_and_result_causes(monkeypatch):
