@@ -373,3 +373,36 @@ def test_process_unsupported_provider_is_unsupported(monkeypatch):
     result = outbound.process_outbound_jobs(config)
     assert result["unsupported"] == 1
     assert reports[0][0][3] == "unsupported"
+
+
+def test_outbound_claim_retries_once_on_transport_timeout(monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        if len(calls) == 1:
+            raise outbound.requests.exceptions.ReadTimeout("read timed out")
+        return _Response(payload={"jobs": []})
+
+    monkeypatch.setattr(outbound.requests, "post", fake_post)
+    monkeypatch.setattr(outbound.time, "sleep", lambda _seconds: None)
+
+    _lease, jobs = outbound.claim_outbound_jobs(_config(), limit=5)
+
+    assert jobs == []
+    assert len(calls) == 2
+
+
+def test_outbound_claim_raises_after_retry_budget_exhausted(monkeypatch):
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        raise outbound.requests.exceptions.ProxyError("proxy down")
+
+    monkeypatch.setattr(outbound.requests, "post", fake_post)
+    monkeypatch.setattr(outbound.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(outbound.requests.exceptions.ProxyError):
+        outbound.claim_outbound_jobs(_config(), limit=5)
+    assert len(calls) == 2
