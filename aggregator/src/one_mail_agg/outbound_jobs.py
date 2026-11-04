@@ -12,7 +12,6 @@ unresolvable outcome stays unknown so the lease is retried with backoff.
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from urllib.parse import quote
 
@@ -31,6 +30,7 @@ from .smtp_sender import (
     ReconcileError,
     send_with_reconcile,
 )
+from .transport_retry import call_with_transport_retry
 
 log = logging.getLogger("one-mail-agg")
 
@@ -59,20 +59,9 @@ def _claim_response(config: Config | WorkerDestination, lease_token: str, limit:
 
 # Same rationale as mutation_jobs: a claim is only a lease, so a lost response
 # is safe to retry once, and not backing off keeps outbound sends flowing.
-_CLAIM_ATTEMPTS = 2
-_CLAIM_RETRY_DELAY_SECONDS = 0.5
-_CLAIM_TRANSPORT_ERRORS = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
-
-
 def _claim_response_with_retry(config: Config | WorkerDestination, lease_token: str, limit: int):
     destination = config.destinations[0] if isinstance(config, Config) else config
-    for attempt in range(_CLAIM_ATTEMPTS):
-        try:
-            return _claim_response(destination, lease_token, limit)
-        except _CLAIM_TRANSPORT_ERRORS:
-            if attempt + 1 >= _CLAIM_ATTEMPTS:
-                raise
-            time.sleep(_CLAIM_RETRY_DELAY_SECONDS)
+    return call_with_transport_retry(lambda: _claim_response(destination, lease_token, limit))
 
 
 def claim_outbound_jobs(config: Config, *, limit: int = OUTBOUND_CLAIM_LIMIT) -> tuple[str, list[dict]]:

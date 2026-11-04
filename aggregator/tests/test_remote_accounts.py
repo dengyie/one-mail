@@ -163,3 +163,62 @@ def test_report_sync_status_network_error_does_not_raise():
     """回写网络异常绝不向上抛——状态回写挂了不能影响邮件归集主流程。"""
     with patch("one_mail_agg.remote_accounts.requests.post", side_effect=Exception("boom")):
         report_sync_status("https://w.example", "tok", "uma-1", "err")  # 不抛
+
+
+# ------------------------------------------- transient transport retry
+
+def _patch_sleep():
+    """Keep the retry's pacing out of the test's runtime."""
+    return patch("one_mail_agg.transport_retry.time.sleep")
+
+
+def test_report_sync_status_retries_once_after_a_read_timeout(caplog):
+    """生产上一个 10s 停顿会让这次状态回写整条丢掉（last_sync_at 落后一轮）。
+    响应可安全重发，因此一次停顿必须被一次重试吸收，而不是记为失败。"""
+    with _patch_sleep(), patch("one_mail_agg.remote_accounts.requests.post") as post:
+        post.side_effect = [requests.ReadTimeout("stalled"), _resp(200, {})]
+        with caplog.at_level("WARNING"):
+            report_sync_status("https://w.example", "tok", "uma-1", None)
+    assert post.call_count == 2
+    assert "report sync status for uma-1 error" not in caplog.text
+
+
+def test_report_sync_status_keeps_failing_softly_when_both_attempts_stall(caplog):
+    with _patch_sleep(), patch("one_mail_agg.remote_accounts.requests.post") as post:
+        post.side_effect = requests.ReadTimeout("stalled")
+        with caplog.at_level("WARNING"):
+            report_sync_status("https://w.example", "tok", "uma-1", "err")
+    assert post.call_count == 2
+    assert "report sync status for uma-1 error" in caplog.text
+
+
+def test_report_sync_status_does_not_retry_a_non_transport_failure():
+    """只有传输层失败才重试；其余异常保持单次尝试，避免掩盖真实错误。"""
+    with _patch_sleep(), patch("one_mail_agg.remote_accounts.requests.post") as post:
+        post.side_effect = ValueError("bad payload")
+        report_sync_status("https://w.example", "tok", "uma-1", None)
+    assert post.call_count == 1
+
+
+def test_fetch_user_accounts_retries_once_after_a_read_timeout():
+    body = {"accounts": [
+        {"id": "uma-1", "host": "imap.example", "port": 993,
+         "username": "u@example", "password": "pw"},
+    ]}
+    with _patch_sleep(), patch("one_mail_agg.remote_accounts.requests.get") as get:
+        get.side_effect = [requests.ReadTimeout("stalled"), _resp(200, body)]
+        accts = fetch_user_accounts("https://w.example", "tok")
+    assert get.call_count == 2
+    assert [a.id for a in accts] == ["uma-1"]
+
+
+def test_fetch_user_accounts_retry_is_bounded_and_keeps_strict_mode_strict():
+    with _patch_sleep(), patch("one_mail_agg.remote_accounts.requests.get") as get:
+        get.side_effect = requests.ReadTimeout("stalled")
+        assert fetch_user_accounts("https://w.example", "tok") == []
+        assert get.call_count == 2
+    with _patch_sleep(), patch("one_mail_agg.remote_accounts.requests.get") as get:
+        get.side_effect = requests.ReadTimeout("stalled")
+        with pytest.raises(requests.ReadTimeout):
+            fetch_user_accounts("https://w.example", "tok", raise_on_error=True)
+        assert get.call_count == 2
