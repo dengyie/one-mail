@@ -4,8 +4,6 @@ import logging
 import random
 from dataclasses import dataclass
 
-import requests
-
 from .config import AccountConfig, Config, load_config
 from .state import SyncState
 from .sync import sync_account, sync_warning, default_client_factory
@@ -18,6 +16,7 @@ from .uploader import quota_retry_at
 from .idle_worker import ensure_idle_workers, is_idle_worker_active
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .egress_guard import install_egress_guard
+from .transport_retry import TRANSPORT_ERRORS
 from .proxy_client import OVERSEAS_IMAP_HOSTS, is_overseas_imap_host
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -304,7 +303,7 @@ _QUEUE_ERROR_BACKOFF_CAP_SECONDS = 300
 # a stall that is usually over within one tick. The budget bounds that cadence
 # so a genuinely down Worker still falls back to the exponential backoff.
 _QUEUE_TRANSIENT_RETRY_LIMIT = 5
-_CLAIM_TRANSPORT_ERRORS = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
+_CLAIM_TRANSPORT_ERRORS = TRANSPORT_ERRORS
 
 
 @dataclass(frozen=True, slots=True)

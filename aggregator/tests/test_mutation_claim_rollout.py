@@ -6,6 +6,11 @@ import one_mail_agg.mutation_jobs as mutations
 from one_mail_agg.config import Config
 
 
+def _silence_transport_retry_sleep(monkeypatch):
+    """The retry's 0.5s pacing now lives in transport_retry, not in each caller."""
+    monkeypatch.setattr("one_mail_agg.transport_retry.time.sleep", lambda _seconds: None)
+
+
 def _config():
     return Config(
         worker_base_url="https://worker.example",
@@ -102,7 +107,7 @@ def test_claim_retries_once_on_transport_timeout(monkeypatch):
         return _Response(200, {"jobs": [{"id": "read-1"}]})
 
     monkeypatch.setattr(mutations.requests, "post", fake_post)
-    monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+    _silence_transport_retry_sleep(monkeypatch)
 
     _lease, jobs = mutations.claim_mutation_jobs(_config(), limit=5)
 
@@ -125,7 +130,7 @@ def test_claim_retry_covers_ssl_and_proxy_errors(monkeypatch):
             return _Response(200, {"jobs": []})
 
         monkeypatch.setattr(mutations.requests, "post", fake_post)
-        monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+        _silence_transport_retry_sleep(monkeypatch)
 
         _lease, jobs = mutations.claim_mutation_jobs(_config(), limit=5)
         assert jobs == []
@@ -140,7 +145,7 @@ def test_claim_does_not_retry_http_error_status(monkeypatch):
         return _Response(500)
 
     monkeypatch.setattr(mutations.requests, "post", fake_post)
-    monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+    _silence_transport_retry_sleep(monkeypatch)
 
     with pytest.raises(AssertionError):  # fake _Response raises for >=400
         mutations.claim_mutation_jobs(_config(), limit=5)
@@ -155,7 +160,7 @@ def test_claim_raises_after_retry_budget_exhausted(monkeypatch):
         raise mutations.requests.exceptions.ConnectionError("down")
 
     monkeypatch.setattr(mutations.requests, "post", fake_post)
-    monkeypatch.setattr(mutations.time, "sleep", lambda _seconds: None)
+    _silence_transport_retry_sleep(monkeypatch)
 
     with pytest.raises(mutations.requests.exceptions.ConnectionError):
         mutations.claim_mutation_jobs(_config(), limit=5)

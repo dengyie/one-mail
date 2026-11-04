@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 import uuid
 from urllib.parse import quote
 
@@ -29,6 +28,7 @@ from .oauth import oauth_client_factory
 from .remote_accounts import fetch_user_accounts
 from .sync import default_client_factory
 from .token_store import make_rotated_callback, redemption_lock, refresh_rt_from_config
+from .transport_retry import call_with_transport_retry
 
 log = logging.getLogger("one-mail-agg")
 
@@ -63,21 +63,11 @@ def _claim_response(config: Config | WorkerDestination, path: str, lease_token: 
 # cause double processing (the orphaned lease simply expires). One immediate
 # retry absorbs the sporadic D1/proxy transport jitter seen in production and
 # keeps the caller's 60-300s queue backoff from delaying pending mutations.
-_CLAIM_ATTEMPTS = 2
-_CLAIM_RETRY_DELAY_SECONDS = 0.5
-_CLAIM_TRANSPORT_ERRORS = (requests.exceptions.Timeout, requests.exceptions.ConnectionError)
-
-
 def _claim_response_with_retry(
     destination: WorkerDestination, path: str, lease_token: str, limit: int,
 ):
-    for attempt in range(_CLAIM_ATTEMPTS):
-        try:
-            return _claim_response(destination, path, lease_token, limit)
-        except _CLAIM_TRANSPORT_ERRORS:
-            if attempt + 1 >= _CLAIM_ATTEMPTS:
-                raise
-            time.sleep(_CLAIM_RETRY_DELAY_SECONDS)
+    return call_with_transport_retry(
+        lambda: _claim_response(destination, path, lease_token, limit))
 
 
 def claim_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> tuple[str, list[dict]]:

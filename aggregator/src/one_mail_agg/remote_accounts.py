@@ -16,6 +16,7 @@ import requests
 from .config import AccountConfig
 from .d1_quota import database_quota_error
 from .state import SyncState
+from .transport_retry import call_with_transport_retry
 
 log = logging.getLogger("one-mail-agg")
 
@@ -75,7 +76,8 @@ def fetch_user_accounts(worker_base_url: str, admin_token: str, *,
     url = f"{worker_base_url}/admin/unified/mail_accounts"
     headers = {"x-admin-auth": admin_token}
     try:
-        r = requests.get(url, headers=headers, timeout=15)
+        r = call_with_transport_retry(
+            lambda: requests.get(url, headers=headers, timeout=15))
         if r.status_code != 200:
             if raise_on_error:
                 raise RuntimeError(f"mail account fetch failed: HTTP {r.status_code}")
@@ -159,7 +161,11 @@ def report_sync_status(worker_base_url: str, admin_token: str,
     url = f"{worker_base_url}/admin/unified/mail_accounts/{account_id}/status"
     headers = {"x-admin-auth": admin_token}
     try:
-        r = requests.post(url, json={"error": error} if error else {}, headers=headers, timeout=10)
+        # 一次停顿就整条丢掉这轮状态回写（Worker 上 last_sync_at 落后一个轮询周期），
+        # 而重发同一份状态是幂等的，所以交给传输层重试吸收。
+        r = call_with_transport_retry(
+            lambda: requests.post(url, json={"error": error} if error else {},
+                                  headers=headers, timeout=10))
         now = time.time()
         quota = database_quota_error(r, now)
         if quota is not None and state is not None:

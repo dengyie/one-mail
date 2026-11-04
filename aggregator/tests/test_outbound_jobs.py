@@ -8,6 +8,11 @@ import one_mail_agg.outbound_jobs as outbound
 from one_mail_agg.config import AccountConfig, Config
 
 
+def _silence_transport_retry_sleep(monkeypatch):
+    """The retry's 0.5s pacing now lives in transport_retry, not in each caller."""
+    monkeypatch.setattr("one_mail_agg.transport_retry.time.sleep", lambda _seconds: None)
+
+
 def _config(accounts=None):
     return Config(
         worker_base_url="https://worker.example",
@@ -385,7 +390,7 @@ def test_outbound_claim_retries_once_on_transport_timeout(monkeypatch):
         return _Response(payload={"jobs": []})
 
     monkeypatch.setattr(outbound.requests, "post", fake_post)
-    monkeypatch.setattr(outbound.time, "sleep", lambda _seconds: None)
+    _silence_transport_retry_sleep(monkeypatch)
 
     _lease, jobs = outbound.claim_outbound_jobs(_config(), limit=5)
 
@@ -401,7 +406,7 @@ def test_outbound_claim_raises_after_retry_budget_exhausted(monkeypatch):
         raise outbound.requests.exceptions.ProxyError("proxy down")
 
     monkeypatch.setattr(outbound.requests, "post", fake_post)
-    monkeypatch.setattr(outbound.time, "sleep", lambda _seconds: None)
+    _silence_transport_retry_sleep(monkeypatch)
 
     with pytest.raises(outbound.requests.exceptions.ProxyError):
         outbound.claim_outbound_jobs(_config(), limit=5)
