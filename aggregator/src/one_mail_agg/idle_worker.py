@@ -19,7 +19,11 @@ _IDLE_FAILURE_THRESHOLD = 5
 _IDLE_RETRY_COOLDOWN_SECONDS = 60
 _MAX_IDLE_SESSION_SECONDS = 900  # 15 分钟平滑置换连接，防上游推信静默脱钩
 _MAX_IDLE_SESSION_CYCLES = 15    # 默认 15 次唤醒周期置换（随 idle_refresh_seconds 自适应）
-_NETEASE_NOOP_INTERVAL_SECONDS = 240  # 网易 IMAP 在空闲 ~300s 后单方面断开 TCP；轮询必须严格早于该阈值
+# 网易 IMAP 在空闲约 240s 后单方面关闭 TCP。实测（2026-11-04 探针）：30s 间隔可持续保活 400s+，
+# 180s 间隔首轮写入成功，而 240s/300s 间隔都会在”等待后的第一次写入”撞上已关闭的 socket —— 即真实
+# cutoff 落在 (180s, 240s]，且 240s 只是贴着边界、并不安全。故压到 120s，相对实测 cutoff 留一倍余量：
+# NOOP 只是控制命令，120s 频度不触网易风控（不稳定降级路径本来就按 60s 轮询）。
+_NETEASE_NOOP_INTERVAL_SECONDS = 120
 _SECONDARY_FOLDER_SYNC_INTERVAL_SECONDS = 60.0  # 每 60 秒检查一次次要目录（如 Junk），防频繁切目录且确保垃圾箱不漏信
 _D1_STATUS_HEARTBEAT_SECONDS = 900.0  # 15 分钟状态心跳，防高频 IDLE 探测打爆 Cloudflare D1 写入配额
 
@@ -153,12 +157,13 @@ class ImapIdleWorker(threading.Thread):
             self.max_session_cycles = max_session_cycles
 
         if _is_netease(account):
-            # 网易 163/126 严禁短频轮询；网易 IMAP 服务端在空闲 300 秒时会主动单方面断开 TCP 连接（Broken pipe）。
-            # 轮询周期必须压回严格早于该阈值的安全值。历史教训：config.json 里给 mail163-main
-            # 配过 poll_interval=300，恰好等于服务端断连阈值，导致每次 NOOP 都落在已关闭的 socket
-            # 上（累计 4000+ 次 Broken pipe、反复降级到 60s 轮询）。这里固定为 240s——既恪守网易
-            # 频控安全防线（>=240s），又能在连接被服务端切断前发出 NOOP 保活，避免每 5 分钟断线
-            # 重连导致的高额 TLS 握手流量与”登录太频繁”风控。任何更大的显式 poll_interval 一律不生效。
+            # 网易 163/126 在空闲约 240s 后单方面关闭 TCP，下一次写入即 Broken pipe。探针实测
+            # （2026-11-04）：30s 间隔保活 400s+ 无异常，180s 间隔首轮写入成功，而 240s/300s 间隔
+            # 都在等待后的第一次写入处断连 —— cutoff 落在 (180s, 240s]，240s 贴着边界不可用。
+            # 历史上 config.json 给 mail163-main 配过 poll_interval=300，等于把 NOOP 精确打在
+            # 已关闭的 socket 上（累计数千次 Broken pipe、反复降级到 60s 轮询、TLS 重连风暴）。
+            # 这里固定 120s（cutoff 的一半，留足抖动/服务端调度余量）；NOOP 是廉价控制命令，不会
+            # 触发”登录太频繁”风控。任何更大的显式 poll_interval 一律不生效。
             self.noop_poll_interval_seconds = _NETEASE_NOOP_INTERVAL_SECONDS
         elif getattr(account, "poll_interval", None) is not None and 10 <= account.poll_interval <= 60:
             self.noop_poll_interval_seconds = account.poll_interval

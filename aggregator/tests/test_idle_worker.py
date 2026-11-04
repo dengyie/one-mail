@@ -16,6 +16,7 @@ from one_mail_agg.idle_worker import (
     _idle_retry_after,
     _idle_fingerprint,
     _reconnect_backoff,
+    _NETEASE_NOOP_INTERVAL_SECONDS,
 )
 from one_mail_agg.oauth import oauth_client_factory
 from one_mail_agg.sync import default_client_factory
@@ -699,8 +700,13 @@ def test_idle_session_recycling_smoothly_reconnects(tmp_path):
 
 
 def test_netease_163_safe_noop_polling_interval(tmp_path):
-    """网易 163/126 邮箱由于严格的频控与流量保护，NOOP 轮询周期必须保持在安全下限（>= 240s），
-    既防 300s 服务端单方面断开，又杜绝短频轮询消耗流量导致被封。"""
+    """网易 163/126 的 NOOP 周期必须显著早于服务端空闲断连阈值。
+
+    实测（2026-11-04 探针）：30s 间隔可保活 400s+，180s 间隔首轮写入成功，
+    而 240s/300s 间隔都会在等待后的第一次写入处 Broken pipe —— 真实 cutoff 落在
+    (180s, 240s]，240s 恰好贴边不安全。周期必须被钉在 120s：足够早，且 NOOP 只是
+    控制命令，不触网易风控。
+    """
     config = _config(tmp_path)
     state = SyncState(str(tmp_path / "state.json"))
 
@@ -721,17 +727,19 @@ def test_netease_163_safe_noop_polling_interval(tmp_path):
         state=state,
         noop_poll_interval_seconds=30,  # 即使传入 30s
     )
-    assert worker.noop_poll_interval_seconds >= 240
-    assert worker.noop_poll_interval_seconds < 300
+    assert worker.noop_poll_interval_seconds == _NETEASE_NOOP_INTERVAL_SECONDS
+    assert worker.noop_poll_interval_seconds == 120
+    # 硬护栏：无论如何都不能回到贴着实测 cutoff 的 240s。
+    assert worker.noop_poll_interval_seconds < 240
 
 
 def test_netease_163_noop_interval_clamps_oversized_poll_config(tmp_path):
     """回归：poll_interval 不得把网易轮询周期推到服务端断连阈值上。
 
-    网易 IMAP 在空闲 ~300s 后单方面断开 TCP。历史上 mail163-main 配置了
-    poll_interval=300，于是每次 NOOP 都打在服务端已关闭的 socket 上：
-    日志累计 4162 次 Broken pipe、858 次降级到 60s 轮询。NOOP 周期必须被压回
-    240s（严格早于 300s 阈值，同时不低于网易 >=240s 的频控安全下限）。
+    网易 IMAP 在空闲约 240s 后单方面断开 TCP。历史上 mail163-main 配置了
+    poll_interval=300（后一度改 240），两次都被生产日志证明：NOOP 会在等待后的
+    第一次写入处撞上已关闭的 socket（累计数千次 Broken pipe、反复降级到 60s 轮询）。
+    NOOP 周期必须被压回 120s——实测 cutoff 的一半，留足抖动余量。
     """
     config = _config(tmp_path)
     state = SyncState(str(tmp_path / "state.json"))
@@ -748,7 +756,8 @@ def test_netease_163_noop_interval_clamps_oversized_poll_config(tmp_path):
         poll_interval=300,
     )
     worker = ImapIdleWorker(config=config, account=acc_163, state=state)
-    assert worker.noop_poll_interval_seconds == 240
+    assert worker.noop_poll_interval_seconds == 120
+    assert worker.noop_poll_interval_seconds < 240
 
 
 def test_qq_mail_fast_idle_refresh_cadence(tmp_path):
