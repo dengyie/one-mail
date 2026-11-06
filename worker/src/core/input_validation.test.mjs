@@ -140,6 +140,26 @@ test('sendWebhook treats empty headers as no custom headers', async () => {
     }
 });
 
+test('sendWebhook bounds each delivery with a timeout signal', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+        calls.push({ url: String(url), signal: init.signal });
+        return new Response('', { status: 200 });
+    };
+    try {
+        const result = await sendWebhook(
+            { url: 'https://example.com/hook', method: 'POST', headers: '', body: '{}' },
+            {},
+        );
+        assert.equal(result.success, true);
+        assert.ok(calls[0].signal, 'a webhook that never responds must not pin the invocation');
+        assert.equal(calls[0].signal.aborted, false);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
 test('isValidWebhookHeaders accepts empty and JSON objects, rejects the rest', () => {
     assert.equal(isValidWebhookHeaders(''), true);
     assert.equal(isValidWebhookHeaders('   '), true);

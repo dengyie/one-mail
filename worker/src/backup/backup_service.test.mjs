@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
     BACKUP_COOLDOWN_MS,
+    BACKUP_RETRY_COOLDOWN_MS,
     maybeRunScheduledBackup,
     runD1Backup,
+    shouldRetryScheduledBackup,
     shouldRunScheduledBackup,
     verifyLatestBackup,
 } from "./backup_service.ts";
@@ -75,6 +77,39 @@ test("cooldown opens after the 20h window and always for a never-backed-up fleet
     assert.equal(shouldRunScheduledBackup(0, now), true);
     assert.equal(shouldRunScheduledBackup(now - BACKUP_COOLDOWN_MS + 1000, now), false);
     assert.equal(shouldRunScheduledBackup(now - BACKUP_COOLDOWN_MS, now), true);
+});
+
+test("retry gate waits an hour after a failed attempt", () => {
+    const now = Date.parse("2026-11-07T12:00:00Z");
+    assert.equal(shouldRetryScheduledBackup(0, now), true, "no attempt yet");
+    assert.equal(shouldRetryScheduledBackup(now - BACKUP_RETRY_COOLDOWN_MS + 1000, now), false);
+    assert.equal(shouldRetryScheduledBackup(now - BACKUP_RETRY_COOLDOWN_MS, now), true);
+});
+
+test("scheduled path skips a retry that is too close to the last failed attempt", async () => {
+    const now = new Date("2026-11-07T12:00:00Z");
+    // No successful run (0), newest attempt five minutes ago and failed.
+    const db = fakeDb({ first: (sql) => (sql.includes("status = 'success'") ? 0 : now.getTime() - 5 * 60 * 1000) });
+    const result = await maybeRunScheduledBackup(
+        configured({ DB: db }),
+        { now, fetchImpl: exportFetch(), sleep: async () => {} },
+    );
+    assert.equal(result.skipped, "retry_cooldown");
+    assert.equal(result.ok, true);
+});
+
+test("scheduled path retries once the retry window has passed", async () => {
+    const now = new Date("2026-11-07T12:00:00Z");
+    const db = fakeDb({
+        first: (sql) => (sql.includes("status = 'success'") ? 0 : now.getTime() - BACKUP_RETRY_COOLDOWN_MS),
+    });
+    const result = await maybeRunScheduledBackup(
+        configured({ DB: db }),
+        { now, fetchImpl: exportFetch(), sleep: async () => {} },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.skipped, undefined);
+    assert.equal(result.key, "d1/daily/2026-11-07.sql");
 });
 
 test("runD1Backup is disabled without configuration", async () => {

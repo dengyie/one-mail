@@ -13,9 +13,10 @@ import { unbindTelegramByAddress } from './telegram_api/common';
 import { generateRandomPassword, hashPasswordForStorage } from './core/password.ts';
 import { CONSTANTS } from './constants';
 import { AddressCreationSettings, AdminWebhookSettings, WebhookSettings } from './models';
-import type { ExtractResult, RawMailRow, WebhookMail } from './models';
+import type { ExtractResult, RawMailRow } from './models';
 import { signAddressJwt } from './core/auth';
-import { isSafeWebhookUrl } from './unified/webhook_url';
+import { sendWebhook } from './webhook/sender';
+export { sendWebhook, isValidWebhookHeaders, WEBHOOK_TIMEOUT_MS } from './webhook/sender';
 import i18n from './i18n';
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
@@ -885,73 +886,6 @@ export const getAllowDomains = async (c: Context<HonoCustomType>): Promise<strin
         return normalizeDomains(user_role.domains);
     }
     return getDefaultDomains(c);
-}
-
-/**
- * Webhook `headers` is persisted as a free-form string from the settings UI.
- * Reject anything that is not a JSON object (or empty, meaning "no custom
- * headers") at save time, so a broken value cannot be stored and then throw on
- * every delivery. `sendWebhook` re-checks defensively for values already stored.
- */
-export const isValidWebhookHeaders = (raw: unknown): boolean => {
-    if (typeof raw !== "string") return false;
-    if (raw.trim() === "") return true;
-    try {
-        const parsed = JSON.parse(raw);
-        return !!parsed && typeof parsed === "object" && !Array.isArray(parsed);
-    } catch {
-        return false;
-    }
-};
-
-export async function sendWebhook(
-    settings: WebhookSettings, formatMap: WebhookMail
-): Promise<{ success: boolean, message?: string }> {
-    // send webhook
-    let body = settings.body;
-    for (const key of Object.keys(formatMap)) {
-        body = body.replace(
-            new RegExp(`\\$\\{${key}\\}`, "g"),
-            JSON.stringify(
-                formatMap[key as keyof WebhookMail]
-            ).replace(/^"(.*)"$/, '$1')
-        );
-    }
-    // I7d webhook SSRF 防护：URL 由 admin 或 allow-list 内用户可配，若指向
-    // 169.254.169.254/内网等地址即可做 SSRF。Workers 无 dns/net 模块，fetch 时
-    // 的 DNS-rebinding 无法全拦——这里做静态 best-effort 校验（拒私有/回环/元数据），
-    // 运行时 rebinding 仍为残留风险（见 changelog）。
-    if (!isSafeWebhookUrl(settings.url)) {
-        console.warn("send webhook blocked unsafe url", settings.url);
-        return { success: false, message: "unsafe webhook url (private/internal IP or invalid)" };
-    }
-    // settings.headers is a free-form string persisted from the settings UI. A
-    // non-JSON value must fail this one delivery, not throw: triggerWebhook
-    // awaits this in a loop, so a throw would silently skip every later webhook.
-    let headers: Record<string, string> = {};
-    if (typeof settings.headers === "string" && settings.headers.trim() !== "") {
-        try {
-            const parsed = JSON.parse(settings.headers);
-            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                throw new TypeError("webhook headers must be a JSON object");
-            }
-            headers = parsed as Record<string, string>;
-        } catch {
-            console.warn("send webhook blocked invalid headers json", settings.url);
-            return { success: false, message: "invalid webhook headers (must be a JSON object)" };
-        }
-    }
-    const response = await fetch(settings.url, {
-        method: settings.method,
-        headers,
-        body: body
-    });
-    if (!response.ok) {
-        console.log("send webhook error", settings.url, settings.method, settings.headers, body);
-        console.log("send webhook error", response.status, response.statusText);
-        return { success: false, message: `send webhook error: ${response.status} ${response.statusText}` };
-    }
-    return { success: true }
 }
 
 export async function triggerWebhook(

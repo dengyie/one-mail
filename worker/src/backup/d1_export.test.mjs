@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+    D1_EXPORT_MAX_POLLS,
     createD1Export,
     d1ExportEndpoint,
     exportD1ToBucket,
@@ -80,12 +81,34 @@ test("waitForD1Export follows bookmarks until a signed url appears", async () =>
     assert.match(seen[2], /current_bookmark=b3/);
 });
 
+test("the poll budget fits the free-plan subrequest ceiling", () => {
+    // create + polls + download must stay under 50 subrequests per invocation.
+    assert.ok(
+        D1_EXPORT_MAX_POLLS + 2 <= 50,
+        `poll budget ${D1_EXPORT_MAX_POLLS} + 2 exceeds the 50-subrequest free plan limit`,
+    );
+});
+
 test("waitForD1Export gives up after maxPolls", async () => {
     const fetchImpl = async () => jsonResponse({ success: true, result: {} });
     await assert.rejects(
         () => waitForD1Export(config, "b1", { fetch: fetchImpl, sleep: async () => {}, maxPolls: 3 }),
         /did not finish/,
     );
+});
+
+test("waitForD1Export does not sleep after the final poll", async () => {
+    const fetchImpl = async () => jsonResponse({ success: true, result: {} });
+    let sleeps = 0;
+    await assert.rejects(
+        () => waitForD1Export(config, "b1", {
+            fetch: fetchImpl,
+            sleep: async () => { sleeps += 1; },
+            maxPolls: 3,
+        }),
+        /did not finish/,
+    );
+    assert.equal(sleeps, 2, "only the polls that precede another attempt may sleep");
 });
 
 test("exportD1ToBucket streams the download into the bucket", async () => {
