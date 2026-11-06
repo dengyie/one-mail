@@ -8,6 +8,7 @@ import UserBindAddressModule from '../user_api/bind_address';
 import i18n from '../i18n';
 import { mergeRoleAddressConfigs } from "../unified/rbac_config";
 import { hashPasswordForStorage } from "../core/password.ts";
+import { resolveAuditActor, resolveAuditIp, writeAudit } from "../core/audit_log.ts";
 import { DEFAULT_MAX_ADDRESS_COUNT, HARD_MAX_UNIFIED_PAGE_SIZE } from "../quota.ts";
 import { hasRemoteShards, loadShardMap, purgeShardAccounts } from "../unified/federation.ts";
 
@@ -111,8 +112,8 @@ export default {
         const msgs = i18n.getMessagesbyContext(c);
         if (!user_id) return c.text(msgs.UserNotFoundMsg, 400);
         const existing = await c.env.DB.prepare(
-            `SELECT id FROM users WHERE id = ?`
-        ).bind(user_id).first("id");
+            `SELECT id, user_email FROM users WHERE id = ?`
+        ).bind(user_id).first<{ id: number; user_email: string }>();
         if (existing === undefined || existing === null) {
             return c.text(msgs.UserNotFoundMsg, 404);
         }
@@ -165,6 +166,14 @@ export default {
             console.error("[admin-delete-user] transaction failed:", error);
             return c.text(msgs.FailedDeleteUserMsg, 500);
         }
+        await writeAudit(c.env, {
+            actor: resolveAuditActor(c),
+            action: "user.delete",
+            targetType: "user",
+            targetId: String(existing.id),
+            detail: { user_email: existing.user_email },
+            ip: resolveAuditIp(c),
+        });
         return c.json({ success: true })
     },
     resetPassword: async (c: Context<HonoCustomType>) => {

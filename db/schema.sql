@@ -443,3 +443,79 @@ BEGIN
        AND OLD.monthly_key IS NOT NULL
        AND MAX(0, CAST(COALESCE(value, '0') AS INTEGER)) > 0;
 END;
+
+-- Append-only trail for high-risk admin operations. Writes are fail-open:
+-- a missing table or write error must never block the audited operation.
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT,
+    detail_json TEXT,
+    ip TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action, created_at DESC);
+
+-- D1 -> R2 snapshot ledger (P0-2). Fail-open like audit_logs.
+CREATE TABLE IF NOT EXISTS backup_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'success', 'failed')),
+    object_key TEXT,
+    bytes INTEGER,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_backup_runs_started_at ON backup_runs (started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_status ON backup_runs (status, started_at DESC);
+
+-- External-account outbound send queue (mirrors
+-- db/2026-10-05-outbound-mail-jobs.sql; the aggregator claims these rows).
+CREATE TABLE IF NOT EXISTS outbound_mail_jobs (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    from_addr TEXT NOT NULL,
+    to_addr TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_text TEXT,
+    body_html TEXT,
+    payload_json TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (
+        status IN ('pending', 'processing', 'succeeded', 'failed', 'unsupported', 'superseded')
+    ),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_until INTEGER,
+    provider_message_id TEXT,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    completed_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbound_mail_jobs_ready
+    ON outbound_mail_jobs(status, next_attempt_at, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outbound_mail_jobs_request_hash
+    ON outbound_mail_jobs(account_id, request_hash);
+CREATE INDEX IF NOT EXISTS idx_outbound_mail_jobs_account
+    ON outbound_mail_jobs(account_id, status, created_at);
+
+-- Gmail reply reroute idempotency (mirrors
+-- db/2026-10-29-gmail-reroute-idempotency.sql). Deliberately separate from
+-- send_mail_limit_reservations, which increments the domain send quota.
+CREATE TABLE IF NOT EXISTS gmail_reroute_idempotency (
+    idempotency_key TEXT PRIMARY KEY,
+    request_hash TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);

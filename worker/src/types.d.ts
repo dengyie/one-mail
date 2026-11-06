@@ -28,6 +28,18 @@ type Bindings = {
     ATTACHMENT_STORAGE_URL?: string
     ATTACHMENT_STORAGE_TOKEN?: string
 
+    // D1 backup (P0-2). All fields optional: without the R2 binding and API
+    // credentials the backup endpoints report "disabled" instead of failing.
+    // The binding must NOT be named ATTACHMENTS — backend_deploy.yaml strips
+    // that stanza from BACKEND_TOML.
+    BACKUP_BUCKET?: R2Bucket
+    CLOUDFLARE_ACCOUNT_ID?: string
+    D1_DATABASE_ID?: string
+    D1_REST_API_TOKEN?: string
+    BACKUP_RETENTION_DAILY_DAYS?: string | number
+    BACKUP_RETENTION_WEEKLY_DAYS?: string | number
+    BACKUP_RETENTION_MONTHLY_DAYS?: string | number
+
     // config
     DEFAULT_LANG: string | undefined
     TITLE: string | undefined

@@ -2,6 +2,7 @@ import { Context } from 'hono';
 
 import { cleanup } from '../common';
 import { CONSTANTS } from '../constants';
+import { auditSqlFingerprint, resolveAuditActor, resolveAuditIp, writeAudit } from '../core/audit_log.ts';
 import { getJsonSetting, saveSetting } from '../utils';
 import { CleanupSettings, CustomSqlCleanup } from '../models';
 import i18n from '../i18n';
@@ -85,10 +86,32 @@ export const executeCustomSqlCleanup = async (
         const result = await c.env.DB.prepare(sql).run();
         const rowsAffected = result.meta?.changes ?? 0;
         console.log(`Custom SQL cleanup [${customSql.name}] completed, rows affected: ${rowsAffected}`);
+        await writeAudit(c.env, {
+            actor: resolveAuditActor(c),
+            action: "cleanup.custom_sql",
+            targetType: "cleanup",
+            targetId: customSql.name ?? null,
+            detail: {
+                sql_fingerprint: await auditSqlFingerprint(sql),
+                sql_length: sql.length,
+                rows_affected: rowsAffected,
+            },
+            ip: resolveAuditIp(c),
+        });
         return { success: true, rowsAffected };
     } catch (error) {
         const errorMessage = (error as Error).message || "Unknown error";
         console.error(`Custom SQL cleanup [${customSql.name}] failed:`, errorMessage);
+        await writeAudit(c.env, {
+            actor: resolveAuditActor(c),
+            action: "cleanup.custom_sql.failed",
+            targetType: "cleanup",
+            targetId: customSql.name ?? null,
+            // Deliberately omit the driver error text: SQLite can echo the
+            // statement (including operator filter values) back in it.
+            detail: { sql_fingerprint: await auditSqlFingerprint(sql), sql_length: sql.length },
+            ip: resolveAuditIp(c),
+        });
         return { success: false, error: errorMessage };
     }
 };

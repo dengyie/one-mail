@@ -6,6 +6,9 @@ import address_sender_api from './address_sender_api'
 import sendbox_api from './sendbox_api'
 import statistics_api from './statistics_api'
 import account_settings_api from './account_settings_api'
+import audit_api from './audit_api'
+import backup_api from './backup_api'
+import deployment_api from './deployment_api'
 import cleanup_api from './cleanup_api'
 import admin_user_api from './admin_user_api'
 import webhook_settings from './webhook_settings'
@@ -49,6 +52,17 @@ api.delete('/admin/sendbox/:id', sendbox_api.remove)
 // statistics
 api.get('/admin/statistics', statistics_api.get)
 api.get('/admin/d1_quota', statistics_api.getD1Quota)
+
+// audit trail
+api.get('/admin/audit_logs', audit_api.list)
+
+// d1 backup to R2 (disabled unless BACKUP_BUCKET + CF API credentials are set)
+api.get('/admin/backups', backup_api.status)
+api.post('/admin/backups/run', backup_api.run)
+api.post('/admin/backups/verify', backup_api.verify)
+
+// read-only deployment self-check (reports states, never secrets)
+api.get('/admin/deployment_check', deployment_api.check)
 
 // account settings
 api.get('/admin/account_settings', account_settings_api.get)

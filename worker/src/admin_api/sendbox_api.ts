@@ -1,5 +1,6 @@
 import { Context } from 'hono'
 
+import { resolveAuditActor, resolveAuditIp, writeAudit } from '../core/audit_log.ts'
 import { querySendboxList } from '../mails_api/send_mail_api'
 
 const list = async (c: Context<HonoCustomType>) => {
@@ -22,6 +23,15 @@ const remove = async (c: Context<HonoCustomType>) => {
     const { success } = await c.env.DB.prepare(
         `DELETE FROM sendbox WHERE id = ? `
     ).bind(id).run();
+    if (success) {
+        await writeAudit(c.env, {
+            actor: resolveAuditActor(c),
+            action: "sendbox.delete",
+            targetType: "sendbox",
+            targetId: id,
+            ip: resolveAuditIp(c),
+        });
+    }
     return c.json({ success });
 };
 
