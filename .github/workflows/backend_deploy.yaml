@@ -125,6 +125,18 @@ jobs:
           path.write_text(text, encoding="utf-8")
           PY
 
+      # Read-only pre-flight: prove the generated config points at the account,
+      # database and Worker that actually exist before any migration touches D1.
+      # Warn-only by default so a transient Cloudflare API error cannot block a
+      # deploy; set DEPLOYMENT_TARGET_MODE=strict to make a mismatch fatal.
+      - name: Resolve deployment target (read-only)
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOYMENT_TARGET_MODE: warn
+        run: node scripts/deployment-target.mjs --toml worker/wrangler.toml
+
       - name: Validate production Worker bindings
         shell: bash
         run: |
@@ -504,6 +516,35 @@ jobs:
             --yes \
             --file ../db/2026-10-06-scheduled-locks.sql
           echo "Remote D1 scheduled_locks schema is current"
+
+      - name: Ensure remote D1 audit and backup ledger schema
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare credentials::D1 migrations require CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+          cd worker/
+          # Both tables are append-only ledgers for paths that run right after
+          # this publish: audit_logs backs writeAudit() on admin deletes, and
+          # backup_runs gates the daily D1 export in the cron handler. Both
+          # readers fail open, so a table that is missing here does not fail
+          # the deploy -- it silently degrades to "nothing recorded" and "backup
+          # skipped", which is exactly the outage that must not be invisible.
+          # CREATE ... IF NOT EXISTS only; idempotent and safe to replay.
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-11-07-audit-log.sql
+          pnpm exec wrangler d1 execute DB \
+            --remote \
+            --yes \
+            --file ../db/2026-11-07-backup-runs.sql
+          echo "Remote D1 audit_logs and backup_runs schema is current"
 
       - name: Deploy Backend for ${{ github.ref_name }}
         shell: bash

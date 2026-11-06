@@ -1,20 +1,29 @@
-import { Context } from "hono";
+import type { Context } from "hono";
 
 import { getBooleanValue, getJsonSetting, normalizeAddressDomain } from "../utils";
+import { commonParseMail, triggerAnotherWorker, triggerWebhook } from "../common";
 import { sendMailToTelegram } from "../telegram_api";
 import { auto_reply } from "./auto_reply";
+import { extractEmailInfo } from "./ai_extract";
 import { isBlocked } from "./black_list";
-import { triggerWebhook, triggerAnotherWorker, commonParseMail } from "../common";
 import { check_if_junk_mail } from "./check_junk";
 import { remove_attachment_if_need } from "./check_attachment";
-import { extractEmailInfo } from "./ai_extract";
 import { forwardEmail } from "./forward";
+import { runPostIngest, type PostIngestDeps } from "./post_ingest";
 import { EmailRuleSettings } from "../models";
 import { CONSTANTS } from "../constants";
 import { compressText } from "../gzip";
 import { saveUnifiedEmail } from "../unified/unified_store";
 import { enqueueUnifiedMirror, markUnifiedMirrorComplete } from "../unified/mirror_jobs.ts";
 
+
+const postIngestDeps: PostIngestDeps = {
+    extractEmailInfo,
+    sendMailToTelegram,
+    triggerWebhook,
+    commonParseMail,
+    triggerAnotherWorker,
+};
 
 async function email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
     const toAddress = normalizeAddressDomain(message.to);
@@ -157,46 +166,32 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
     }
 
     // forward email
+    // message.forward() is bound to the email event object, so it stays on the
+    // hot path rather than inside the best-effort side effects below.
+    // forwardEmail() swallows its own failures and never rejects.
     await forwardEmail(message, env);
 
-    // AI email content extraction
-    const aiExtractResult = await extractEmailInfo(parsedEmailContext, env, message_id, toAddress);
-
-    // send email to telegram
-    try {
-        await sendMailToTelegram(
-            { env: env } as Context<HonoCustomType>,
-            toAddress, parsedEmailContext, message_id, aiExtractResult);
-    } catch (error) {
-        console.error("send mail to telegram error", error);
+    // Side effects below are best-effort and must never delay or fail delivery:
+    // AI extraction, Telegram push, webhooks and peer-worker fan-out run after
+    // the message is durably stored, inside ctx.waitUntil().
+    const postIngest = runPostIngest(env, {
+        rawEmail,
+        from: message.from,
+        toAddress,
+        messageId: message_id,
+        headers: message.headers,
+        parsedEmailContext,
+    }, postIngestDeps).catch((error) => {
+        console.error("post-ingest side effects failed", error);
+    });
+    if (typeof ctx?.waitUntil === "function") {
+        ctx.waitUntil(postIngest);
+    } else {
+        await postIngest;
     }
 
-    // send webhook
-    try {
-        await triggerWebhook(
-            { env: env } as Context<HonoCustomType>,
-            toAddress, parsedEmailContext, message_id, aiExtractResult
-        );
-    } catch (error) {
-        console.error("send webhook error", error);
-    }
-
-    // trigger another worker
-    try {
-        const parsedEmail = (await commonParseMail(parsedEmailContext));
-        const parsedText = parsedEmail?.text ?? ""
-        const rpcEmail: RPCEmailMessage = {
-            from: message.from,
-            to: toAddress,
-            rawEmail: rawEmail,
-            headers: message.headers
-        }
-        await triggerAnotherWorker({ env: env } as Context<HonoCustomType>, rpcEmail, parsedText);
-    } catch (error) {
-        console.error("trigger another worker error", error);
-    }
-
-    // auto reply email
+    // auto_reply uses message.reply() and must stay on the event object, so it
+    // remains in the handler; it is still isolated from the post-ingest chain.
     await auto_reply(message, env, toAddress);
 }
 

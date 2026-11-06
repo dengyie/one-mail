@@ -246,6 +246,33 @@ CREATE TABLE IF NOT EXISTS api_keys (
     role TEXT NOT NULL DEFAULT 'readonly', allowed_sources TEXT, allowed_accounts TEXT,
     enabled INTEGER DEFAULT 1, created_at INTEGER, last_used_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT,
+    detail_json TEXT,
+    ip TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS backup_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'success', 'failed')),
+    object_key TEXT,
+    bytes INTEGER,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_started_at ON backup_runs (started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_status ON backup_runs (status, started_at DESC);
 `
 
 const UNIFIED_USAGE_INDEXES = [

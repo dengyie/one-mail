@@ -9,6 +9,7 @@ import { pruneTerminalJobs } from './unified/job_pruning';
 import { reconcileSendMailLimitReservations, countUnknownSendMailReservations } from './mails_api/send_mail_limit_utils';
 import { isShardMode, resolveShardId } from './core/d1_quota.ts';
 import { processUnifiedMirrorJobs, reconcileUnifiedMirrorJobs } from './unified/mirror_jobs.ts';
+import { maybeRunScheduledBackup } from './backup/backup_service.ts';
 
 const RETENTION_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const RETENTION_KEY = "one-mail:retention:last-success";
@@ -74,6 +75,20 @@ export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: any) 
             }
         } catch (error) {
             console.error("one-mail unified mirror retry failed", error);
+        }
+    }
+    // D1 snapshot is independent of the retention lock: it has its own 20h
+    // cooldown in the ledger and must not be skipped because cleanup is busy.
+    if (!shardMode) {
+        try {
+            const backup = await maybeRunScheduledBackup(env);
+            if (backup.skipped === "ledger_unavailable") {
+                console.warn("one-mail d1 backup skipped: backup_runs missing (apply 2026-11-07-backup-runs.sql)");
+            } else if (!backup.skipped) {
+                console.log("one-mail d1 backup:", JSON.stringify(backup));
+            }
+        } catch (error) {
+            console.error("one-mail d1 backup failed", error);
         }
     }
     const owner = await acquireRetentionLock(env, names.lock);

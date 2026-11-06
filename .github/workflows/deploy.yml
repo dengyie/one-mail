@@ -62,8 +62,11 @@ jobs:
           node --experimental-strip-types --test \
             $(find src -type f \( -name '*.test.mjs' -o -name '*.test.js' \) -print)
 
-      - name: Worker typecheck, lint, and bundle gate
+      - name: Worker typecheck, lint, bundle, and repository gates
         run: |
+          node scripts/check-file-lines.mjs
+          node scripts/check-migrations.mjs
+          node --test scripts/deployment-target.test.mjs
           cp worker/wrangler.toml.template worker/wrangler.toml
           pnpm --filter @one-mail/worker exec tsc --noEmit
           pnpm --filter @one-mail/worker lint
