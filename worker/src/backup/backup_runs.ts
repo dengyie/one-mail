@@ -85,6 +85,23 @@ export async function lastSuccessfulBackupAt(env: LedgerEnv): Promise<number | n
     }
 }
 
+/**
+ * Timestamp of the newest attempt of any status (0 when none), or null when the
+ * table is unavailable. The scheduled path uses it to back off after a failure:
+ * a broken token or a wrong target must not re-export on every cron tick.
+ */
+export async function lastBackupAttemptAt(env: LedgerEnv): Promise<number | null> {
+    try {
+        const value = await env.DB.prepare(
+            `SELECT MAX(started_at) AS at FROM backup_runs`,
+        ).first<number | null>("at");
+        return Number(value) || 0;
+    } catch (error) {
+        console.error("backup run ledger unavailable", error);
+        return null;
+    }
+}
+
 export async function listRecentBackupRuns(env: LedgerEnv, limit = 20): Promise<BackupRunRow[]> {
     const bounded = Math.min(Math.max(Math.trunc(limit) || 20, 1), 100);
     try {

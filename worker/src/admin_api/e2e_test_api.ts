@@ -79,7 +79,14 @@ const receiveMail = async (c: Context<HonoCustomType>) => {
         abort: (reason) => runtimeContext.abort(reason),
     };
     await emailHandler(mockMessage, env, executionContext);
-    await Promise.allSettled(pending);
+    // Let post-ingest side effects finish, but never hang the endpoint: a
+    // webhook or peer-worker call that never settles would otherwise block the
+    // test run forever instead of failing fast with a readable response.
+    const SETTLE_TIMEOUT_MS = 15_000;
+    await Promise.race([
+        Promise.allSettled(pending),
+        new Promise((resolve) => setTimeout(resolve, SETTLE_TIMEOUT_MS)),
+    ]);
 
     return c.json({
         success: !state.rejected,
