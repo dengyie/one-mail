@@ -9,8 +9,12 @@
 
 import type { BackupConfig } from "./config.ts";
 
+// The free Workers plan caps fetch subrequests at 50 per invocation. This
+// module's budget is 1 (create) + polls + 1 (download) = polls + 2, so with 45
+// polls the export stays at 47 subrequests and leaves headroom for the rest of
+// the cron invocation in the same event.
 export const D1_EXPORT_POLL_INTERVAL_MS = 1000;
-export const D1_EXPORT_MAX_POLLS = 180;
+export const D1_EXPORT_MAX_POLLS = 45;
 
 export type D1ExportDeps = {
     fetch: typeof fetch;
@@ -89,7 +93,11 @@ export async function waitForD1Export(
         if (typeof result.at_bookmark === "string" && result.at_bookmark) {
             current = result.at_bookmark;
         }
-        await sleep(D1_EXPORT_POLL_INTERVAL_MS);
+        // Do not sleep after the final poll: the loop is about to throw, so the
+        // extra interval would only delay the failed-run ledger row.
+        if (attempt + 1 < maxPolls) {
+            await sleep(D1_EXPORT_POLL_INTERVAL_MS);
+        }
     }
     throw new Error("D1 export did not finish in time");
 }
