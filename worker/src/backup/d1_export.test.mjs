@@ -59,15 +59,21 @@ test("createD1Export surfaces non-JSON and API errors", async () => {
     );
 });
 
-test("waitForD1Export follows bookmarks until a signed url appears", async () => {
-    const seen = [];
+test("waitForD1Export polls with POST and a current_bookmark body", async () => {
+    const calls = [];
     const responses = [
-        { success: true, result: { at_bookmark: "b2" } },
-        { success: true, result: { at_bookmark: "b3" } },
-        { success: true, result: { signed_url: "https://download.example/dump.sql" } },
+        { success: true, result: { status: "active", at_bookmark: "b2" } },
+        { success: true, result: { status: "active", at_bookmark: "b3" } },
+        {
+            success: true,
+            result: {
+                status: "complete",
+                result: { signed_url: "https://download.example/dump.sql" },
+            },
+        },
     ];
-    const fetchImpl = async (url) => {
-        seen.push(url);
+    const fetchImpl = async (url, init) => {
+        calls.push({ url, init });
         return jsonResponse(responses.shift());
     };
     const url = await waitForD1Export(config, "b1", {
@@ -75,10 +81,53 @@ test("waitForD1Export follows bookmarks until a signed url appears", async () =>
         sleep: async () => {},
     });
     assert.equal(url, "https://download.example/dump.sql");
-    assert.equal(seen.length, 3);
-    assert.match(seen[0], /current_bookmark=b1/);
-    assert.match(seen[1], /current_bookmark=b2/);
-    assert.match(seen[2], /current_bookmark=b3/);
+    assert.equal(calls.length, 3);
+    for (const call of calls) {
+        // A GET is rejected with 405 by the real API, so every poll must POST.
+        assert.equal(call.init.method, "POST");
+        assert.equal(call.url, d1ExportEndpoint(config));
+        assert.equal(call.init.headers["content-type"], "application/json");
+    }
+    assert.equal(JSON.parse(calls[0].init.body).current_bookmark, "b1");
+    assert.equal(JSON.parse(calls[1].init.body).current_bookmark, "b2");
+    assert.equal(JSON.parse(calls[2].init.body).current_bookmark, "b3");
+});
+
+test("waitForD1Export reads the download url from the nested result", async () => {
+    // The completion payload nests the download url two levels deep; a top-level
+    // `signed_url` is ignored because the API never sends one there.
+    const fetchImpl = async () => jsonResponse({
+        success: true,
+        result: {
+            status: "complete",
+            signed_url: "https://wrong.example/top-level.sql",
+            result: { signed_url: "https://right.example/dump.sql" },
+        },
+    });
+    const url = await waitForD1Export(config, "b1", { fetch: fetchImpl, sleep: async () => {} });
+    assert.equal(url, "https://right.example/dump.sql");
+});
+
+test("waitForD1Export surfaces an error status", async () => {
+    const fetchImpl = async () => jsonResponse({
+        success: true,
+        result: { status: "error", error: "export cancelled" },
+    });
+    await assert.rejects(
+        () => waitForD1Export(config, "b1", { fetch: fetchImpl, sleep: async () => {} }),
+        /export cancelled/,
+    );
+});
+
+test("waitForD1Export rejects a complete status without a signed url", async () => {
+    const fetchImpl = async () => jsonResponse({
+        success: true,
+        result: { status: "complete", result: {} },
+    });
+    await assert.rejects(
+        () => waitForD1Export(config, "b1", { fetch: fetchImpl, sleep: async () => {} }),
+        /without a signed_url/,
+    );
 });
 
 test("the poll budget fits the free-plan subrequest ceiling", () => {
@@ -121,7 +170,10 @@ test("exportD1ToBucket streams the download into the bucket", async () => {
     };
     const responses = [
         jsonResponse({ success: true, result: { at_bookmark: "b1" } }),
-        jsonResponse({ success: true, result: { signed_url: "https://download.example/dump.sql" } }),
+        jsonResponse({
+            success: true,
+            result: { status: "complete", result: { signed_url: "https://download.example/dump.sql" } },
+        }),
         new Response("CREATE TABLE t (id INTEGER);", { status: 200 }),
     ];
     const deps = {
@@ -143,7 +195,10 @@ test("exportD1ToBucket rejects a failed download without writing", async () => {
     const bucket = { put: async () => { putCalled = true; return { size: 0 }; } };
     const responses = [
         jsonResponse({ success: true, result: { at_bookmark: "b1" } }),
-        jsonResponse({ success: true, result: { signed_url: "https://download.example/dump.sql" } }),
+        jsonResponse({
+            success: true,
+            result: { status: "complete", result: { signed_url: "https://download.example/dump.sql" } },
+        }),
     ];
     const deps = {
         fetch: async (url) => {

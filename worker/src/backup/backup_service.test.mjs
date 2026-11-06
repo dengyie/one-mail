@@ -61,12 +61,18 @@ function exportFetch(state = {}) {
         if (url.startsWith("https://download.example/")) {
             return new Response("CREATE TABLE t (id INTEGER);", { status: 200 });
         }
+        // First POST creates the export; every later POST is a poll and the
+        // real API reports completion as status "complete" with the download
+        // url nested under result.result.
         if (!state.created) {
             state.created = true;
             return new Response(JSON.stringify({ success: true, result: { at_bookmark: "b1" } }), { status: 200 });
         }
         return new Response(
-            JSON.stringify({ success: true, result: { signed_url: "https://download.example/dump.sql" } }),
+            JSON.stringify({
+                success: true,
+                result: { status: "complete", result: { signed_url: "https://download.example/dump.sql" } },
+            }),
             { status: 200 },
         );
     };

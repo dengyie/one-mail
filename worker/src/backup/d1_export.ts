@@ -1,10 +1,14 @@
 /**
  * D1 export via the Cloudflare REST API, streamed straight into R2.
  *
- * The polling protocol is two steps: POST creates the export and returns
- * `at_bookmark`; GET with `current_bookmark` is repeated until it returns a
- * short-lived `signed_url`. The dump is then streamed into the bucket so the
- * Worker never buffers the whole database in memory.
+ * The polling protocol is POST-only: the first POST with `output_format:
+ * "polling"` creates the export and returns an `at_bookmark`; every subsequent
+ * poll is another POST to the same endpoint carrying `current_bookmark` in the
+ * body until `status: "complete"` surfaces a short-lived `signed_url` (nested
+ * under `result.result`). A GET on the endpoint is rejected with 405, and an
+ * export that stops being polled is cancelled — so the loop must keep POSTing
+ * until it finishes or its budget runs out. The dump is then streamed into the
+ * bucket so the Worker never buffers the whole database in memory.
  */
 
 import type { BackupConfig } from "./config.ts";
@@ -15,6 +19,18 @@ import type { BackupConfig } from "./config.ts";
 // the cron invocation in the same event.
 export const D1_EXPORT_POLL_INTERVAL_MS = 1000;
 export const D1_EXPORT_MAX_POLLS = 45;
+
+// The same JSON goes into the create call and every poll: `current_bookmark`
+// is appended to it once the create returns a bookmark.
+const POLL_BODY: Record<string, unknown> = { output_format: "polling" };
+
+// `result.result` is repurposed by the API: the outer `result` is the export
+// task, and only upon `status: "complete"` does it carry a nested `result`
+// object with the download URL and generated filename.
+type ExportCompletion = {
+    signed_url?: unknown;
+    filename?: unknown;
+};
 
 export type D1ExportDeps = {
     fetch: typeof fetch;
@@ -61,7 +77,7 @@ export async function createD1Export(
             authorization: `Bearer ${config.token}`,
             "content-type": "application/json",
         },
-        body: JSON.stringify({ output_format: "polling" }),
+        body: JSON.stringify(POLL_BODY),
     });
     const json = await readCloudflareJson(response);
     const bookmark = json?.result?.at_bookmark;
@@ -80,15 +96,29 @@ export async function waitForD1Export(
     const maxPolls = deps.maxPolls ?? D1_EXPORT_MAX_POLLS;
     let current = bookmark;
     for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-        const url = `${d1ExportEndpoint(config)}`
-            + `?current_bookmark=${encodeURIComponent(current)}`;
-        const response = await deps.fetch(url, {
-            headers: { authorization: `Bearer ${config.token}` },
+        // The API only accepts POST: a GET on the same endpoint is rejected
+        // with 405, and polling stops restarting the export task, so each
+        // attempt must be another authenticated POST with the latest bookmark.
+        const response = await deps.fetch(d1ExportEndpoint(config), {
+            method: "POST",
+            headers: {
+                authorization: `Bearer ${config.token}`,
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({ ...POLL_BODY, current_bookmark: current }),
         });
         const json = await readCloudflareJson(response);
         const result = json?.result ?? {};
-        if (typeof result.signed_url === "string" && result.signed_url) {
-            return result.signed_url;
+        if (result.status === "complete") {
+            const completion = (result.result ?? {}) as ExportCompletion;
+            if (typeof completion.signed_url === "string" && completion.signed_url) {
+                return completion.signed_url;
+            }
+            throw new Error("D1 export completed without a signed_url");
+        }
+        if (result.status === "error") {
+            const detail = typeof result.error === "string" ? result.error : JSON.stringify(result.error ?? {});
+            throw new Error(`D1 export failed: ${detail}`);
         }
         if (typeof result.at_bookmark === "string" && result.at_bookmark) {
             current = result.at_bookmark;
