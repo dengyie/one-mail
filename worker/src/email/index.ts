@@ -165,6 +165,12 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
         }
     }
 
+    // forward email
+    // message.forward() is bound to the email event object, so it stays on the
+    // hot path rather than inside the best-effort side effects below.
+    // forwardEmail() swallows its own failures and never rejects.
+    await forwardEmail(message, env);
+
     // Side effects below are best-effort and must never delay or fail delivery:
     // AI extraction, Telegram push, webhooks and peer-worker fan-out run after
     // the message is durably stored, inside ctx.waitUntil().

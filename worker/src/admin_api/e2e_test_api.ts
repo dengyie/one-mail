@@ -65,10 +65,13 @@ const receiveMail = async (c: Context<HonoCustomType>) => {
         : c.env;
     // Hono declares only a subset of the Cloudflare runtime context.
     const runtimeContext = c.executionCtx as ExecutionContext;
-    // Retain the no-op background hooks while using the real request context
-    // for runtime-owned members added by Workers (exports, tracing, abort).
+    // Model waitUntil the way the Workers runtime does: the work is retained and
+    // runs to completion before the event is considered finished. The previous
+    // no-op double silently dropped any background work, which hid real
+    // post-ingest side effects (webhooks, Telegram, peer fan-out) from tests.
+    const pending: Promise<unknown>[] = [];
     const executionContext: ExecutionContext = {
-        waitUntil: () => {},
+        waitUntil: (task: Promise<unknown>) => { pending.push(Promise.resolve(task)); },
         passThroughOnException: () => {},
         props: {},
         exports: runtimeContext.exports,
@@ -76,6 +79,7 @@ const receiveMail = async (c: Context<HonoCustomType>) => {
         abort: (reason) => runtimeContext.abort(reason),
     };
     await emailHandler(mockMessage, env, executionContext);
+    await Promise.allSettled(pending);
 
     return c.json({
         success: !state.rejected,
