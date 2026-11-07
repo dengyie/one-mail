@@ -80,6 +80,7 @@ jobs:
           PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
           PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
           ATTACHMENT_STORAGE_TOKEN: ${{ secrets.ATTACHMENT_STORAGE_TOKEN }}
+          D1_BACKUP_API_TOKEN: ${{ secrets.D1_BACKUP_API_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${ATTACHMENT_STORAGE_TOKEN:-}" ] || [ "${#ATTACHMENT_STORAGE_TOKEN}" -lt 32 ]; then
@@ -114,6 +115,20 @@ jobs:
           printf '%s' "$ATTACHMENT_STORAGE_TOKEN" | \
             ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" \
             "umask 077; cat > '$REMOTE_STAGE/attachment-storage.token'; chmod 0600 '$REMOTE_STAGE/attachment-storage.token'"
+
+          # The D1 backup program is optional: no token means no program.
+          if [ -n "${D1_BACKUP_API_TOKEN:-}" ]; then
+            if [ "${#D1_BACKUP_API_TOKEN}" -lt 20 ]; then
+              echo "::error::D1_BACKUP_API_TOKEN is shorter than 20 characters."
+              exit 1
+            fi
+            # shellcheck disable=SC2029
+            printf '%s' "$D1_BACKUP_API_TOKEN" | \
+              ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" \
+              "umask 077; cat > '$REMOTE_STAGE/d1-backup.token'; chmod 0600 '$REMOTE_STAGE/d1-backup.token'"
+          else
+            echo "D1_BACKUP_API_TOKEN is not set; the D1 backup program stays disabled"
+          fi
 
           # shellcheck disable=SC2029
           ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
@@ -206,6 +221,10 @@ jobs:
               if [ ! -f "$BACKUP/runtime/backend-ready" ]; then
                 restore_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh" || rollback_failed=1
                 restore_runtime_file attachment-storage.token "$BASE/attachment-storage.token" || rollback_failed=1
+                if [ -f "$BACKUP/runtime/d1-managed" ]; then
+                  restore_runtime_file d1-backup.sh "$BASE/d1-backup.sh" || rollback_failed=1
+                  restore_runtime_file d1-backup.token "$BASE/d1-backup.token" || rollback_failed=1
+                fi
                 restore_supervisor_config || rollback_failed=1
                 if [ -f "$BACKUP/runtime/nginx-config-update-started" ]; then
                   restore_nginx_config || rollback_failed=1
@@ -257,6 +276,13 @@ jobs:
           save_runtime_file agg-loop.sh "$BASE/agg-loop.sh"
           save_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh"
           save_runtime_file attachment-storage.token "$BASE/attachment-storage.token"
+          # Snapshot the D1 files only when this deploy replaces them; moving
+          # them aside without reinstalling would silently disable backups.
+          if [ -f "$REMOTE_STAGE/d1-backup.token" ]; then
+            save_runtime_file d1-backup.sh "$BASE/d1-backup.sh"
+            save_runtime_file d1-backup.token "$BASE/d1-backup.token"
+            : > "$BACKUP/runtime/d1-managed"
+          fi
           save_runtime_copy supervisor-one-mail-agg.conf "$SUPERVISOR_AGG_CONF"
           save_runtime_copy nginx-frontend.conf "$NGINX_CONF"
           : > "$BACKUP/runtime/snapshot-complete"
@@ -264,8 +290,9 @@ jobs:
           test -f "$STAGE/pyproject.toml"
           test -d "$STAGE/src/one_mail_agg"
           test -f "$STAGE/deploy/attachment-storage.sh"
+          test -f "$STAGE/deploy/d1-backup.sh"
           PYTHONPATH="$STAGE/src" "$AGG/.venv/bin/python" -c \
-            'import one_mail_agg.mutation_jobs, one_mail_agg.mutation_main, one_mail_agg.storage_server; print("staged aggregator import OK")'
+            'import one_mail_agg.d1_backup, one_mail_agg.mutation_jobs, one_mail_agg.mutation_main, one_mail_agg.storage_server; print("staged aggregator import OK")'
 
           # Move the old managed paths aside, then install the staged paths.
           # The trap restores these paths if any later step fails.
@@ -301,6 +328,11 @@ jobs:
           fi
           chmod 0644 "$SUPERVISOR_AGG_CONF_LOCAL"
           install -d -m 0700 /opt/one-mail-attachments
+
+          # D1 logical backups (no R2): optional, see deploy/d1-backup-install.sh.
+          BASE="$BASE" AGG="$AGG" STAGE="$REMOTE_STAGE" SUPERVISOR_CONF="$SUPERVISOR_AGG_CONF_LOCAL" \
+            bash "$AGG/deploy/d1-backup-install.sh" install
+
           test -f "$REMOTE_STAGE/one-mail-frontend.conf"
           pxed_ensure_local_config_link "$NGINX_CONF" "$NGINX_CONF_LOCAL" 0644
           : > "$BACKUP/runtime/nginx-config-update-started"
@@ -332,6 +364,10 @@ jobs:
               exit 1
               ;;
           esac
+
+          if grep -q '^\[program:one-mail-d1-backup\]$' "$SUPERVISOR_AGG_CONF_LOCAL" 2>/dev/null; then
+            supervisorctl -c "$SUPERVISOR" status one-mail-d1-backup || true
+          fi
 
           rm -rf "$REMOTE_STAGE"
           trap - EXIT
@@ -444,6 +480,10 @@ jobs:
             *) echo "::error::Attachment storage in unexpected state after deploy: $STORAGE_STATUS"; exit 1 ;;
           esac
 
+          # The D1 backup program is auxiliary: report it, never gate on it.
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
+            'bash /opt/one-mail-agg/aggregator/deploy/d1-backup-install.sh status' || true
+
       - name: Roll back failed deployment
         if: failure()
         shell: bash
@@ -498,6 +538,19 @@ jobs:
                 fi
               fi
             done
+            if [ -f "$BACKUP/runtime/d1-managed" ]; then
+              for name in d1-backup.sh d1-backup.token; do
+                case "$name" in
+                  d1-backup.sh) target="$BASE/d1-backup.sh" ;;
+                  d1-backup.token) target="$BASE/d1-backup.token" ;;
+                esac
+                if [ -f "$BACKUP/runtime/$name.present" ]; then
+                  mv "$BACKUP/runtime/$name" "$target"
+                else
+                  rm -f "$target"
+                fi
+              done
+            fi
             if [ ! -f "$BACKUP/runtime/backend-ready" ]; then
               if [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.present" ]; then
                 pxed_restore_local_config "$BACKUP/runtime/supervisor-one-mail-agg.conf" "$SUPERVISOR_AGG_CONF_LOCAL" 0644
