@@ -33,6 +33,26 @@ curl -H "Authorization: Bearer <token>" https://inbox.mangoqwq.com/_one_mail_att
 df -h /opt/one-mail-attachments
 ```
 
+## D1 逻辑备份（不使用 R2）
+
+生产没有开通 R2，Worker 的定时备份保持休眠。部署包还包含一个常驻的 D1 备份进程：
+直接调用 D1 export API（`POST` + `current_bookmark` 轮询），把 dump 流式 gzip 到
+`/opt/one-mail-backups`，按 7 daily / 4 weekly / 6 monthly 保留。详见
+[`docs/d1-backup.md`](../docs/d1-backup.md)。
+
+1. GitHub Secret `D1_BACKUP_API_TOKEN` 由部署 workflow 写入 `/opt/one-mail-agg/d1-backup.token`（`0600`）；token 只需 `D1:Edit`。
+2. `/opt/one-mail-agg/d1-backup.json` 保存账户 ID、库 ID 与保留策略，一次性创建（模板 `deploy/d1-backup.example.json`）。
+3. 只有 token 与配置都存在时，部署才安装 `d1-backup.sh` 并把 `one-mail-d1-backup` program 追加进 `supervisor-one-mail-agg.conf`；缺任一项会跳过且不使部署失败。
+4. 首次启动立即补跑当天备份，之后每天按配置的 UTC 时间执行；失败 30 分钟后重试。
+
+检查：
+
+```bash
+supervisorctl -c /personal/pxed/supervisord.conf status one-mail-d1-backup
+tail -n 50 /opt/one-mail-agg/d1-backup.supervisor.err.log
+ls -lh /opt/one-mail-backups/daily
+```
+
 > 仓库内曾误存 `one-mail-agg.service`/`one-mail-agg.timer`（systemd unit），但 pxed 从未用 systemd 跑过它们（已 `disabled` 并删除），仅 supervisord 路径是真实生效的。unit 文件已从仓库移除，勿再用 systemd 部署。
 
 凭据安全：`config.json` 含授权码/refresh_token，`chmod 600`，绝不写入 D1、绝不提交。
