@@ -16,7 +16,15 @@ test -x "$PY"
 test -r "$CONFIG"
 test -r "$TOKEN_FILE"
 
-exec "$PY" -m one_mail_agg.d1_backup \
+# 备份不能和收发信抢资源：169 MiB 的 dump 会占几秒 CPU 做 gzip，并产生一阵
+# 顺序写。这里用最低调度优先级 + idle I/O 类别，保证聚合器的 IMAP IDLE
+# 线程和 60s 轮询始终优先。两者都存在时才加，缺了也不会变成崩溃循环。
+LAUNCH=""
+if command -v nice >/dev/null 2>&1; then LAUNCH="nice -n 19"; fi
+if command -v ionice >/dev/null 2>&1; then LAUNCH="$LAUNCH ionice -c 3"; fi
+
+# shellcheck disable=SC2086  # 有意让可选前缀在这里分词
+exec $LAUNCH "$PY" -m one_mail_agg.d1_backup \
   --config "$CONFIG" \
   --token-file "$TOKEN_FILE" \
   --loop

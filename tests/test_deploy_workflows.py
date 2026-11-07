@@ -53,3 +53,13 @@ def test_d1_backup_supervisor_program_uses_the_aggregator_proxy():
     # api.cloudflare.com is only reachable through the same Mihomo proxy.
     assert "HTTPS_PROXY" in text
     assert "/opt/one-mail-agg/d1-backup.sh" in text
+
+
+def test_d1_backup_yields_cpu_and_io_to_mail_delivery():
+    text = (ROOT / "aggregator/deploy/d1-backup.sh").read_text(encoding="utf-8")
+    # The nightly dump must never compete with IMAP IDLE / the 60s poll.
+    assert "nice -n 19" in text
+    assert "ionice -c 3" in text
+    # ...but a host without those tools must not turn this into a crash loop.
+    assert "command -v nice" in text
+    assert "command -v ionice" in text

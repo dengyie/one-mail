@@ -43,7 +43,8 @@ df -h /opt/one-mail-attachments
 1. GitHub Secret `D1_BACKUP_API_TOKEN` 由部署 workflow 写入 `/opt/one-mail-agg/d1-backup.token`（`0600`）；token 只需 `D1:Edit`。
 2. `/opt/one-mail-agg/d1-backup.json` 保存账户 ID、库 ID 与保留策略，一次性创建（模板 `deploy/d1-backup.example.json`）。
 3. 只有 token 与配置都存在时，部署才安装 `d1-backup.sh` 并把 `one-mail-d1-backup` program 追加进 `supervisor-one-mail-agg.conf`；缺任一项会跳过且不使部署失败。
-4. 首次启动立即补跑当天备份，之后每天按配置的 UTC 时间执行；失败 30 分钟后重试。
+4. 首次启动立即补跑当天备份，之后每天按配置的**宿主本地时间**执行（pxed 是 CST/UTC+8，默认 `03:10` 即北京时间凌晨）；失败 30 分钟后重试。
+5. 进程以 `nice -n 19` + `ionice -c 3` 启动，dump 是流式 gzip（内存基本恒定），不与收发信抢 CPU 与磁盘。
 
 检查：
 
