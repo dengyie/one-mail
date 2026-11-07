@@ -37,14 +37,19 @@ def test_worker_cors_exposes_attachment_filename_header_for_browser_downloads():
 
 
 def test_d1_backup_install_is_optional_and_guarded():
-    text = (ROOT / ".github/workflows/aggregator_deploy.yaml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/aggregator_deploy.yaml").read_text(encoding="utf-8")
+    installer = (ROOT / "aggregator/deploy/d1-backup-install.sh").read_text(encoding="utf-8")
+    # The workflow stays under its line budget by delegating to the installer.
+    assert "d1-backup-install.sh\" install" in workflow
+    assert "d1-backup-install.sh status" in workflow
+    assert "D1_BACKUP_API_TOKEN is not set" in workflow
     # The backup program must never become a hard deploy dependency: it is
     # installed only when both the staged token and the operator config exist.
-    assert 'if [ -f "$REMOTE_STAGE/d1-backup.token" ] && [ -f "$BASE/d1-backup.json" ]; then' in text
-    assert "D1_BACKUP_API_TOKEN is not set" in text
-    assert 'grep -q \'^\\[program:one-mail-d1-backup\\]$\'' in text
+    assert 'if [ ! -f "${STAGE:-/nonexistent}/d1-backup.token" ]' in installer
+    assert 'if [ ! -f "$BASE/d1-backup.json" ]' in installer
+    assert 'grep -q "^\\[program:one-mail-d1-backup\\]$"' in installer
     # A crash-looping backup must not fail the mail deployment.
-    assert "::warning::D1 backup is not running" in text
+    assert "::warning::D1 backup is not running" in installer
 
 
 def test_d1_backup_supervisor_program_uses_the_aggregator_proxy():

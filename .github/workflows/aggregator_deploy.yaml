@@ -116,9 +116,7 @@ jobs:
             ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" \
             "umask 077; cat > '$REMOTE_STAGE/attachment-storage.token'; chmod 0600 '$REMOTE_STAGE/attachment-storage.token'"
 
-          # The D1 backup program is optional: no token means no program, so a
-          # repo without the secret deploys exactly as before. The token file is
-          # the only thing that decides whether the program gets installed.
+          # The D1 backup program is optional: no token means no program.
           if [ -n "${D1_BACKUP_API_TOKEN:-}" ]; then
             if [ "${#D1_BACKUP_API_TOKEN}" -lt 20 ]; then
               echo "::error::D1_BACKUP_API_TOKEN is shorter than 20 characters."
@@ -278,10 +276,8 @@ jobs:
           save_runtime_file agg-loop.sh "$BASE/agg-loop.sh"
           save_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh"
           save_runtime_file attachment-storage.token "$BASE/attachment-storage.token"
-          # Only move the D1 backup files aside when this deploy will replace
-          # them. Without a staged token the program is not managed here, and
-          # snapshotting would silently delete a working token on a later
-          # deploy that simply lacks the secret.
+          # Snapshot the D1 files only when this deploy replaces them; moving
+          # them aside without reinstalling would silently disable backups.
           if [ -f "$REMOTE_STAGE/d1-backup.token" ]; then
             save_runtime_file d1-backup.sh "$BASE/d1-backup.sh"
             save_runtime_file d1-backup.token "$BASE/d1-backup.token"
@@ -333,30 +329,9 @@ jobs:
           chmod 0644 "$SUPERVISOR_AGG_CONF_LOCAL"
           install -d -m 0700 /opt/one-mail-attachments
 
-          # D1 logical backups (no R2). The token comes from the GitHub secret;
-          # the target config names the account/database and must be reviewed by
-          # hand on the host. Either missing keeps the program uninstalled.
-          if [ -f "$REMOTE_STAGE/d1-backup.token" ]; then
-            install -m 0600 "$REMOTE_STAGE/d1-backup.token" "$BASE/d1-backup.token"
-            install -m 0755 "$AGG/deploy/d1-backup.sh" "$BASE/d1-backup.sh"
-          fi
-          if [ -f "$REMOTE_STAGE/d1-backup.token" ] && [ -f "$BASE/d1-backup.json" ]; then
-            install -d -m 0700 /opt/one-mail-backups
-            if ! grep -q '^\[program:one-mail-d1-backup\]$' "$SUPERVISOR_AGG_CONF_LOCAL" 2>/dev/null; then
-              SUPERVISOR_STAGE="$SUPERVISOR_AGG_CONF_LOCAL.deploy.$$"
-              cp "$SUPERVISOR_AGG_CONF_LOCAL" "$SUPERVISOR_STAGE"
-              printf '\n' >> "$SUPERVISOR_STAGE"
-              cat "$AGG/deploy/one-mail-d1-backup.supervisor.conf" >> "$SUPERVISOR_STAGE"
-              chmod 0644 "$SUPERVISOR_STAGE"
-              mv -f "$SUPERVISOR_STAGE" "$SUPERVISOR_AGG_CONF_LOCAL"
-              chmod 0644 "$SUPERVISOR_AGG_CONF_LOCAL"
-            fi
-            echo "D1 backup program installed"
-          elif [ ! -f "$REMOTE_STAGE/d1-backup.token" ]; then
-            echo "D1_BACKUP_API_TOKEN absent: leaving the D1 backup program disabled"
-          else
-            echo "$BASE/d1-backup.json is missing: create it from deploy/d1-backup.example.json to enable D1 backups"
-          fi
+          # D1 logical backups (no R2): optional, see deploy/d1-backup-install.sh.
+          BASE="$BASE" AGG="$AGG" STAGE="$REMOTE_STAGE" SUPERVISOR_CONF="$SUPERVISOR_AGG_CONF_LOCAL" \
+            bash "$AGG/deploy/d1-backup-install.sh" install
 
           test -f "$REMOTE_STAGE/one-mail-frontend.conf"
           pxed_ensure_local_config_link "$NGINX_CONF" "$NGINX_CONF_LOCAL" 0644
@@ -391,16 +366,7 @@ jobs:
           esac
 
           if grep -q '^\[program:one-mail-d1-backup\]$' "$SUPERVISOR_AGG_CONF_LOCAL" 2>/dev/null; then
-            D1_STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-d1-backup || true)
-            printf 'd1 backup status: %s\n' "$D1_STATUS"
-            case "$D1_STATUS" in
-              *RUNNING*) ;;
-              *FATAL*|*EXITED*)
-                echo "D1 backup did not stay up (warn only: this deploy is still accepted)" >&2
-                tail -n 80 /opt/one-mail-agg/d1-backup.supervisor.err.log >&2 || true
-                ;;
-              *) echo "D1 backup is starting: $D1_STATUS" ;;
-            esac
+            supervisorctl -c "$SUPERVISOR" status one-mail-d1-backup || true
           fi
 
           rm -rf "$REMOTE_STAGE"
@@ -514,17 +480,9 @@ jobs:
             *) echo "::error::Attachment storage in unexpected state after deploy: $STORAGE_STATUS"; exit 1 ;;
           esac
 
-          # The D1 backup program is auxiliary: report its state, never gate the
-          # mail deployment on it. A FATAL here means a config or permission
-          # problem the operator must fix on the host.
-          D1_STATUS=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
-            'supervisorctl -c /personal/pxed/supervisord.conf status one-mail-d1-backup 2>&1 || true')
-          printf 'd1 backup: %s\n' "$D1_STATUS"
-          case "$D1_STATUS" in
-            *FATAL*|*EXITED*) echo "::warning::D1 backup is not running: $D1_STATUS" ;;
-          esac
+          # The D1 backup program is auxiliary: report it, never gate on it.
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
-            'ls -lh /opt/one-mail-backups/daily 2>/dev/null | tail -n 5 || true' || true
+            'bash /opt/one-mail-agg/aggregator/deploy/d1-backup-install.sh status' || true
 
       - name: Roll back failed deployment
         if: failure()
