@@ -34,3 +34,22 @@ def test_shard_template_declares_attachment_storage_contract():
 def test_worker_cors_exposes_attachment_filename_header_for_browser_downloads():
     text = (ROOT / "worker/src/worker.ts").read_text(encoding="utf-8")
     assert text.count("exposeHeaders: ['Content-Disposition']") == 2
+
+
+def test_d1_backup_install_is_optional_and_guarded():
+    text = (ROOT / ".github/workflows/aggregator_deploy.yaml").read_text(encoding="utf-8")
+    # The backup program must never become a hard deploy dependency: it is
+    # installed only when both the staged token and the operator config exist.
+    assert 'if [ -f "$REMOTE_STAGE/d1-backup.token" ] && [ -f "$BASE/d1-backup.json" ]; then' in text
+    assert "D1_BACKUP_API_TOKEN is not set" in text
+    assert 'grep -q \'^\\[program:one-mail-d1-backup\\]$\'' in text
+    # A crash-looping backup must not fail the mail deployment.
+    assert "::warning::D1 backup is not running" in text
+
+
+def test_d1_backup_supervisor_program_uses_the_aggregator_proxy():
+    text = (ROOT / "aggregator/deploy/one-mail-d1-backup.supervisor.conf").read_text(encoding="utf-8")
+    assert "[program:one-mail-d1-backup]" in text
+    # api.cloudflare.com is only reachable through the same Mihomo proxy.
+    assert "HTTPS_PROXY" in text
+    assert "/opt/one-mail-agg/d1-backup.sh" in text

@@ -1,0 +1,10 @@
+{
+  "account_id": "0123456789abcdef0123456789abcdef",
+  "database_id": "5f3e1c0a-9b2d-4e7a-8c61-1d2e3f4a5b6c",
+  "root": "/opt/one-mail-backups",
+  "keep_daily": 7,
+  "keep_weekly": 4,
+  "keep_monthly": 6,
+  "hour": 3,
+  "minute": 10
+}
