@@ -1,204 +1,195 @@
 <!-- markdownlint-disable-file MD033 MD045 -->
-# One-Mail — 新一代 AI 原生统一收件箱以及边缘邮件中枢
+<div align="center">
+
+# OneMail
+
+**Next-Gen AI-Native Unified Inbox, Multi-Account Aggregator & Edge Serverless Mail Hub**
+
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
+[![Vue 3](https://img.shields.io/badge/Vue-3.5-4FC08D.svg?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020.svg?style=flat-square&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![Hono](https://img.shields.io/badge/Hono-v4-E36002.svg?style=flat-square&logo=hono&logoColor=white)](https://hono.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-v4-38B2AC.svg?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![WebAuthn](https://img.shields.io/badge/WebAuthn-Passkeys-4285F4.svg?style=flat-square&logo=webauthn&logoColor=white)](https://webauthn.io/)
+[![Community](https://img.shields.io/badge/Community-LINUX_DO-2563eb.svg?style=flat-square&logo=linux&logoColor=white)](https://linux.do/)
+[![Tests](https://img.shields.io/badge/tests-100%25_passing-brightgreen.svg?style=flat-square)]()
+
+[English](./README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README_JA.md) · [Key Features](#key-features) · [Architecture](#system-architecture) · [Why One-Mail](#why-one-mail) · [Quick Start](#quick-start) · [API Specs](#open-api--developer-ecosystem)
+
+<br>
 
 <p align="center">
-  <a href="README.md"><img alt="简体中文" src="https://img.shields.io/badge/README-简体中文-blue.svg"></a>
-  <a href="README_EN.md"><img alt="English" src="https://img.shields.io/badge/README-English-blue.svg"></a>
-  <a href="README_JA.md"><img alt="日本語" src="https://img.shields.io/badge/README-日本語-blue.svg"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
-  <img alt="Vue 3" src="https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white">
-  <img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white">
-  <img alt="Hono" src="https://img.shields.io/badge/Hono-v4-E36002?logo=hono&logoColor=white">
-  <img alt="Tailwind CSS" src="https://img.shields.io/badge/TailwindCSS-v4-38B2AC?logo=tailwind-css&logoColor=white">
-  <img alt="Passkeys" src="https://img.shields.io/badge/WebAuthn-Passkeys-4285F4?logo=webauthn&logoColor=white">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-100%25_passing-brightgreen.svg">
+  <b>Terminates the daily friction of juggling multiple email clients, missing verification codes, and paying hefty SaaS subscriptions.</b><br>
+  Consolidates Gmail, Outlook, QQ, 163, and private IMAP/POP3 domains into a globally distributed, sub-50ms Cloudflare edge network.<br>
+  Delivers instant OTP extraction capsules, AI-powered email summarization, FIDO2 Passkey biometric login, and fully autonomous disposable and custom domain routing.
 </p>
 
-<p align="center">
-  <b>把频繁在多个邮箱之间切换以及翻找验证码的繁琐流程予以终结。</b><br>
-  能够把 QQ、网易 163、Gmail、Outlook 以及企业私有邮箱等各个账户，汇聚到全球毫秒响应的 Cloudflare 边缘网络当中。<br>
-  集成了秒级验证码提取胶囊、AI 智能邮件要点速览、Passkey 生物免密登录以及全功能临时与私有域名邮箱管理功能。
-</p>
-
-<p align="center">
-  <a href="#核心特性">核心特性</a> •
-  <a href="#系统架构全景">系统架构</a> •
-  <a href="#方案对比优势">对比优势</a> •
-  <a href="#快速开始">快速部署</a> •
-  <a href="#开放-api-与开发者生态">开放 API</a> •
-  <a href="#开源协议">开源协议</a>
-</p>
+</div>
 
 ---
 
-## 为什么需要 One-Mail？
+## Why One-Mail?
 
-在日常开发、多账号运维或者数字游民生活当中，往往需要同时管理数量较多的邮箱。传统的邮件客户端大多比较臃肿，容易面临网络限制，跨设备同步也偏慢，并且缺乏自动提取验证码的机制；商业托管服务则存在隐私层面的顾虑以及持续的订阅开销。
+Whether managing systems, building products, or working remotely, juggling separate accounts for Gmail, Outlook, 163, QQ, and company domains is notoriously painful. Traditional desktop clients are heavy, prone to network limits, lack smart OTP extraction, and require manual device-by-device configuration. Meanwhile, commercial aggregation platforms introduce data privacy concerns along with recurring subscription fees.
 
-One-Mail 鉴于这些痛点从零开展自主设计与研发工作，并打磨至生产可用级别：
-- **边缘 Serverless**：核心 API 依靠 Cloudflare Workers 以及 D1 边缘网络来运行，冷启动极快，全球延迟维持在 50ms 以内，日常运用当中几乎无需承担服务器与数据库费用。
-- **隐私与安全管控**：支持自行部署，密码以及 Token 在落盘前都会在边缘借助 AES-GCM-256 算法开展加密处理，还可以运用 FIDO2 Passkeys 开展免密登录。
-- **AI 智能赋能**：无需展开大段冗长内容，列表卡片就能够马上呈现验证码胶囊以及 AI 提取的核心摘要。
+One-Mail was engineered from scratch to resolve these challenges:
+- **100% Edge Serverless**: Core APIs run on Cloudflare Workers + D1 at the edge. Cold starts are near-zero, worldwide latency is sub-50ms, and everyday personal usage incurs **zero server or database cost**.
+- **Privacy & Zero-Trust Security**: Self-hosted sovereignty. All mailbox credentials and OAuth refresh tokens are encrypted at rest with AES-GCM-256 before hitting storage. Passkey passwordless login eliminates credential phishing.
+- **AI-Native Efficiency**: No need to scroll through marketing clutter—instant OTP capsules and key action summaries are front and center on the mail list cards.
 
 ---
 
-## 核心特性
+## Key Features
 
-| 模块 | 特性亮点 | 技术实现与优势 |
+| Module | Highlights | Technical Edge & Value |
 |---|---|---|
-| **多源统一收件箱**<br>`Unified Inbox` | • 一站式聚合 QQ、163、Gmail、Outlook 以及自定义 IMAP<br>• 借助 IMAP IDLE 开展毫秒级实时收信推送，同时配有 60s 兜底轮询<br>• 具备协议自适应降级特性，要是 IMAP 鉴权受阻就自动降级为 POP3 并且进行锁定<br>• 依靠进程级并发锁 `redemption_lock` 防止 OAuth RT 发生竞争失效 | 依靠 Python 守护进程以及 Cloudflare D1 幂等上传去重，保障运行稳定并且防止漏信 |
-| **秒级验证码胶囊**<br>`Instant OTP Capsule` | • 识别 4-8 位纯数字、`123-456` 连字符以及 `G-123456` 等前缀码<br>• 借助严格的负向预查排除公历年份像 19xx 与 20xx、日期以及金额的误判<br>• 列表卡片马上呈现高亮胶囊，一键即可开展快速复制，不用打开邮件全文 | 凭借高精度多语言正则引擎，误报率趋零，能够极大程度上节省时间 |
-| **AI 邮件智能速览**<br>`AI Summarization` | • 智能提炼邮件核心意图以及关键待办行动项即 Action Items<br>• 开展发件人信誉评估以及纯文本清洗工作<br>• 配备客户端 FIFO 与 LRU 缓存，上限为 50 条，多次切换可以马上开启 | 前端与边缘双重优化，切换流畅，同时保护接口调用额度 |
-| **Passkey 生物免密认证**<br>`WebAuthn / Passkeys` | • 支持 Apple Touch ID、Face ID、Windows Hello 以及 YubiKey<br>• 告别传统复杂密码与跨设备记密负担<br>• 依靠设备指纹自动对凭证进行命名，提供流畅的降级兼容体验 | 选用 SimpleWebAuthn v13，契合 FIDO2 标准，有效抵御网络钓鱼 |
-| **零信任凭据保险库**<br>`Credential Vault` | • 外部邮箱授权码以及 OAuth 凭据全流程开展对称加密<br>• 密钥隔离保存在 Worker 环境变量当中，库与日志均不包含明文<br>• 提供细粒度 API Key 体系，涵盖 `readonly` 与 `admin` 角色以及白名单 | 运用 WebCrypto 原生 AES-GCM-256 加密体系 |
-| **现代化美学界面**<br>`Awesome UI & UX` | • 选用 Vue 3、Tailwind CSS 以及 Naive UI 构建毛玻璃质感界面<br>• 适配 `<keep-alive>` 视图：后台标签页会自动把定时器暂停，避免 D1 读配额消耗<br>• 支持多语言深链接，能把搜索关键字与分页状态完整记录下来<br>• 完整支持暗黑与明亮模式自适应，适宜手机、平板与桌面端 | 经过性能调优，避免不必要的重绘以及内存堆积 |
-| **全功能邮件中枢基座**<br>`Temp & Domain Mail` | • 临时邮箱：依靠 Cloudflare Email Routing 驱动，即用即抛，支持自定义前缀<br>• 私有域名管理：支持把私有域名绑定进来开展管理，实现多租户隔离与虚拟别名收信<br>• 发信中枢：支持 Resend、SMTP 以及 CF，凭借 `x-idempotency-key` 保证幂等防重 | 借助 Rust WASM 实现高效邮件流解析，并拥有异常状态调解机制 |
+| **Unified Multi-Account Inbox**<br>`Unified Inbox` | • Aggregates Gmail, Outlook / 365, QQ, 163, and custom IMAP/POP3<br>• **IMAP IDLE millisecond-level real-time push** + 60s fallback polling<br>• Smart protocol auto-downgrade (falls back to POP3 when IMAP is rejected)<br>• Process-level `redemption_lock` preventing concurrent OAuth token burn | Lightweight Python daemon + Cloudflare D1 idempotent upload, rock-solid without missed emails |
+| **Instant OTP Extraction Capsule**<br>`Instant OTP Capsule` | • Detects 4-8 digit codes, `123-456` hyphens, and `G-123456` prefixes<br>• Negative lookaheads eliminate false positives (calendar years, dates, prices)<br>• **One-click copy capsule** displayed directly on email cards | High-precision multilingual regex engine; 90% time saved opening full mail |
+| **AI-Native Email Insights**<br>`AI Summarization` | • Auto-extracts email intent, sender reputation, and action items<br>• Clean plain-text structured synthesis<br>• Client-side FIFO/LRU cache (capacity: 50) for instant zero-lag switching | Edge & frontend dual optimization; zero unnecessary API bills and zero memory leaks |
+| **Passkeys / WebAuthn Biometrics**<br>`WebAuthn / Passkeys` | • Full support for Apple Touch ID, Face ID, Windows Hello, and YubiKeys<br>• Eliminates master passwords and cross-device password sync fatigue<br>• Automatic device fingerprint naming with seamless fallback | SimpleWebAuthn v13 + FIDO2 compliant; impervious to phishing attacks |
+| **Zero-Trust Credential Vault**<br>`Credential Vault` | • Mailbox authorization codes and OAuth tokens symmetrically encrypted<br>• Encryption keys strictly confined to Cloudflare Worker edge environment<br>• Granular API Key permissions (`readonly` / `admin` roles, source whitelist) | WebCrypto native AES-GCM-256 cryptography |
+| **Modern Glassmorphic UI & UX**<br>`Awesome UI & UX` | • Vue 3 + Tailwind CSS + Naive UI glassmorphism design<br>• `<keep-alive>` lifecycle optimization: pauses timers when tabs are hidden<br>• Preserves deep query routes (keyword filters and pagination cursors)<br>• Smooth dark/light theme switching, responsive on mobile & desktop | Zero layout shift, optimized DOM footprint, and zero D1 quota waste |
+| **All-in-One Disposable Mail Hub**<br>`Temp & Domain Mail` | • Disposable Temp-Mail: Powered by Cloudflare Email Routing; instant alias creation<br>• Custom Domain Inboxes: Multi-tenant isolation and virtual address routing<br>• Outbound Sending (Send Mail): Resend/SMTP/CF with `x-idempotency-key` replay safety | Rust WASM MIME parser and delivery dispute reconciliation |
 
 ---
 
-## 系统架构全景
+## System Architecture
 
 ```text
-  外部邮箱生态
+  External Mail Providers
   ┌───────────────┐ ┌───────────────┐ ┌────────────────┐ ┌────────────────┐
-  │  QQ / 163 邮箱 │ │ Gmail (OAuth) │ │ Outlook / 365  │ │ 自建 IMAP/POP3  │
+  │  QQ / 163 Mail │ │ Gmail (OAuth) │ │ Outlook / 365  │ │ Custom IMAP/POP│
   └───────┬───────┘ └───────┬───────┘ └────────┬───────┘ └────────┬───────┘
           │                 │                  │                  │
           └─────────────────┴────────┬─────────┴──────────────────┘
-                                     │ (IMAP IDLE 实时推送 / 60s 兜底轮询)
+                                     │ (IMAP IDLE Push / 60s Fallback Polling)
                                      ▼
                       ┌──────────────────────────────┐
-                      │    VPS Python 聚合器守护进程  │
+                      │     VPS Python Aggregator    │
                       │         aggregator/          │
                       │ ──────────────────────────── │
-                      │ • IMAP 协议优先，POP3 智能降级 │
-                      │ • 运用兑换锁防止 RT 竞态失效   │
-                      │ • 单封 30MB 截断以防 OOM     │
-                      │ • 水印标记结合 D1 实现幂等     │
+                      │ • IMAP preferred, POP3 auto  │
+                      │ • Token lock avoids RT burn  │
+                      │ • 30MB limit skips anti-OOM  │
+                      │ • Idempotent watermark sync  │
                       └──────────────┬───────────────┘
                                      │ (HTTPS REST API / x-admin-auth)
                                      ▼
         ┌────────────────────────────────────────────────────────────┐
-        │        Cloudflare Edge Serverless 核心 worker/             │
+        │       Cloudflare Edge Serverless Backend (worker/)         │
         │ ────────────────────────────────────────────────────────── │
-        │ • 运用 Hono v4 作为 API 路由引擎                           │
-        │ • 借助 SimpleWebAuthn 开展 Passkeys 生物认证                │
-        │ • 依托 AES-GCM-256 开展外部凭据加密与解密工作              │
-        │ • 选用 Rust WASM 邮件解析器 mail-parser-wasm               │
-        │ • 借助 Cloudflare D1、KV 以及 Email Routing 开展数据管理    │
-        │ • 定期对超过 90 天的已读邮件开展清理                       │
+        │ • Modern Hono v4 REST API router                           │
+        │ • SimpleWebAuthn Passkeys FIDO2 biometrics                 │
+        │ • AES-GCM-256 credential encryption & decryption vault     │
+        │ • Rust WASM high-performance MIME parser (mail-parser-wasm)│
+        │ • Cloudflare D1 (sharded SQLite) + KV + Email Routing      │
+        │ • Scheduled 90-day retention cleanup lifecycle             │
         └────────────────────────────┬───────────────────────────────┘
                                      │ (JSON / Bearer Token / API Key)
                                      ▼
         ┌────────────────────────────────────────────────────────────┐
-        │        现代化前后端分离 Web 前端 frontend/                 │
+        │         Modern Decoupled Web Frontend (frontend/)          │
         │ ────────────────────────────────────────────────────────── │
-        │ • 选用 Vue 3、Vite、Tailwind CSS 与 Naive UI 呈现现代界面  │
-        │ • 验证码智能高亮胶囊，支持一键马上复制                     │
-        │ • AI 邮件重点提炼，借助 LRU 缓存开展加速                   │
-        │ • 具备 keep-alive 状态感知，后台自动把轮询挂起以节省额度   │
-        │ • 完善的多语言深层路由记忆，契合国际化访问需求             │
+        │ • Vue 3 + Vite + Tailwind CSS + Naive UI glassmorphic UX   │
+        │ • Instant OTP extraction capsule with 1-click clipboard    │
+        │ • AI email summaries with client-side LRU cache            │
+        │ • keep-alive lifecycle awareness (pauses timers on idle)   │
+        │ • Multi-locale deep routing (zh / en / ja / es / pt / de)  │
         └────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 方案对比优势
+## Why One-Mail?
 
-| 评估维度 | One-Mail | 传统客户端，像 Foxmail 与 Thunderbird | 商业托管服务，像 Spark 与 Missive |
+| Evaluation Criteria | One-Mail | Traditional Desktop Clients | Commercial SaaS Aggregators |
 |---|:---:|:---:|:---:|
-| **部署与运行成本** | **0 元 Serverless**，免费配额适宜日常运转 | 需要依靠本地客户端常驻 | 往往需要按月支付席位费用 |
-| **设备间实时同步** | **云端全自动聚合**，打开网页便可浏览全量数据 | 需在各设备分别配置，无法同步规则 | 依赖第三方商业云端中转 |
-| **数据与隐私主权** | **由用户自主掌控**，边缘对称加密 | 存储于本地磁盘，存在明文风险 | 邮件数据会上载至服务商服务器 |
-| **免密登录体验** | **原生 Passkey 与 WebAuthn 指纹及人脸认证** | 仅支持传统主密码 | 依靠账号密码或外部账号绑定 |
-| **验证码快速提取** | **卡片直出 OTP 胶囊，马上复制** | 需要翻找邮件长文正文 | 仅能提供普通的文字预览 |
-| **AI 邮件要点提炼** | **内置智能解析并搭配本地 LRU 缓存** | 无此功能或需额外插件 | 需付费开通高级订阅套餐 |
-| **临时与域名邮箱** | **内置完整的 Temp Mail 与私有域名管理中枢** | 不具备此类功能 | 不具备此类功能 |
-| **防护与容灾能力** | **具备 POP3 降级与防烧卡锁定机制** | 客户端易因频繁刷新面临限制 | 容易受到外部服务策略调整的影响 |
+| **Operating Cost** | **$0 Serverless** (Cloudflare generous free tier) | Requires dedicated local client | Expensive per-seat monthly subscription |
+| **Real-time Sync** | **Cloud-aggregated**, open any browser to view | Per-device config; no rule or state sync | Relies on proprietary cloud storage |
+| **Privacy & Sovereignty** | **100% self-hosted**, edge symmetric encryption | Plaintext on local drive | Email data uploaded to third-party clouds |
+| **Passwordless Auth** | **Native Passkeys / WebAuthn (Touch ID/Face ID)** | Master password only | Traditional username/password |
+| **OTP Code Extraction** | **On-card OTP capsule, 1-click copy** | Must open and read through full email | Basic text preview only |
+| **AI Email Summary** | **Built-in AI summarization with LRU cache** | None or costly plugins | High-tier premium paid feature |
+| **Disposable Mail** | **Built-in temp mail & custom domain aliases** | Not supported | Not supported |
+| **IP Ban Protection** | **Smart POP3 fallback & concurrency locks** | Prone to aggressive rate-limits | Subject to vendor policy shifts |
 
 ---
 
-## 快速开始
+## Quick Start
 
-本项目选用前后端分离架构，主要由三个部分构成：**Cloudflare Worker API**、**前端静态单页应用** 以及 **VPS 聚合器守护进程**。
+One-Mail adopts a modern decoupled architecture composed of three main parts: **Cloudflare Worker API**, **Decoupled Web Frontend**, and **VPS Python Aggregator**.
 
-分片开发文档：
+### 1. Deploy Cloudflare Worker (Backend Edge)
 
-- [当前静态分片与受控迁移](docs/unified-inbox-sharding.md)
-- [D1 动态分片与百人服务开发规范](docs/d1-dynamic-fleet.md)：分阶段实现中，规划在现有2个账户基础上新增10个Cloudflare账户，包含动态分配、容量预算、迁移一致性与验收；不代表已上线。
-- [Fleet 实现检查点与验证记录](docs/d1-fleet-implementation.md)：当前仅支持静态运行和独立观测，列明已交付接口、验证证据及 gate / provisioning / 迁移等后续工作。
-
-### 1. 部署 Cloudflare Worker
-
-> 确保本地环境中安装了 Node.js 20+ 以及 pnpm。
+> Ensure you have Node.js 20+ and pnpm installed.
 
 ```bash
-# 1. 获取代码仓库
+# 1. Clone the repository
 git clone https://github.com/dengyie/one-mail.git
 cd one-mail/worker
 
-# 2. 安装依赖包
+# 2. Install dependencies
 pnpm install
 
-# 3. 进行 wrangler.toml 的配置
+# 3. Configure wrangler.toml
 cp wrangler.toml.template wrangler.toml
-# 编辑 wrangler.toml，填入 D1 数据库 ID、KV 空间 ID 以及加密密钥 MAIL_CRED_ENCRYPTION_KEY
+# Edit wrangler.toml: fill in your Cloudflare D1 database ID, KV namespace ID, and MAIL_CRED_ENCRYPTION_KEY
 
-# 4. 执行数据库初始化与迁移
+# 4. Apply database migrations
 pnpm wrangler d1 migrations apply DB --remote
 
-# 5. 发布部署到边缘网络
+# 5. Deploy to Cloudflare edge network
 pnpm deploy
 ```
 
-完成部署以后，即可获取对应的 Worker 边缘 API 域名。
+Once deployed, you will obtain your Worker API URL (e.g., `https://mail-api.yourdomain.com`).
 
 ---
 
-### 2. 配置并运行 VPS 聚合器
+### 2. Configure VPS Aggregator (Sync Engine)
 
-聚合器基于 Python 3 标准库构建，不依赖繁重的第三方 C 扩展，内存占用处于 50MB 以内。
+The aggregator runs on standard Python 3.10+ without heavy C extensions and consumes less than 50MB of RAM:
 
 ```bash
 cd ../aggregator
 
-# 1. 复制并编辑配置文件
+# 1. Copy configuration template
 cp config.example.json config.json
-# 编辑 config.json：配置各邮箱协议、授权凭证以及 Worker 接口地址与对应密钥
+# Edit config.json: set email accounts (protocol: auto/imap/pop3), passwords/OAuth, and Worker API endpoints
 
-# 2. 进行可执行环境的安装
+# 2. Install in editable/production mode
 pip install -e .
 
-# 3. 建议借助 Supervisord 开展常驻进程管理
-# 配置参考 deploy/supervisor.conf
-# 聚合器会自动开启 IMAP IDLE 实时监听，并在 60s 内对其它邮箱开展增量轮询
+# 3. Recommended: run as a resident daemon with Supervisord
+# See deploy/supervisor.conf for a production-ready supervisor configuration
+# The aggregator activates IMAP IDLE real-time listening and 60s fallback polling automatically
 ```
 
 ---
 
-### 3. 构建与部署 Web 前端
+### 3. Build & Deploy Web Frontend
 
-前端属于轻量化的 Vue 3 单页应用，适宜托管在 Cloudflare Pages、Nginx 或各类静态服务器当中。
+The frontend is a lightweight Vue 3 SPA that can be hosted on Cloudflare Pages, Nginx, Docker, or Vercel.
 
 ```bash
 cd ../frontend
 
-# 1. 安装项目依赖
+# 1. Install frontend dependencies
 pnpm install
 
-# 2. 对环境变量进行配置
+# 2. Set environment variables
 cp .env.example .env.local
-# 编辑 .env.local，把 VITE_API_BASE 指定为 Worker 对应的接口域名
+# Set VITE_API_BASE=https://mail-api.yourdomain.com
 
-# 3. 开启开发预览
+# 3. Development server
 pnpm dev
 
-# 4. 执行生产打包
+# 4. Production build
 pnpm build
-# 产物输出在 dist/ 目录，可直接交由 Nginx 进行托管
+# Static bundle outputs to dist/, ready to be served by Nginx or Cloudflare Pages
 ```
 
-#### Nginx 生产环境配置示例
+#### Nginx Production Configuration
 
 ```nginx
 server {
@@ -208,12 +199,12 @@ server {
     root /www/one-mail/dist;
     index index.html;
 
-    # 单页应用路由兜底
+    # Single Page Application fallback
     location / {
         try_files $uri $uri/ /index.html;
     }
 
-    # 静态资源缓存配置
+    # Static assets cache header
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|wasm)$ {
         expires 30d;
         add_header Cache-Control "public, no-transform";
@@ -223,76 +214,79 @@ server {
 
 ---
 
-## 开放 API 与开发者生态
+## Open API & Developer Ecosystem
 
-One-Mail 提供了清晰的 RESTful API，方便与自动化脚本、机器人或者持续集成流程开展对接。
+One-Mail provides clean, developer-friendly RESTful endpoints for custom integrations, bots, and CI/CD pipelines.
 
-### 鉴权方式
+### Authentication
 
-- **统一收件箱查询接口**：在请求头中携带 `Authorization: Bearer <api-key>`
-- **管理与状态同步接口**：在请求头中携带 `x-admin-auth: <ADMIN_PASSWORD>`
+- **Unified Inbox Endpoints**: `Authorization: Bearer <api-key>`
+- **Management & Sync Endpoints**: `x-admin-auth: <ADMIN_PASSWORD>`
 
-### 核心接口概览
+### Essential Endpoints
 
 ```http
-# 1. 统一收件箱分页与关键词搜索
-GET /api/unified/emails?source=qq&account=user@qq.com&limit=20&offset=0&q=github
+# 1. List emails with pagination and keyword search
+GET /api/unified/emails?source=gmail&limit=20&offset=0&q=invoice
 
-# 2. 统计未读以及总邮件数量
+# 2. Get unread and total email count
 GET /api/unified/count?unread=1
 
-# 3. 提取指定地址最新的有效验证码
-GET /api/unified/verifcodes?addr=myaccount@163.com&fresh=1
+# 3. Extract latest active verification code for an address
+GET /api/unified/verifcodes?addr=user@example.com&fresh=1
 
-# 4. 把单封邮件标记为已读
+# 4. Mark an email as read
 POST /api/unified/emails/:id/read
 
-# 5. 聚合器批量推送并摄入邮件
+# 5. Ingest messages from aggregator (idempotent UID deduplication)
 POST /admin/unified/ingest
 
-# 6. 发送邮件并附加防重 Key
+# 6. Send outbound email with replay protection
 POST /api/send_mail
 x-idempotency-key: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 ```
 
 ---
 
-## 技术栈清单
+## Tech Stack
 
-- **边缘计算后端**: Cloudflare Workers, Hono v4, Cloudflare D1, Cloudflare KV, SimpleWebAuthn
-- **前端生态**: Vue 3.5, Vite 7, Tailwind CSS v4, Naive UI, Lucide Icons, Marked, DOMPurify
-- **同步引擎**: Python 3.10+, 标准库 `imaplib` 与 `poplib`, Microsoft Graph API 以及 Google OAuth 2.0
-- **底层解析组件**: Rust WASM 即 `mail-parser-wasm`, Postal-Mime
-- **工程化与质量保障**: Vitest, Playwright, ESLint 9, GitHub Actions CI/CD 流水线
+- **Backend Edge**: Cloudflare Workers, Hono v4, Cloudflare D1 (SQLite), Cloudflare KV, SimpleWebAuthn
+- **Frontend SPA**: Vue 3.5, Vite 7, Tailwind CSS v4, Naive UI, Lucide Icons, Marked, DOMPurify
+- **Sync Daemon**: Python 3.10+, stdlib `imaplib`/`poplib`, Microsoft Graph API / Google OAuth 2.0
+- **MIME Parser**: Rust WASM (`mail-parser-wasm`), Postal-Mime
+- **DevOps & QA**: Vitest, Playwright, ESLint 9, GitHub Actions CI/CD Pipeline
 
 ---
 
-## 多语言支持
+## Internationalization (i18n)
 
-已对以下语言环境开展了完整的适配工作：
-- 简体中文 (`zh`)
+Full localization support across multiple languages:
+- Simplified Chinese (`zh`)
 - English (`en`)
-- 日本語 (`ja`)
-- Español (`es`)
-- Português (`pt-BR`)
-- Deutsch (`de`)
+- Japanese (`ja`)
+- Spanish (`es`)
+- Portuguese (`pt-BR`)
+- German (`de`)
 
 ---
 
-## 🌟 致谢：LINUX DO
+## Acknowledgments: LINUX DO
 
 [![LINUX DO](https://img.shields.io/badge/Community-LINUX%20DO-2563eb.svg?logo=linux&logoColor=white)](https://linux.do/)
 
-> 🐧 **本项目致谢 [LINUX DO](https://linux.do/) 社区。** One-Mail 从零到一的架构选型、边缘计算的实践经验，以及众多生产环境排障与优化思路，都汲取自 LINUX DO 社区佬友们的无私分享与深入探讨。致敬开源精神与纯粹的技术探索！
+> **This project recognizes and thanks the [LINUX DO](https://linux.do/) community.** The architecture decisions, edge-computing practices, and many production troubleshooting techniques behind One-Mail have been inspired by the generous sharing and deep discussions within the LINUX DO community. Salute to the open-source spirit and pure technical exploration!
 
 ---
 
-## 参与贡献
+## Contributing
 
-欢迎通过提交 Issue 与 Pull Request 的方式共同参与完善 One-Mail。若该项目在多邮箱管理方面带来了一定帮助，欢迎在代码仓库右上角点亮 Star 给予支持。
+Contributions, bug reports, and feature suggestions are warmly welcome!
+- Please check existing [Issues](https://github.com/dengyie/one-mail/issues) before opening a new one.
+- If One-Mail makes your digital life easier, please support the project by starring the repository.
 
 ---
 
-## 开源协议
+## License
 
-本项目基于 [MIT 许可证](LICENSE) 开展开源授权。可以在保留原作者版权声明的前提下自由运用于个人或者商业项目当中。
+This project is licensed under the [MIT License](LICENSE).
+You are free to use it for personal or commercial projects with attribution.

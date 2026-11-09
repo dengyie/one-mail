@@ -1,33 +1,30 @@
 <!-- markdownlint-disable-file MD033 MD045 -->
-# One-Mail — Next-Gen AI-Native Unified Inbox & Edge Serverless Mail Hub
+<div align="center">
+
+# OneMail
+
+**Next-Gen AI-Native Unified Inbox, Multi-Account Aggregator & Edge Serverless Mail Hub**
+
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
+[![Vue 3](https://img.shields.io/badge/Vue-3.5-4FC08D.svg?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020.svg?style=flat-square&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![Hono](https://img.shields.io/badge/Hono-v4-E36002.svg?style=flat-square&logo=hono&logoColor=white)](https://hono.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-v4-38B2AC.svg?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![WebAuthn](https://img.shields.io/badge/WebAuthn-Passkeys-4285F4.svg?style=flat-square&logo=webauthn&logoColor=white)](https://webauthn.io/)
+[![Community](https://img.shields.io/badge/Community-LINUX_DO-2563eb.svg?style=flat-square&logo=linux&logoColor=white)](https://linux.do/)
+[![Tests](https://img.shields.io/badge/tests-100%25_passing-brightgreen.svg?style=flat-square)]()
+
+[English](./README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README_JA.md) · [Key Features](#key-features) · [Architecture](#system-architecture) · [Why One-Mail](#why-one-mail) · [Quick Start](#quick-start) · [API Specs](#open-api--developer-ecosystem)
+
+<br>
 
 <p align="center">
-  <a href="README.md"><img alt="简体中文" src="https://img.shields.io/badge/README-简体中文-blue.svg"></a>
-  <a href="README_EN.md"><img alt="English" src="https://img.shields.io/badge/README-English-blue.svg"></a>
-  <a href="README_JA.md"><img alt="日本語" src="https://img.shields.io/badge/README-日本語-blue.svg"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
-  <img alt="Vue 3" src="https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white">
-  <img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white">
-  <img alt="Hono" src="https://img.shields.io/badge/Hono-v4-E36002?logo=hono&logoColor=white">
-  <img alt="Tailwind CSS" src="https://img.shields.io/badge/TailwindCSS-v4-38B2AC?logo=tailwind-css&logoColor=white">
-  <img alt="Passkeys" src="https://img.shields.io/badge/WebAuthn-Passkeys-4285F4?logo=webauthn&logoColor=white">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-100%25_passing-brightgreen.svg">
+  <b>Terminates the daily friction of juggling multiple email clients, missing verification codes, and paying hefty SaaS subscriptions.</b><br>
+  Consolidates Gmail, Outlook, QQ, 163, and private IMAP/POP3 domains into a globally distributed, sub-50ms Cloudflare edge network.<br>
+  Delivers instant OTP extraction capsules, AI-powered email summarization, FIDO2 Passkey biometric login, and fully autonomous disposable and custom domain routing.
 </p>
 
-<p align="center">
-  <b>Say goodbye to juggling dozens of email clients and digging through spam for verification codes.</b><br>
-  Consolidate Gmail, Outlook, QQ, 163, and custom IMAP/POP3 mailboxes into a globally distributed Cloudflare edge network.<br>
-  Featuring <b>Instant OTP / Code Extraction Capsules</b>, <b>AI-Powered Summarization</b>, <b>FIDO2 Passkeys Biometric Login</b>, and <b>Disposable / Custom Domain Inboxes</b>.
-</p>
-
-<p align="center">
-  <a href="#key-features">Key Features</a> •
-  <a href="#system-architecture">Architecture</a> •
-  <a href="#why-one-mail">Comparison</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#open-api--developer-ecosystem">Open API</a> •
-  <a href="#license">License</a>
-</p>
+</div>
 
 ---
 
@@ -151,7 +148,7 @@ Once deployed, you will obtain your Worker API URL (e.g., `https://mail-api.your
 
 ### 2. Configure VPS Aggregator (Sync Engine)
 
-The aggregator runs on standard Python 3.10+ without heavy C extensions and consumes less than 50MB of RAM.
+The aggregator runs on standard Python 3.10+ without heavy C extensions and consumes less than 50MB of RAM:
 
 ```bash
 cd ../aggregator
@@ -264,20 +261,20 @@ x-idempotency-key: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 ## Internationalization (i18n)
 
 Full localization support across multiple languages:
-- 🇨🇳 简体中文 (`zh`)
-- 🇺🇸 English (`en`)
-- 🇯🇵 日本語 (`ja`)
-- 🇪🇸 Español (`es`)
-- 🇧🇷 Português (`pt-BR`)
-- 🇩🇪 Deutsch (`de`)
+- Simplified Chinese (`zh`)
+- English (`en`)
+- Japanese (`ja`)
+- Spanish (`es`)
+- Portuguese (`pt-BR`)
+- German (`de`)
 
 ---
 
-## 🌟 Acknowledgments: LINUX DO
+## Acknowledgments: LINUX DO
 
 [![LINUX DO](https://img.shields.io/badge/Community-LINUX%20DO-2563eb.svg?logo=linux&logoColor=white)](https://linux.do/)
 
-> 🐧 **This project recognizes and thanks the [LINUX DO](https://linux.do/) community.** The architecture decisions, edge-computing practices, and many production troubleshooting techniques behind One-Mail have been inspired by the generous sharing and deep discussions within the LINUX DO community. Salute to the open-source spirit and pure technical exploration!
+> **This project recognizes and thanks the [LINUX DO](https://linux.do/) community.** The architecture decisions, edge-computing practices, and many production troubleshooting techniques behind One-Mail have been inspired by the generous sharing and deep discussions within the LINUX DO community. Salute to the open-source spirit and pure technical exploration!
 
 ---
 

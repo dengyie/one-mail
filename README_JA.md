@@ -1,33 +1,30 @@
 <!-- markdownlint-disable-file MD033 MD045 -->
-# One-Mail — 次世代 AI ネイティブ統合受信トレイ＆エッジサーバーレス・メールハブ
+<div align="center">
 
-<p align="center">
-  <a href="README.md"><img alt="简体中文" src="https://img.shields.io/badge/README-简体中文-blue.svg"></a>
-  <a href="README_EN.md"><img alt="English" src="https://img.shields.io/badge/README-English-blue.svg"></a>
-  <a href="README_JA.md"><img alt="日本語" src="https://img.shields.io/badge/README-日本語-blue.svg"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green.svg"></a>
-  <img alt="Vue 3" src="https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vue.js&logoColor=white">
-  <img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white">
-  <img alt="Hono" src="https://img.shields.io/badge/Hono-v4-E36002?logo=hono&logoColor=white">
-  <img alt="Tailwind CSS" src="https://img.shields.io/badge/TailwindCSS-v4-38B2AC?logo=tailwind-css&logoColor=white">
-  <img alt="Passkeys" src="https://img.shields.io/badge/WebAuthn-Passkeys-4285F4?logo=webauthn&logoColor=white">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-100%25_passing-brightgreen.svg">
-</p>
+# OneMail
+
+**次世代 AI ネイティブ統合受信トレイ＆エッジサーバーレス・メールハブ**
+
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
+[![Vue 3](https://img.shields.io/badge/Vue-3.5-4FC08D.svg?style=flat-square&logo=vue.js&logoColor=white)](https://vuejs.org/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020.svg?style=flat-square&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
+[![Hono](https://img.shields.io/badge/Hono-v4-E36002.svg?style=flat-square&logo=hono&logoColor=white)](https://hono.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-v4-38B2AC.svg?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![WebAuthn](https://img.shields.io/badge/WebAuthn-Passkeys-4285F4.svg?style=flat-square&logo=webauthn&logoColor=white)](https://webauthn.io/)
+[![Community](https://img.shields.io/badge/Community-LINUX_DO-2563eb.svg?style=flat-square&logo=linux&logoColor=white)](https://linux.do/)
+[![Tests](https://img.shields.io/badge/tests-100%25_passing-brightgreen.svg?style=flat-square)]()
+
+[English](./README.md) · [简体中文](./README.zh-CN.md) · [日本語](./README_JA.md) · [主な機能](#主な機能) · [アーキテクチャ](#システムアーキテクチャ) · [クイックスタート](#クイックスタート) · [開発者 API](#open-api--開発者エコシステム)
+
+<br>
 
 <p align="center">
   <b>複数メールアカウントの切り替えと認証コード探しの煩わしさに終止符を。</b><br>
   Gmail、Outlook、QQ、163、独自ドメインの IMAP/POP3 を世界規模の Cloudflare エッジネットワークに秒速集約。<br>
-  <b>瞬時 OTP 認証コード抽出カプセル</b>、<b>AI メール要約</b>、<b>Passkey 生体パスワードレス認証</b>、<b>使い捨て/独自ドメインメール</b> を統合。
+  瞬時 OTP 認証コード抽出カプセル、AI メール要約、Passkey 生体パスワードレス認証、使い捨て/独自ドメインメールハブを統合。
 </p>
 
-<p align="center">
-  <a href="#主な機能">主な機能</a> •
-  <a href="#システムアーキテクチャ">アーキテクチャ</a> •
-  <a href="#one-mail-を選ぶ理由">比較・優位性</a> •
-  <a href="#クイックスタート">クイックスタート</a> •
-  <a href="#open-api--開発者エコシステム">開発者 API</a> •
-  <a href="#ライセンス">ライセンス</a>
-</p>
+</div>
 
 ---
 
@@ -264,20 +261,20 @@ x-idempotency-key: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
 ## 多言語対応 (i18n)
 
 グローバルな言語切り替えに完全対応しています：
-- 🇨🇳 简体中文 (`zh`)
-- 🇺🇸 English (`en`)
-- 🇯🇵 日本語 (`ja`)
-- 🇪🇸 Español (`es`)
-- 🇧🇷 Português (`pt-BR`)
-- 🇩🇪 Deutsch (`de`)
+- 簡体字中国語 (`zh`)
+- 英語 (`en`)
+- 日本語 (`ja`)
+- スペイン語 (`es`)
+- ポルトガル語 (`pt-BR`)
+- ドイツ語 (`de`)
 
 ---
 
-## 🌟 謝辞：LINUX DO
+## 謝辞：LINUX DO
 
 [![LINUX DO](https://img.shields.io/badge/Community-LINUX%20DO-2563eb.svg?logo=linux&logoColor=white)](https://linux.do/)
 
-> 🐧 **本プロジェクトは [LINUX DO](https://linux.do/) コミュニティに感謝します。** One-Mail のアーキテクチャ選定、エッジコンピューティングの実践、そして多くの本番環境トラブルシューティングは、LINUX DO コミュニティの方々の惜しみない知識共有と深い議論に触発されたものです。オープンソースの精神と純粋な技術探求に敬意を！
+> **本プロジェクトは [LINUX DO](https://linux.do/) コミュニティに感謝します。** One-Mail のアーキテクチャ選定、エッジコンピューティングの実践、そして多くの本番環境トラブルシューティングは、LINUX DO コミュニティの方々の惜しみない知識共有と深い議論に触発されたものです。オープンソースの精神と純粋な技術探求に敬意を！
 
 ---
 
