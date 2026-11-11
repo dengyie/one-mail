@@ -6,14 +6,22 @@ import { reserveSendMailLimit, type SendMailLimitReservation, hashSendMailReques
 import { MAX_REPLY_TO_EMAIL_ID } from "../core/outbound_mail";
 import { getMailDomain } from "../utils";
 
-const getAdminSendMailErrorMessage = (
+export const getAdminSendMailErrorMessage = (
     msgs: ReturnType<typeof i18n.getMessagesbyContext>,
     error: unknown
 ): string => {
+    // Operator-facing typed errors carry their own curated message.
+    if (error instanceof SendMailDeliveryUnknownError) return error.message;
+    if (error instanceof SendMailIdempotencyConflictError) return error.message;
     const message = error instanceof Error ? error.message : "";
-    return Object.values(msgs).includes(message)
-        ? message
-        : msgs.OperationFailedMsg;
+    const known = Object.values(msgs);
+    if (known.includes(message)) return message;
+    // sendMail throws curated i18n texts with short operator-relevant suffixes
+    // (" (domain)" / ": config detail"). Pass those through so the admin sees
+    // the real reason (e.g. which domain lacks a send channel) instead of a
+    // generic failure; anything else stays masked to avoid leaking internals.
+    const matched = known.find((value) => value.length > 0 && message.startsWith(value));
+    return matched ? message : msgs.OperationFailedMsg;
 }
 
 export const sendMailbyAdmin = async (c: Context<HonoCustomType>) => {
