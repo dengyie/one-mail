@@ -128,7 +128,9 @@ def report_refresh_token_to_worker(worker_base_url: str, admin_token: str,
 
     幂等回写：瞬时故障（网络异常 / HTTP 5xx，如 2026-11-12 03:10 的 Worker/D1
     500 窗口曾把 hotmail 账号误判为 connection lost）按 1s→3s 重试吸收；
-    404（账号已删）与其余 4xx 是终态，重试无意义。
+    404（账号已删）与其余 4xx 是终态，重试无意义。快速失败型故障最长 ~4s；
+    Worker 挂起（接受连接不响应）时含 3×10s 请求超时最长 ~34s，期间持有
+    _REDEMPTION_LOCK 会阻塞进程内其它 OAuth 兑换——正确性优先的已知取舍。
     """
     url = f"{worker_base_url}/admin/unified/mail_accounts/{account_id}/refresh_token"
     headers = {"x-admin-auth": admin_token}

@@ -15,11 +15,12 @@ export const getAdminSendMailErrorMessage = (
     if (error instanceof SendMailIdempotencyConflictError) return error.message;
     const message = error instanceof Error ? error.message : "";
     const known = Object.values(msgs);
-    if (known.includes(message)) return message;
     // sendMail throws curated i18n texts with short operator-relevant suffixes
     // (" (domain)" / ": config detail"). Pass those through so the admin sees
     // the real reason (e.g. which domain lacks a send channel) instead of a
     // generic failure; anything else stays masked to avoid leaking internals.
+    // The length guard also keeps an empty i18n value from matching an empty
+    // error message.
     const matched = known.find((value) => value.length > 0 && message.startsWith(value));
     return matched ? message : msgs.OperationFailedMsg;
 }
