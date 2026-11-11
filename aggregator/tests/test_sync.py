@@ -99,6 +99,61 @@ def test_sync_imap_success_returns_protocol_imap(tmp_path, monkeypatch):
     assert calls == []            # 空收件箱不触发上传
 
 
+def test_sync_imap_logs_ingest_lag_for_slow_mail(tmp_path, monkeypatch, caplog):
+    """2026-11-12 迭代：收信 e2e 延迟必须可直接 grep。上传成功后按批次内最小
+    internal_date（= 整批最老一封，worst-case）计算邮件龄，超过阈值（60s）记一条
+    INFO 轨迹——否则验证延迟只能 SSH + D1 手工对账（Gmail 垃圾邮件 12s 样本就是
+    这么查的）。两封混投（120s 旧 + 2s 新）必须以旧的为准。"""
+    import logging
+    import time as time_mod
+
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    stale_ms = int((time_mod.time() - 120) * 1000)   # 120s 前投递
+    fresh_ms = int((time_mod.time() - 2) * 1000)     # 2s 前投递
+
+    real = sync_mod.normalize_message
+
+    def dated_norm(raw, account, folder, uidvalidity, uid, internal_date_ms, **kw):
+        return real(raw, account, folder, uidvalidity, uid,
+                    stale_ms if uid == 201 else fresh_ms, **kw)
+
+    monkeypatch.setattr(sync_mod, "normalize_message", dated_norm)
+    with caplog.at_level(logging.INFO, logger=sync_mod.log.name):
+        res = sync_mod.sync_account(_imap_msgs_factory([201, 202]), _cfg([acc]), acc, state)
+
+    assert res["synced"] == 2
+    lag_messages = [r.getMessage() for r in caplog.records
+                    if "ingest lag" in r.getMessage()]
+    assert lag_messages, "slow mail must leave an ingest-lag trail"
+    assert "163-main" in lag_messages[0] and "INBOX" in lag_messages[0]
+    assert "120" in lag_messages[0]  # 秒级龄期出现在轨迹里
+
+
+def test_sync_imap_fresh_mail_emits_no_ingest_lag_log(tmp_path, monkeypatch, caplog):
+    """新鲜邮件（<60s）不得产生 ingest lag 轨迹——否则正常收信会刷屏。"""
+    import logging
+    import time as time_mod
+
+    _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+    fresh_ms = int((time_mod.time() - 2) * 1000)
+
+    real = sync_mod.normalize_message
+
+    def dated_norm(raw, account, folder, uidvalidity, uid, internal_date_ms, **kw):
+        return real(raw, account, folder, uidvalidity, uid, fresh_ms, **kw)
+
+    monkeypatch.setattr(sync_mod, "normalize_message", dated_norm)
+    with caplog.at_level(logging.INFO, logger=sync_mod.log.name):
+        sync_mod.sync_account(_imap_msgs_factory([301]), _cfg([acc]), acc, state)
+
+    assert not [r for r in caplog.records if "ingest lag" in r.getMessage()]
+
+
 class _ImapMsgs:
     """带真实 fetch 语义的 IMAP 桩：窗口选择交给 fetch_new_messages，
     返回固定 uid 列表的 RawMessage（大小统一小字节）。"""
