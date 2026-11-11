@@ -96,9 +96,12 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
                     last = exc
                 if attempt < max_retries - 1:
                     # 静默重试曾把 45s 超时×5 连败变成数分钟不可见停顿（2026-11-11 QQ 收信劣化复盘），
-                    # 每次失败必须留下 WARNING 轨迹。
+                    # 每次失败必须留下 WARNING 轨迹。HTTPError 的消息体只有 "HTTP <code>"
+                    #（无响应体，无泄漏面），带上状态码才能区分限流与 D1 过载；
+                    # 其它异常只打类型名，避免把可能敏感的异常文本写进日志。
+                    reason = str(error) if isinstance(error, requests.HTTPError) else type(error).__name__
                     log.warning("%s ingest attempt %d/%d failed (%s) for destination=%s: retrying in %.0fs",
-                                kind, attempt + 1, max_retries, type(error).__name__, destination.id, delay)
+                                kind, attempt + 1, max_retries, reason, destination.id, delay)
                     time.sleep(delay)
                     delay = min(delay * 2, 30 if kind == "emails" else 10)
             if succeeded and attempts_used > 1:

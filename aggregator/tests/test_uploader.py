@@ -125,6 +125,8 @@ def test_ingest_retry_emits_warning_trail(monkeypatch, caplog):
     messages = [record.getMessage() for record in caplog.records
                 if record.name == "one-mail-agg" and record.levelno >= logging.WARNING]
     assert any("attempt 1/3 failed" in message for message in messages), messages
+    # 状态码必须进轨迹：503（限流/D1 过载）在日志里要可与其它 5xx 区分。
+    assert any("HTTP 503" in message for message in messages), messages
     assert any("recovered after 2 attempts" in message for message in messages), messages
 
 
