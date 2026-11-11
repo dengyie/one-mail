@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import threading
+import time
 
 import requests
 
@@ -123,24 +124,36 @@ def rewrite_config_refresh_token(config_path: str, account_id: str, new_refresh_
 
 def report_refresh_token_to_worker(worker_base_url: str, admin_token: str,
                                    account_id: str, new_refresh_token: str) -> bool:
-    """把轮换后的 refresh_token 回写 Worker（重加密落 D1）。返回是否成功。"""
+    """把轮换后的 refresh_token 回写 Worker（重加密落 D1）。返回是否成功。
+
+    幂等回写：瞬时故障（网络异常 / HTTP 5xx，如 2026-11-12 03:10 的 Worker/D1
+    500 窗口曾把 hotmail 账号误判为 connection lost）按 1s→3s 重试吸收；
+    404（账号已删）与其余 4xx 是终态，重试无意义。
+    """
     url = f"{worker_base_url}/admin/unified/mail_accounts/{account_id}/refresh_token"
     headers = {"x-admin-auth": admin_token}
-    try:
-        r = requests.post(url, json={"refresh_token": new_refresh_token},
-                          headers=headers, timeout=10)
-        if r.status_code == 404:
-            log.info("refresh_token write-back skipped, account %s gone from Worker", account_id)
-            return False
-        if r.status_code != 200:
-            log.warning("refresh_token write-back for %s failed: HTTP %s %s",
-                        account_id, r.status_code, r.text[:200])
-            return False
-        log.info("rotated refresh_token written back to Worker for account %s", account_id)
-        return True
-    except Exception as e:
-        log.warning("refresh_token write-back for %s error: %s", account_id, e)
-        return False
+    delay = 1.0
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json={"refresh_token": new_refresh_token},
+                              headers=headers, timeout=10)
+            if r.status_code == 200:
+                log.info("rotated refresh_token written back to Worker for account %s", account_id)
+                return True
+            if r.status_code == 404:
+                log.info("refresh_token write-back skipped, account %s gone from Worker", account_id)
+                return False
+            log.warning("refresh_token write-back for %s failed (attempt %d/3): HTTP %s %s",
+                        account_id, attempt + 1, r.status_code, r.text[:200])
+            if r.status_code < 500:
+                return False
+        except Exception as e:
+            log.warning("refresh_token write-back for %s error (attempt %d/3): %s",
+                        account_id, attempt + 1, e)
+        if attempt < 2:
+            time.sleep(delay)
+            delay = 3.0
+    return False
 
 
 def persist_rotated_refresh_token(config: Config, account, new_refresh_token: str) -> None:

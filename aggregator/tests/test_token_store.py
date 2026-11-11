@@ -3,6 +3,7 @@ import json
 import os
 
 import pytest
+import requests
 
 from one_mail_agg import token_store
 from one_mail_agg.token_store import (
@@ -84,6 +85,68 @@ def test_report_refresh_token_to_worker_statuses(monkeypatch):
                             _Resp(s))
         got = token_store.report_refresh_token_to_worker("https://w", "t", acc_id, "NEW")
         assert got is expected, f"status={status}"
+
+
+def test_report_refresh_token_500_persists_across_three_attempts(monkeypatch):
+    """2026-11-12 03:10 生产反馈：Worker/D1 瞬时 500 窗口（~12s）让单次尝试的
+    RT 回写失败，hotmail 账号被误判 connection lost 重建。回写是幂等操作，
+    瞬时故障必须重试吸收。"""
+    monkeypatch.setattr(token_store.time, "sleep", lambda _: None)
+    calls = []
+
+    def flaky_post(url, json=None, headers=None, timeout=0):
+        calls.append(1)
+        return _Resp(500)
+
+    monkeypatch.setattr(token_store.requests, "post", flaky_post)
+    got = token_store.report_refresh_token_to_worker("https://w", "t", "uuid-1", "NEW")
+    assert got is False
+    assert len(calls) == 3, calls
+
+
+def test_report_refresh_token_recovers_after_transient_500(monkeypatch):
+    monkeypatch.setattr(token_store.time, "sleep", lambda _: None)
+    statuses = [500, 500, 200]
+    calls = []
+
+    def flaky_post(url, json=None, headers=None, timeout=0):
+        calls.append(1)
+        return _Resp(statuses.pop(0))
+
+    monkeypatch.setattr(token_store.requests, "post", flaky_post)
+    got = token_store.report_refresh_token_to_worker("https://w", "t", "uuid-1", "NEW")
+    assert got is True
+    assert len(calls) == 3, calls
+
+
+def test_report_refresh_token_4xx_is_terminal(monkeypatch):
+    monkeypatch.setattr(token_store.time, "sleep", lambda _: None)
+    calls = []
+
+    def post(url, json=None, headers=None, timeout=0):
+        calls.append(1)
+        return _Resp(401)
+
+    monkeypatch.setattr(token_store.requests, "post", post)
+    got = token_store.report_refresh_token_to_worker("https://w", "t", "uuid-1", "NEW")
+    assert got is False
+    assert len(calls) == 1, calls
+
+
+def test_report_refresh_token_retries_connection_error_then_recovers(monkeypatch):
+    monkeypatch.setattr(token_store.time, "sleep", lambda _: None)
+    calls = []
+
+    def flaky_post(url, json=None, headers=None, timeout=0):
+        calls.append(1)
+        if len(calls) < 3:
+            raise requests.exceptions.ConnectionError("boom")
+        return _Resp(200)
+
+    monkeypatch.setattr(token_store.requests, "post", flaky_post)
+    got = token_store.report_refresh_token_to_worker("https://w", "t", "uuid-1", "NEW")
+    assert got is True
+    assert len(calls) == 3, calls
 
 
 def test_make_rotated_callback_none_config():
