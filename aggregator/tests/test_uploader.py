@@ -1,8 +1,10 @@
 import json
+import logging
 
 import pytest
 import requests
 import responses
+from one_mail_agg import uploader
 from one_mail_agg.uploader import UploadBatchError, upload_emails, upload_folders
 from one_mail_agg.config import Config
 
@@ -88,6 +90,42 @@ def test_upload_retries_on_500():
     out = upload_emails(cfg(), [{"id": "x"}], max_retries=3)
     assert out["inserted"] == 1
     assert len(responses.calls) == 2
+
+
+def test_ingest_timeout_is_90s(monkeypatch):
+    """2026-11-11 生产复盘：45s 超时把「慢而非死」的链路变成 5 连败重试（最长 ~4 分钟静默停顿）。
+    上探到 90s 吸收慢尾，同时每次重试必须留下 WARNING 轨迹。"""
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"inserted": 1, "skipped": 0}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["timeout"] = timeout
+        return _Resp()
+
+    monkeypatch.setattr(uploader.requests, "post", fake_post)
+    out = upload_emails(cfg(), [{"id": "x", "source": "imap_qq"}])
+    assert out == {"inserted": 1, "skipped": 0}
+    assert captured["timeout"] == 90
+
+
+@responses.activate
+def test_ingest_retry_emits_warning_trail(monkeypatch, caplog):
+    monkeypatch.setattr("one_mail_agg.uploader.time.sleep", lambda _: None)
+    responses.add(responses.POST, "https://w.example/admin/unified/ingest", status=503)
+    responses.add(responses.POST, "https://w.example/admin/unified/ingest",
+                  json={"inserted": 1, "skipped": 0}, status=200)
+    with caplog.at_level(logging.WARNING, logger="one-mail-agg"):
+        out = upload_emails(cfg(), [{"id": "x"}], max_retries=3)
+    assert out["inserted"] == 1
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == "one-mail-agg" and record.levelno >= logging.WARNING]
+    assert any("attempt 1/3 failed" in message for message in messages), messages
+    assert any("recovered after 2 attempts" in message for message in messages), messages
 
 
 @responses.activate

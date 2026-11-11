@@ -1,12 +1,15 @@
 import time
 import copy
 import json
+import logging
 from urllib.parse import quote
 import requests
 import re
 
 from .config import Config, WorkerDestination
 from .d1_quota import DatabaseQuotaExceeded, database_quota_error
+
+log = logging.getLogger("one-mail-agg")
 
 
 STORAGE_KEY_RE = re.compile(r"^unified/[A-Za-z0-9_-]{43}$")
@@ -60,7 +63,11 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
             delay = 1.0
             last = None
             succeeded = False
+            attempts_used = 0
+            started = time.monotonic()
             for attempt in range(max_retries):
+                attempts_used = attempt + 1
+                error = None
                 try:
                     response = requests.post(destination.api_url("/ingest"),
                                              json={kind: chunk}, headers=headers, timeout=timeout)
@@ -80,14 +87,23 @@ def _upload(config: Config, rows: list[dict], *, kind: str, max_retries: int,
                     if quota is not None:
                         last = quota
                         break
-                    last = requests.HTTPError(f"HTTP {response.status_code}", response=response)
-                except Exception as error:
+                    error = requests.HTTPError(f"HTTP {response.status_code}", response=response)
+                    last = error
+                except Exception as exc:
                     # Retain the cause without including its potentially sensitive
                     # text in the printable batch summary.
-                    last = error
+                    error = exc
+                    last = exc
                 if attempt < max_retries - 1:
+                    # 静默重试曾把 45s 超时×5 连败变成数分钟不可见停顿（2026-11-11 QQ 收信劣化复盘），
+                    # 每次失败必须留下 WARNING 轨迹。
+                    log.warning("%s ingest attempt %d/%d failed (%s) for destination=%s: retrying in %.0fs",
+                                kind, attempt + 1, max_retries, type(error).__name__, destination.id, delay)
                     time.sleep(delay)
                     delay = min(delay * 2, 30 if kind == "emails" else 10)
+            if succeeded and attempts_used > 1:
+                log.warning("%s ingest recovered after %d attempts (%.1fs): destination=%s",
+                            kind, attempts_used, time.monotonic() - started, destination.id)
             if not succeeded:
                 failures.append((f"{destination.id}: {len(chunk)} {kind}", last))
                 # Retry this destination on the next sync; still service the other
@@ -193,11 +209,14 @@ def _upload_attachment_payloads(destination: WorkerDestination, rows: list[dict]
 def upload_emails(config: Config, emails: list[dict], max_retries: int = 5, chunk_size: int = 15) -> dict:
     """Group by static destination and upload bounded, idempotent chunks.
 
-    The default 15-message chunks and 45s timeout keep large bodies and D1 writes
-    bounded. Partial failure raises so callers do not commit sync watermarks.
+    The default 15-message chunks and 90s timeout keep large bodies and D1 writes
+    bounded. The 2026-11-11 QQ latency review showed 45s attempts turning slow
+    (not dead) links into 5-failure silent retry storms measured in minutes, so
+    the per-attempt timeout absorbs the slow tail instead of multiplying retries.
+    Partial failure raises so callers do not commit sync watermarks.
     """
     return _upload(config, emails, kind="emails", max_retries=max_retries,
-                   chunk_size=chunk_size, timeout=45)
+                   chunk_size=chunk_size, timeout=90)
 
 
 def upload_folders(config: Config, folders: list[dict], max_retries: int = 3, chunk_size: int = 100) -> dict:

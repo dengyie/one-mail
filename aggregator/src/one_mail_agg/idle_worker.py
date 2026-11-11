@@ -24,7 +24,7 @@ _MAX_IDLE_SESSION_CYCLES = 15    # 默认 15 次唤醒周期置换（随 idle_re
 # cutoff 落在 (180s, 240s]，且 240s 只是贴着边界、并不安全。故压到 120s，相对实测 cutoff 留一倍余量：
 # NOOP 只是控制命令，120s 频度不触网易风控（不稳定降级路径本来就按 60s 轮询）。
 _NETEASE_NOOP_INTERVAL_SECONDS = 120
-_SECONDARY_FOLDER_SYNC_INTERVAL_SECONDS = 60.0  # 每 60 秒检查一次次要目录（如 Junk），防频繁切目录且确保垃圾箱不漏信
+_SECONDARY_FOLDER_SYNC_INTERVAL_SECONDS = 15.0  # 每 15 秒检查一次次要目录（如 Junk）：QQ 5s IDLE 唤醒下，垃圾箱延迟上界 60s→15s；仅到点才切目录，负载可忽略
 _D1_STATUS_HEARTBEAT_SECONDS = 900.0  # 15 分钟状态心跳，防高频 IDLE 探测打爆 Cloudflare D1 写入配额
 
 _active_idle_workers: dict[str, "ImapIdleWorker"] = {}
@@ -290,9 +290,9 @@ class ImapIdleWorker(threading.Thread):
                                      self.account.id, responses)
 
                         try:
-                            # 如果收到真实推信事件，或者已超过 60 秒需要检查次要目录（如 Junk），则同步全部目录；
-                            # 如果只是普通的快速唤醒且未到 60 秒检查周期，则仅同步主目录，
-                            # 避免每个 5 秒都在 INBOX 与 Junk 间频繁切目录，同时确保垃圾箱邮件在 60 秒内准时收取绝不遗漏。
+                            # 如果收到真实推信事件，或者已超过 15 秒需要检查次要目录（如 Junk），则同步全部目录；
+                            # 如果只是普通的快速唤醒且未到 15 秒检查周期，则仅同步主目录，
+                            # 避免每个 5 秒都在 INBOX 与 Junk 间频繁切目录，同时确保垃圾箱邮件在 15 秒内准时收取绝不遗漏。
                             need_secondary = (
                                 not secondary_folders
                                 or has_event

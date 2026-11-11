@@ -839,8 +839,9 @@ def test_d1_status_report_debouncing_protects_database(tmp_path, monkeypatch):
 
 
 def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path, monkeypatch):
-    """在 IDLE 维持心跳超时时，未到 60 秒仅同步主收件箱，避免频繁切目录；
-    收到真实事件时立即同步全部目录（包含 Junk，确保不漏信）。"""
+    """在 IDLE 维持心跳超时时，未到 15 秒仅同步主收件箱，避免频繁切目录；
+    收到真实事件时立即同步全部目录（包含 Junk，确保不漏信）。
+    2026-11-12 将检查周期从 60s 压到 15s：QQ 垃圾箱延迟结构上界从 60s 降到 ~15s。"""
     config = _config(tmp_path)
     state = SyncState(str(tmp_path / "state.json"))
     acc = _qq_account(folders=["INBOX", "Junk"])
@@ -863,12 +864,16 @@ def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path, monkeypatc
             nonlocal fake_now
             self.tick += 1
             if self.tick == 1:
-                fake_now += 5.0  # cycle 1 timeout: 5s (< 60s)
+                fake_now += 5.0  # cycle 1 timeout: 5s (< 15s)
             elif self.tick == 2:
                 fake_now += 5.0  # cycle 2: 收到真实推信事件
                 return [(b"1", b"EXISTS")]
             elif self.tick == 3:
-                fake_now += 65.0  # cycle 3 timeout: 距离上次次要目录同步已满 65s (>= 60s)
+                fake_now += 10.0  # cycle 3 timeout: 距上次次要目录同步 10s (< 15s)
+            elif self.tick == 4:
+                fake_now += 20.0  # cycle 4 timeout: 20s 落在 [15s, 60s)——只有新周期才触发次要目录同步
+            elif self.tick == 5:
+                fake_now += 65.0  # cycle 5 timeout: 距上次次要目录同步已满 65s (>= 15s)
             return []
         def idle_done(self):
             pass
@@ -885,7 +890,7 @@ def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path, monkeypatc
 
     def mock_sync(_c, folders=None, **_kw):
         sync_history.append(list(folders) if folders is not None else list(acc.folders))
-        if len(sync_history) >= 4:
+        if len(sync_history) >= 6:
             worker.stop()
         return {"synced": 0, "dropped": 0}
 
@@ -897,13 +902,17 @@ def test_secondary_folder_sync_cadence_during_idle_timeouts(tmp_path, monkeypatc
 
     # 期望序列：
     # 0: initial sync (全部目录: ["INBOX", "Junk"])
-    # 1: cycle 1 timeout 且时间差 5s < 60s -> 仅同步主目录: ["INBOX"]
+    # 1: cycle 1 timeout 且时间差 5s < 15s -> 仅同步主目录: ["INBOX"]
     # 2: cycle 2 has_event=True (真实推信事件) -> 立即同步全部目录: ["INBOX", "Junk"]
-    # 3: cycle 3 timeout 但时间差 65s >= 60s -> 触发定时次要目录同步: ["INBOX", "Junk"]
+    # 3: cycle 3 timeout 且时间差 10s < 15s -> 仅同步主目录: ["INBOX"]
+    # 4: cycle 4 timeout 且时间差 20s ∈ [15s, 60s) -> 触发次要目录同步（区分 15s 新周期与 60s 旧周期）
+    # 5: cycle 5 timeout 且时间差 65s >= 15s -> 触发定时次要目录同步: ["INBOX", "Junk"]
     assert sync_history[0] == ["INBOX", "Junk"]
     assert sync_history[1] == ["INBOX"]
     assert sync_history[2] == ["INBOX", "Junk"]
-    assert sync_history[3] == ["INBOX", "Junk"]
+    assert sync_history[3] == ["INBOX"]
+    assert sync_history[4] == ["INBOX", "Junk"]
+    assert sync_history[5] == ["INBOX", "Junk"]
 
 
 def test_is_idle_worker_active_thread_safe(tmp_path):
