@@ -1,18 +1,25 @@
 name: Workers Log Probe
 
 # 临时运维工具：从 GitHub Actions secrets 取 Cloudflare 凭据（不落盘、不回传），
-# 查询 one-mail Worker 的最近日志（Workers Logs GraphQL Analytics），
-# 用于排查鉴权/掉登录类线上问题。手动触发，可指定回看分钟数与过滤关键字。
+# 查询 one-mail Worker 的调用分析（Workers invocations GraphQL Analytics），
+# 用于排查鉴权/掉登录类线上问题。手动触发，可指定回看分钟数。
+#
+# 重要：本账号未开通 Workers Logs——GraphQL schema 内省确认不存在
+# workersLogs 数据集（原始日志只能 wrangler tail 实时拉）。因此本探针
+# 聚合 invocation 维度，对鉴权链路（PR #171/#172 的 401/503 语义）足够：
+#   httpResponseStatus=503 升高 → D1 瞬时故障走新兜底（可重试、不清凭据，预期表现）
+#   httpResponseStatus=401 高位 → 凭据真的失效（无人改密码/换设备则异常）
+#   status=error 或 sum.errors>0 → Worker 内部抛异常，需进一步实时 tail
 
 on:
   workflow_dispatch:
     inputs:
       minutes:
-        description: "Look-back window in minutes (1-1440)"
+        description: "Look-back window in minutes (1-10080)"
         required: false
         default: "60"
       filter:
-        description: "Substring filter (case-insensitive), e.g. auth / liveness / error. Empty = all"
+        description: "HTTP status substring filter, e.g. 503 / 401. Empty = all"
         required: false
         default: ""
 
@@ -28,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Query Workers Logs via GraphQL
+      - name: Query Worker invocations via GraphQL
         shell: bash
         env:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -40,41 +47,30 @@ jobs:
           SINCE=$(date -u -d "-${MINUTES:-60} minutes" +%Y-%m-%dT%H:%M:%SZ)
           UNTIL=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          # GraphQL 查询：one-mail Worker 的结构化日志流（Workers Logs）。
-          # limit 用 API 上限；消息里做关键字过滤（jq）。
+          # workersInvocationsAdaptive 是分组聚合数据集：字段只能进
+          # dimensions / sum / quantiles 子选择（顶层 datetime 是 unknown field，
+          # PR #173 首跑即栽在这里）。两个视图互补：
+          #   byStatus —— 全窗按 script+status+http 状态聚合，看错误总量分布
+          #   byHour   —— 按小时时间线，定位错误集中出现的时段
           QUERY=$(cat <<'GQL'
-          query($accountTag: String!, $datetimeAfter: Time!, $datetimeBefore: Time!, $limit: Int!) {
+          query($accountTag: String!, $since: Time!, $until: Time!, $limit: Int!) {
             viewer {
               accounts(filter: { accountTag: $accountTag }) {
-                workersInvocationsAdaptive(
-                  filter: {
-                    datetime_geq: $datetimeAfter
-                    datetime_leq: $datetimeBefore
-                  }
+                byStatus: workersInvocationsAdaptive(
+                  filter: { datetime_geq: $since, datetime_leq: $until }
                   limit: $limit
-                  orderBy: [datetime_DESC]
+                  orderBy: [sum_requests_DESC]
                 ) {
-                  datetime
-                  scriptName
-                  status
-                  errors
-                  outcome
-                  cpuTime
-                  wallTime
+                  dimensions { scriptName status httpResponseStatus }
+                  sum { requests errors subrequests }
                 }
-                workersLogs(
-                  filter: {
-                    datetime_geq: $datetimeAfter
-                    datetime_leq: $datetimeBefore
-                  }
+                byHour: workersInvocationsAdaptive(
+                  filter: { datetime_geq: $since, datetime_leq: $until }
                   limit: $limit
-                  orderBy: [datetime_DESC]
+                  orderBy: [datetimeHour_ASC]
                 ) {
-                  message
-                  level
-                  datetime
-                  scriptName
-                  error
+                  dimensions { datetimeHour scriptName httpResponseStatus }
+                  sum { requests errors }
                 }
               }
             }
@@ -84,55 +80,41 @@ jobs:
 
           jq -n --arg q "$QUERY" --arg acct "$CF_ACCOUNT_ID" \
                 --arg since "$SINCE" --arg until "$UNTIL" \
-                '{query: $q, variables: {accountTag: $acct, datetimeAfter: $since, datetimeBefore: $until, limit: 200}}' \
+                '{query: $q, variables: {accountTag: $acct, since: $since, until: $until, limit: 200}}' \
                 > /tmp/gql-payload.json
 
-          HTTP_CODE=$(curl -sS -o /tmp/gql-resp.json -w "%{http_code}" \
+          HTTP_CODE=$(curl -sS --max-time 30 -o /tmp/gql-resp.json -w "%{http_code}" \
             -H "Authorization: Bearer $CF_API_TOKEN" \
             -H "Content-Type: application/json" \
             --data @/tmp/gql-payload.json \
             "https://api.cloudflare.com/client/v4/graphql" || true)
           echo "GraphQL HTTP status: $HTTP_CODE"
 
-          # 只输出日志与错误统计，绝不输出 token 或请求头。
-          if [ "$FILTER" != "" ]; then
-            jq -r --arg f "$FILTER" '
-              .data.viewer.accounts[0] as $a |
-              ($a.workersLogs // [])[] |
-              select((.message // "" | ascii_downcase | contains($f | ascii_downcase)) or
-                     ((.error // "") | ascii_downcase | contains($f | ascii_downcase)))
-              | "[\(.datetime)] [\(.level // "log")] \(.scriptName // "") :: \(.message // .error)"
-            ' /tmp/gql-resp.json
-            echo "--- invocations (filtered by outcome=error/exception) ---"
-            jq -r --arg f "$FILTER" '
-              .data.viewer.accounts[0] as $a |
-              ($a.workersInvocationsAdaptive // [])[] |
-              select((.outcome // "") | ascii_downcase | contains($f | ascii_downcase) or
-                     ($f == "" ))
-              | "[\(.datetime)] \(.scriptName // "") outcome=\(.outcome // "") status=\(.status // "") cpu=\(.cpuTime // 0)us"
-            ' /tmp/gql-resp.json | head -40
-          else
-            jq -r '
-              .data.viewer.accounts[0] as $a |
-              ($a.workersLogs // [])[] |
-              "[\(.datetime)] [\(.level // "log")] \(.scriptName // "") :: \(.message // .error)"
-            ' /tmp/gql-resp.json | head -80
-            echo "--- invocations ---"
-            jq -r '
-              .data.viewer.accounts[0] as $a |
-              ($a.workersInvocationsAdaptive // [])[] |
-              "[\(.datetime)] \(.scriptName // "") outcome=\(.outcome // "") status=\(.status // "")"
-            ' /tmp/gql-resp.json | head -40
-          fi
+          # GraphQL 错误先输出：authz（token 缺 Account Analytics 读权限）与
+          # schema 错误必须显式可见，否则空结果会误导为「线上零错误」。
+          jq -r '.errors // [] | .[] | "GQL-ERROR [\(.extensions.code // "?")]: \(.message)"' /tmp/gql-resp.json || true
 
-          # 汇总：错误/异常调用计数，一行看健康度
-          echo "--- summary ---"
-          jq -r '
-            .data.viewer.accounts[0] as $a |
-            ($a.workersInvocationsAdaptive // []) as $inv |
-            "total_invocations=\($inv | length) " +
-            "errors=\($inv | map(select((.outcome // "") != "ok")) | length)"
+          echo "=== per-status totals (window: ${SINCE} .. ${UNTIL}) ==="
+          jq -r --arg f "$FILTER" '
+            .data.viewer.accounts[0].byStatus // []
+            | map(select($f == "" or ((.dimensions.httpResponseStatus // "" | tostring)
+                | ascii_downcase | contains($f | ascii_downcase))))
+            | sort_by(-(.sum.requests // 0))[]
+            | "\(.dimensions.scriptName // "?") status=\(.dimensions.status // "?") http=\(.dimensions.httpResponseStatus // "-") requests=\(.sum.requests // 0) errors=\(.sum.errors // 0) subreq=\(.sum.subrequests // 0)"
           ' /tmp/gql-resp.json
 
-          # GraphQL 错误（权限缺失 / schema 不匹配）要显式可见，否则空结果会误导
-          jq -r '.errors // [] | .[] | "GQL-ERROR: \(.message)"' /tmp/gql-resp.json || true
+          echo "=== hourly timeline ==="
+          jq -r --arg f "$FILTER" '
+            .data.viewer.accounts[0].byHour // []
+            | map(select($f == "" or ((.dimensions.httpResponseStatus // "" | tostring)
+                | ascii_downcase | contains($f | ascii_downcase))))
+            | group_by(.dimensions.datetimeHour)[]
+            | "\(.[0].dimensions.datetimeHour)  total=\(map(.sum.requests // 0) | add // 0)  errors=\(map(.sum.errors // 0) | add // 0)"
+          ' /tmp/gql-resp.json
+
+          echo "=== one-mail summary ==="
+          jq -r '
+            .data.viewer.accounts[0].byStatus // []
+            | map(select((.dimensions.scriptName // "") == "one-mail"))
+            | "requests=\(map(.sum.requests // 0) | add // 0) errors=\(map(.sum.errors // 0) | add // 0) status_rows=\(length)"
+          ' /tmp/gql-resp.json
