@@ -24,8 +24,10 @@ log = logging.getLogger("one-mail-agg")
 # 单封邮件「投递→入库」的可观测阈值。收信劣化复盘（2026-11-11/12）每次都要
 # SSH + D1 手工对账 internal_date 才能算出延迟；超过该龄期的批次直接在日志里
 # 留可 grep 的 INFO 轨迹（mail_age = now - min(internal_date)，整批最老的那封，
-# 才能代表 worst-case 投递延迟）。
+# 才能代表 worst-case 投递延迟）。≥300s 属结构性上界之外的严重劣化，升级
+# WARNING 让告警/巡检按 level 起筛就能抓到，不必全文 grep。
 _INGEST_LAG_LOG_THRESHOLD_SECONDS = 60.0
+_INGEST_LAG_WARNING_THRESHOLD_SECONDS = 300.0
 
 
 def _log_ingest_lag(account_id: str, batch: list[dict], folder_hint: str | None = None) -> None:
@@ -41,8 +43,12 @@ def _log_ingest_lag(account_id: str, batch: list[dict], folder_hint: str | None 
     if age_seconds < _INGEST_LAG_LOG_THRESHOLD_SECONDS:
         return
     suffix = f" folder={folder_hint}" if folder_hint else ""
-    log.info("ingest lag account=%s%s: oldest mail is %.0fs old (delivered -> stored)",
-             account_id, suffix, age_seconds)
+    message = ("ingest lag account=%s%s: oldest mail is %.0fs old (delivered -> stored)"
+               % (account_id, suffix, age_seconds))
+    if age_seconds >= _INGEST_LAG_WARNING_THRESHOLD_SECONDS:
+        log.warning(message)
+    else:
+        log.info(message)
 
 
 def _imap_fallback_allowed(error: Exception) -> bool:
@@ -214,6 +220,7 @@ def sync_pop3(account: AccountConfig, config: Config, state: SyncState) -> dict:
                 f"(dropped={dropped}), nothing uploaded and nothing marked seen")
         result = upload_emails(config, batch)
         inserted = result.get("inserted", len(batch))
+        _log_ingest_lag(account.id, batch, folder_hint="INBOX")
         state.add_pop3_seen_many(account.id, "INBOX", uploaded_uidls)
         warning = ("POP3 only supports INBOX; non-INBOX folders were dropped: "
                    + ", ".join(non_inbox)) if non_inbox else None
