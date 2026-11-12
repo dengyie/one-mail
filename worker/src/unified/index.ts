@@ -64,6 +64,13 @@ api.use("/api/unified/*", async (c, next) => {
         // user_id + user_email identity binding before this route runs.
         const payload = c.get("userPayload") as UserPayload | undefined;
         if (!payload || !payload.exp || payload.exp < Math.floor(Date.now() / 1000)) {
+            // userTokenDbError = the token itself is fine but the liveness check
+            // hit a transient DB failure. Answer 503 (retryable) instead of 401:
+            // a 401 here would make the frontend's self-heal clear a perfectly
+            // valid userJwt and bounce the user to the login page.
+            if (c.get("userTokenDbError")) {
+                return c.json({ error: "database temporarily unavailable" }, 503);
+            }
             return c.json({ error: "invalid user token" }, 401);
         }
         try {
@@ -77,8 +84,11 @@ api.use("/api/unified/*", async (c, next) => {
             c.set("unifiedUserAuth", { userPayload: payload, isAdmin, userRole });
             await next();
             return;
-        } catch {
-            return c.json({ error: "invalid user token" }, 401);
+        } catch (e) {
+            // This try only wraps the D1 role lookup: a throw here is a
+            // transient backend failure, not an invalid token.
+            console.error("[unified] role lookup failed (DB transient?)", e);
+            return c.json({ error: "database temporarily unavailable" }, 503);
         }
     }
 
