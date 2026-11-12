@@ -147,7 +147,16 @@ const checkUserPayload = async (
 		}
 		// Bind the token to both immutable identity attributes. Checking only the
 		// numeric id would let a deleted user's token follow a reused row id.
-		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
+		// null = the DB itself failed (transient), not an invalid credential:
+		// flag it so downstream unified routes answer 503 instead of 401 —
+		// otherwise a D1 hiccup would make the frontend clear a valid token.
+		const active = await isActiveUser(c.env.DB, payload.user_id, payload.user_email);
+		if (active === null) {
+			console.error("[auth] liveness check unavailable (DB transient failure)");
+			c.set("userTokenDbError", true);
+			return;
+		}
+		if (!active) {
 			return;
 		}
 		c.set("userPayload", payload as UserPayload);
@@ -258,7 +267,14 @@ app.use('/user_api/*', async (c, next) => {
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
-		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
+		// null = D1 瞬时故障，存活状态未知：503（可重试）而非 401，避免前端
+		// 自愈逻辑把有效 token 当失效清空、把用户踢回登录页。
+		const active = await isActiveUser(c.env.DB, payload.user_id, payload.user_email);
+		if (active === null) {
+			console.error("[auth] user liveness check unavailable (DB transient failure)");
+			return c.text(msgs.DBNotAvailableMsg, 503)
+		}
+		if (!active) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
 		c.set("userPayload", payload as UserPayload);

@@ -177,6 +177,9 @@ type UserPayload = {
 type Variables = {
     userPayload: UserPayload,
     userRolePayload: string | undefined | null,
+    // x-user-token 签名/有效期合法，但 isActiveUser 因 D1 瞬时故障无法判定用户存活。
+    // 统一收件箱中间件据此返回 503（可重试）而不是 401，避免前端误清有效凭据。
+    userTokenDbError?: boolean,
     jwtPayload: JwtPayload,
     lang: string | undefined | null
     // API-key auth on unified routes (Task 12). Structurally matches ApiKeyRow
