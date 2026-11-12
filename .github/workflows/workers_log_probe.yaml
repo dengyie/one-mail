@@ -1,0 +1,138 @@
+name: Workers Log Probe
+
+# 临时运维工具：从 GitHub Actions secrets 取 Cloudflare 凭据（不落盘、不回传），
+# 查询 one-mail Worker 的最近日志（Workers Logs GraphQL Analytics），
+# 用于排查鉴权/掉登录类线上问题。手动触发，可指定回看分钟数与过滤关键字。
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Look-back window in minutes (1-1440)"
+        required: false
+        default: "60"
+      filter:
+        description: "Substring filter (case-insensitive), e.g. auth / liveness / error. Empty = all"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workers-log-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Query Workers Logs via GraphQL
+        shell: bash
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          MINUTES="${{ inputs.minutes }}"
+          FILTER="${{ inputs.filter }}"
+          SINCE=$(date -u -d "-${MINUTES:-60} minutes" +%Y-%m-%dT%H:%M:%SZ)
+          UNTIL=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # GraphQL 查询：one-mail Worker 的结构化日志流（Workers Logs）。
+          # limit 用 API 上限；消息里做关键字过滤（jq）。
+          QUERY=$(cat <<'GQL'
+          query($accountTag: String!, $datetimeAfter: Time!, $datetimeBefore: Time!, $limit: Int!) {
+            viewer {
+              accounts(filter: { accountTag: $accountTag }) {
+                workersInvocationsAdaptive(
+                  filter: {
+                    datetime_geq: $datetimeAfter
+                    datetime_leq: $datetimeBefore
+                  }
+                  limit: $limit
+                  orderBy: [datetime_DESC]
+                ) {
+                  datetime
+                  scriptName
+                  status
+                  errors
+                  outcome
+                  cpuTime
+                  wallTime
+                }
+                workersLogs(
+                  filter: {
+                    datetime_geq: $datetimeAfter
+                    datetime_leq: $datetimeBefore
+                  }
+                  limit: $limit
+                  orderBy: [datetime_DESC]
+                ) {
+                  message
+                  level
+                  datetime
+                  scriptName
+                  error
+                }
+              }
+            }
+          }
+          GQL
+          )
+
+          jq -n --arg q "$QUERY" --arg acct "$CF_ACCOUNT_ID" \
+                --arg since "$SINCE" --arg until "$UNTIL" \
+                '{query: $q, variables: {accountTag: $acct, datetimeAfter: $since, datetimeBefore: $until, limit: 200}}' \
+                > /tmp/gql-payload.json
+
+          HTTP_CODE=$(curl -sS -o /tmp/gql-resp.json -w "%{http_code}" \
+            -H "Authorization: Bearer $CF_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/gql-payload.json \
+            "https://api.cloudflare.com/client/v4/graphql" || true)
+          echo "GraphQL HTTP status: $HTTP_CODE"
+
+          # 只输出日志与错误统计，绝不输出 token 或请求头。
+          if [ "$FILTER" != "" ]; then
+            jq -r --arg f "$FILTER" '
+              .data.viewer.accounts[0] as $a |
+              ($a.workersLogs // [])[] |
+              select((.message // "" | ascii_downcase | contains($f | ascii_downcase)) or
+                     ((.error // "") | ascii_downcase | contains($f | ascii_downcase)))
+              | "[\(.datetime)] [\(.level // "log")] \(.scriptName // "") :: \(.message // .error)"
+            ' /tmp/gql-resp.json
+            echo "--- invocations (filtered by outcome=error/exception) ---"
+            jq -r --arg f "$FILTER" '
+              .data.viewer.accounts[0] as $a |
+              ($a.workersInvocationsAdaptive // [])[] |
+              select((.outcome // "") | ascii_downcase | contains($f | ascii_downcase) or
+                     ($f == "" ))
+              | "[\(.datetime)] \(.scriptName // "") outcome=\(.outcome // "") status=\(.status // "") cpu=\(.cpuTime // 0)us"
+            ' /tmp/gql-resp.json | head -40
+          else
+            jq -r '
+              .data.viewer.accounts[0] as $a |
+              ($a.workersLogs // [])[] |
+              "[\(.datetime)] [\(.level // "log")] \(.scriptName // "") :: \(.message // .error)"
+            ' /tmp/gql-resp.json | head -80
+            echo "--- invocations ---"
+            jq -r '
+              .data.viewer.accounts[0] as $a |
+              ($a.workersInvocationsAdaptive // [])[] |
+              "[\(.datetime)] \(.scriptName // "") outcome=\(.outcome // "") status=\(.status // "")"
+            ' /tmp/gql-resp.json | head -40
+          fi
+
+          # 汇总：错误/异常调用计数，一行看健康度
+          echo "--- summary ---"
+          jq -r '
+            .data.viewer.accounts[0] as $a |
+            ($a.workersInvocationsAdaptive // []) as $inv |
+            "total_invocations=\($inv | length) " +
+            "errors=\($inv | map(select((.outcome // "") != "ok")) | length)"
+          ' /tmp/gql-resp.json
+
+          # GraphQL 错误（权限缺失 / schema 不匹配）要显式可见，否则空结果会误导
+          jq -r '.errors // [] | .[] | "GQL-ERROR: \(.message)"' /tmp/gql-resp.json || true
