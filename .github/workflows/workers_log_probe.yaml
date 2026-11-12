@@ -103,13 +103,15 @@ jobs:
             | "\(.dimensions.scriptName // "?") status=\(.dimensions.status // "?") http=\(.dimensions.httpResponseStatus // "-") requests=\(.sum.requests // 0) errors=\(.sum.errors // 0) subreq=\(.sum.subrequests // 0)"
           ' /tmp/gql-resp.json
 
-          echo "=== hourly timeline ==="
+          echo "=== hourly timeline (per script) ==="
           jq -r --arg f "$FILTER" '
             .data.viewer.accounts[0].byHour // []
             | map(select($f == "" or ((.dimensions.httpResponseStatus // "" | tostring)
                 | ascii_downcase | contains($f | ascii_downcase))))
-            | group_by(.dimensions.datetimeHour)[]
-            | "\(.[0].dimensions.datetimeHour)  total=\(map(.sum.requests // 0) | add // 0)  errors=\(map(.sum.errors // 0) | add // 0)"
+            # one-mail 是观测主体，但同账号还有 cf-doh 等高基线 worker，
+            # 不分脚本会把异常时段淹没在总流量里——按 [hour, script] 分行。
+            | group_by([.dimensions.datetimeHour, .dimensions.scriptName])[]
+            | "\(.[0].dimensions.datetimeHour) \(.[0].dimensions.scriptName)  total=\(map(.sum.requests // 0) | add // 0)  errors=\(map(.sum.errors // 0) | add // 0)"
           ' /tmp/gql-resp.json
 
           echo "=== one-mail summary ==="

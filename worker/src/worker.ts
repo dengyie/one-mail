@@ -161,7 +161,9 @@ const checkUserPayload = async (
 		}
 		c.set("userPayload", payload as UserPayload);
 	} catch (e) {
-		console.error(e);
+		// 分类日志：签名伪造/格式损坏会走到这里，线上聚合探针只能看到 401
+		// 计数，无法区分「凭据真的失效」与「verify 内部异常」——留一行指认。
+		console.error("[auth] user token verify failed", e);
 	}
 }
 
@@ -187,7 +189,7 @@ const checkoutUserRolePayload = async (
 		}
 		c.set("userRolePayload", payload.user_role);
 	} catch (e) {
-		console.error(e);
+		console.error("[auth] access token verify failed (UX role signal skipped)", e);
 	}
 }
 
@@ -282,7 +284,9 @@ app.use('/user_api/*', async (c, next) => {
 		}
 		c.set("userPayload", payload as UserPayload);
 	} catch (e) {
-		console.error(e);
+		// verify 抛错（签名/格式问题）→ 401；这里与上方 503 分支语义不同，
+		// 分类日志便于聚合探针把 401 上升指认到 verify 环节。
+		console.error("[auth] user token verify failed (user_api)", e);
 		return c.text(msgs.UserTokenExpiredMsg, 401)
 	}
 	if (c.req.path.startsWith("/user_api/bind_address")) {
