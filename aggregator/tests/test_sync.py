@@ -154,6 +154,111 @@ def test_sync_imap_fresh_mail_emits_no_ingest_lag_log(tmp_path, monkeypatch, cap
     assert not [r for r in caplog.records if "ingest lag" in r.getMessage()]
 
 
+def test_sync_pop3_logs_ingest_lag_for_slow_mail(tmp_path, monkeypatch, caplog):
+    """PR #169 只覆盖了 IMAP；被 pin 到 POP3 的账号收信慢时同样不可观测。
+    POP3 无 INTERNALDATE，internal_date 来自邮件 Date 头——用旧 Date 头构造慢邮件，
+    上传成功后必须同样打出 ingest lag 轨迹。"""
+    import logging
+    import time as time_mod
+    from email.utils import formatdate
+
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+
+    stale_ts = time_mod.time() - 120                  # 120s 前的 Date 头
+    pop_f = _PopFactory([("UL-1", ("From: a@b\r\nSubject: slow\r\n"
+                                   f"Date: {formatdate(stale_ts, localtime=True)}\r\n\r\nbody\r\n").encode())])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+
+    with caplog.at_level(logging.INFO, logger=sync_mod.log.name):
+        res = sync_mod.sync_account(None, _cfg([acc]), acc, state)
+
+    assert res["synced"] == 1
+    lag_messages = [r.getMessage() for r in caplog.records
+                    if "ingest lag" in r.getMessage()]
+    assert lag_messages, "slow POP3 mail must leave an ingest-lag trail"
+    assert "163-main" in lag_messages[0] and "INBOX" in lag_messages[0]
+    # Date 头构造与断言之间有秒级流逝，龄期按区间断言（120~130s）
+    import re
+    m = re.search(r"oldest mail is (\d+)s old", lag_messages[0])
+    assert m and 120 <= int(m.group(1)) <= 130, lag_messages[0]
+
+
+def test_sync_pop3_fresh_mail_emits_no_ingest_lag_log(tmp_path, monkeypatch, caplog):
+    """POP3 新鲜邮件（<60s）不得产生 ingest lag 轨迹。"""
+    import logging
+    import time as time_mod
+    from email.utils import formatdate
+
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="pop3")
+
+    fresh_ts = time_mod.time() - 2
+    pop_f = _PopFactory([("UL-1", ("From: a@b\r\nSubject: fresh\r\n"
+                                   f"Date: {formatdate(fresh_ts, localtime=True)}\r\n\r\nbody\r\n").encode())])
+    monkeypatch.setattr(sync_mod, "connect_pop3", pop_f)
+
+    with caplog.at_level(logging.INFO, logger=sync_mod.log.name):
+        res = sync_mod.sync_account(None, _cfg([acc]), acc, state)
+
+    assert res["synced"] == 1
+    assert not [r for r in caplog.records if "ingest lag" in r.getMessage()]
+
+
+def test_sync_imap_severe_ingest_lag_logs_warning(tmp_path, monkeypatch, caplog):
+    """≥300s 的严重延迟必须升级 WARNING——劣化持续时 INFO 在运维日志里不够扎眼，
+    告警/巡检一般按 WARNING 起筛。"""
+    import logging
+    import time as time_mod
+
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    stale_ms = int((time_mod.time() - 360) * 1000)    # 360s 前投递 → WARNING
+    real = sync_mod.normalize_message
+
+    def dated_norm(raw, account, folder, uidvalidity, uid, internal_date_ms, **kw):
+        return real(raw, account, folder, uidvalidity, uid, stale_ms, **kw)
+
+    monkeypatch.setattr(sync_mod, "normalize_message", dated_norm)
+    with caplog.at_level(logging.INFO, logger=sync_mod.log.name):
+        res = sync_mod.sync_account(_imap_msgs_factory([401]), _cfg([acc]), acc, state)
+
+    assert res["synced"] == 1
+    lag_records = [r for r in caplog.records if "ingest lag" in r.getMessage()]
+    assert lag_records, "severe lag must leave a trail"
+    assert lag_records[0].levelno == logging.WARNING, lag_records[0].levelname
+    assert "360" in lag_records[0].getMessage()
+
+
+def test_sync_imap_moderate_ingest_lag_stays_info(tmp_path, monkeypatch, caplog):
+    """60~300s 区间保持 INFO：结构性上界内的正常延迟不触发 WARNING 噪音。"""
+    import logging
+    import time as time_mod
+
+    calls = _stub_upload(monkeypatch)
+    state = SyncState(str(tmp_path / "st.json"))
+    acc = _acc(protocol="auto")
+
+    stale_ms = int((time_mod.time() - 120) * 1000)    # 120s → INFO
+    real = sync_mod.normalize_message
+
+    def dated_norm(raw, account, folder, uidvalidity, uid, internal_date_ms, **kw):
+        return real(raw, account, folder, uidvalidity, uid, stale_ms, **kw)
+
+    monkeypatch.setattr(sync_mod, "normalize_message", dated_norm)
+    with caplog.at_level(logging.INFO, logger=sync_mod.log.name):
+        res = sync_mod.sync_account(_imap_msgs_factory([402]), _cfg([acc]), acc, state)
+
+    assert res["synced"] == 1
+    lag_records = [r for r in caplog.records if "ingest lag" in r.getMessage()]
+    assert lag_records, "moderate lag must still leave a trail"
+    assert lag_records[0].levelno == logging.INFO, lag_records[0].levelname
+
+
 class _ImapMsgs:
     """带真实 fetch 语义的 IMAP 桩：窗口选择交给 fetch_new_messages，
     返回固定 uid 列表的 RawMessage（大小统一小字节）。"""
