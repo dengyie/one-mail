@@ -1,6 +1,7 @@
 import { Context, Hono } from "hono";
 import { handleListQuery, commonGetUserRole } from "../common";
 import { checkIsAdmin } from "../utils";
+import { isAdminLockedOut, recordAdminFailure, clearAdminFailures, getAdminFailCount } from "./admin_lockout";
 import { ingestHandler } from "./ingest";
 import { countEmails, statsEmails, verifCodes, getMetaOptions } from "./extra_endpoints";
 import {
@@ -60,6 +61,7 @@ const api = new Hono<HonoCustomType>();
 // 均不满足 → 401。
 api.use("/api/unified/*", async (c, next) => {
     const userToken = c.req.raw.headers.get("x-user-token");
+    const hasAdminAuthHeader = !!c.req.raw.headers.get("x-admin-auth");
     if (userToken) {
         // worker.ts has already verified the signature, expiry, and the
         // user_id + user_email identity binding before this route runs.
@@ -85,8 +87,21 @@ api.use("/api/unified/*", async (c, next) => {
         try {
             userRole = (await commonGetUserRole(c, payload!.user_id))?.role ?? null;
             isAdmin = !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
-            if (!isAdmin && (await checkIsAdmin(c))) {
-                isAdmin = true;
+            if (!isAdmin && hasAdminAuthHeader) {
+                // 复合提权通道（普通用户 token + x-admin-auth）与 /admin/* 的头通道
+                // 共用同一锁定桶：密码对 → 提权并清零；密码错 → 记一次失败但仍以
+                // 普通用户身份继续（响应内容含角色信号，不能给爆破者免计费的
+                // 试错预言机，也不能因管理密码失效把正常用户会话踢下线）。
+                // 锁定门 fail-closed：锁定或 KV 不可达时不提权（isAdmin 保持 false），
+                // 不破坏普通用户会话，仅拒绝本次提权。
+                if (await isAdminLockedOut(c)) {
+                    console.error("[unified] admin escalation blocked (lockout or KV unavailable)");
+                } else if (await checkIsAdmin(c)) {
+                    isAdmin = true;
+                    await clearAdminFailures(c, await getAdminFailCount(c));
+                } else {
+                    await recordAdminFailure(c);
+                }
             }
         } catch (e) {
             console.error("[unified] user role lookup failed (DB transient?)", e);

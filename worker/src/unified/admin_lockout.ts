@@ -71,6 +71,10 @@ export const clearAdminFailures = async (
 };
 
 // 是否锁定（≥MAX 或 KV 不可达）。admin 面 fail-closed。
+// 统一收件箱复合提权通道（普通用户 token + x-admin-auth，unified/index.ts）
+// 也复用本函数作为提权锁定门：与 /admin/* 共用同一 IP 失败桶。差别仅在失败
+// 后果——提权通道不返回 429（否则管理密码失效会把正常用户会话一并踢下线），
+// 只拒绝提权，响应按普通用户继续。
 export const isAdminLockedOut = async (c: Context): Promise<boolean> => {
     const count = await getAdminFailCount(c);
     return count < 0 || count >= MAX_FAILURES;

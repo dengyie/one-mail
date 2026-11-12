@@ -36,7 +36,14 @@ gh run view "$RUN_ID" --log | grep -vE '\^' | grep -E 'status=|total=|requests='
 | `http=503 requests=N` | D1 瞬时故障走了新兜底(可重试、不清凭据) | 偶发正常(用户界面短暂降级自动恢复);**反复大量出现 = D1 不稳定,查 d1-backup/配额** |
 | `http=500 requests=N` | Worker 内部错误(鉴权链外通道或未处理异常) | 需定位端点,见 §4 |
 | `errors=N (sum.errors)` | Worker 抛了未捕获异常 | >0 必查,配合实时 tail |
-| `hourly timeline` errors>0 的时段 | 错误集中出现时间 | 与部署/备份/配额事件对时间线 |
+| `hourly timeline` errors>0 的时段 | 错误集中出现时间(按脚本分行) | 与部署/备份/配额事件对时间线 |
+
+复合提权通道(普通用户 token + x-admin-auth)自 PR #176 起与 `/admin/*` 共用
+同一 IP 失败锁定桶:管理密码错 → 记一次失败并拒绝提权(响应仍按普通用户
+继续,不破坏会话);锁定后提权被拒直至 15min 窗口过期。日志标志:
+`[unified] admin escalation blocked (lockout or KV unavailable)`。
+verify 抛错(签名/格式问题)有分类日志 `[auth] user token verify failed`,
+可把聚合探针的 401 上升指认到 verify 环节。
 
 已知正常现象:**每天本地 03:10** 前后可能有一小批 500(`folders ingest`/
 `refresh_token write-back`/`mail_accounts` 等)——d1-backup 在 03:10 做 D1

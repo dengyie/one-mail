@@ -344,3 +344,22 @@ test("liveness unknown does not affect pure x-admin-auth header channel", async 
   assert.equal(d.relay, true);
   assert.equal(d.status, 0);
 });
+
+// 统一收件箱复合提权通道（unified/index.ts）的锁定门回归：与 /admin/* 共用
+// 同一 IP 失败桶，isAdminLockedOut 是唯一的门判定。锁定 → 提权被拒（isAdmin
+// 保持 false），但通道本身不 429，普通用户会话照常。
+test("escalation lockout door: window at MAX blocks unified escalation", async () => {
+  const kv = new MemoryKV();
+  const c = makeCtx(kv);
+  for (let i = 0; i < 10; i++) await recordAdminFailure(c);
+  assert.equal(await isAdminLockedOut(c), true);
+});
+
+test("escalation lockout door: KV unavailable fails closed (locked)", async () => {
+  const brokenKV = { get: async () => { throw new Error("kv down"); } };
+  assert.equal(await isAdminLockedOut(makeCtx(brokenKV)), true);
+});
+
+test("escalation lockout door: healthy KV with zero failures does not block", async () => {
+  assert.equal(await isAdminLockedOut(makeCtx(new MemoryKV())), false);
+});
