@@ -1,4 +1,5 @@
 import logging
+import time
 
 from imapclient import IMAPClient
 from imapclient.exceptions import IMAPClientAbortError, IMAPClientError
@@ -19,6 +20,29 @@ from .proxy_client import (
 from .folder_catalog import maybe_sync_imap_folder_catalog
 
 log = logging.getLogger("one-mail-agg")
+
+# 单封邮件「投递→入库」的可观测阈值。收信劣化复盘（2026-11-11/12）每次都要
+# SSH + D1 手工对账 internal_date 才能算出延迟；超过该龄期的批次直接在日志里
+# 留可 grep 的 INFO 轨迹（mail_age = now - min(internal_date)，整批最老的那封，
+# 才能代表 worst-case 投递延迟）。
+_INGEST_LAG_LOG_THRESHOLD_SECONDS = 60.0
+
+
+def _log_ingest_lag(account_id: str, batch: list[dict], folder_hint: str | None = None) -> None:
+    """上传成功后按批次内最小 internal_date 报告最老邮件的龄期（仅超阈值时）。"""
+    if not batch:
+        return
+    # 过滤掉缺失/为 0 的 internal_date：min 对单个脏行极其敏感（0 会吞掉整批信号）。
+    timestamps = [row.get("internal_date") for row in batch
+                  if isinstance(row, dict) and row.get("internal_date")]
+    if not timestamps:
+        return
+    age_seconds = max(0.0, time.time() * 1000 - min(timestamps)) / 1000.0
+    if age_seconds < _INGEST_LAG_LOG_THRESHOLD_SECONDS:
+        return
+    suffix = f" folder={folder_hint}" if folder_hint else ""
+    log.info("ingest lag account=%s%s: oldest mail is %.0fs old (delivered -> stored)",
+             account_id, suffix, age_seconds)
 
 
 def _imap_fallback_allowed(error: Exception) -> bool:
@@ -127,6 +151,7 @@ def sync_imap(
                 if batch:
                     upload_emails(config, batch)
                     total += len(batch)
+                    _log_ingest_lag(account.id, batch, folder_hint=folder)
                 # upload 成功后才推进；set_last_uid_max 同时保留 fetch 层已推进的已知超限 UID。
                 state.set_last_uid_max(account.id, folder, max(m.uid for m in msgs))
         except Exception as error:
