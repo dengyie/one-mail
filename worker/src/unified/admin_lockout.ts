@@ -105,15 +105,19 @@ export type AdminAuthCheckInput = {
   disableAdminPasswordCheck: boolean;
   // x-user-access-token verify 结果；null = verify 抛错（签名无效）。
   accessTokenPayload: { exp?: number; user_role?: unknown } | null;
+  // isActiveUser 返回 null（D1 瞬时故障，存活未知）。此时请求必须被拒绝
+  // （fail-closed，绝不放行），但不得计入 IP 失败桶：D1 抖动 + 纯 token
+  // 管理员浏览 admin 页若连续计失败，会在 15min 内把合法管理员 429 锁死。
+  livenessUnknown?: boolean;
 };
 
 export type AdminAuthDecision =
   | { relay: true; status: 0 }
   | {
       relay: false;
-      status: number;          // 401 | 429
+      status: number;          // 401 | 429 | 503
       recordFailure: boolean;  // 是否记录一次失败（计入同一 IP 失败桶）
-      kind: "rate_limit" | "access_token_expired" | "role_not_admin" | "need_admin_password";
+      kind: "rate_limit" | "access_token_expired" | "role_not_admin" | "need_admin_password" | "db_unavailable";
     };
 
 export const decideAdminAuth = (input: AdminAuthCheckInput): AdminAuthDecision => {
@@ -131,6 +135,13 @@ export const decideAdminAuth = (input: AdminAuthCheckInput): AdminAuthDecision =
 
   // 记录头通道失败（x-admin-auth 校验不过且携带该头）
   let recordFailure = input.hasAdminAuth;
+
+  // (3.5) liveness 未知（D1 瞬时故障）：拒绝但不算失败。放在所有凭据判定之前：
+  // 存活未知时既不能放行（fail-closed），也不能把后端故障记成用户爆破行为。
+  // 仅影响携带 token 的请求；纯 x-admin-auth 头通道不查 D1，不受此标志影响。
+  if (input.livenessUnknown && input.hasAccessToken) {
+    return { relay: false, status: 503, recordFailure: false, kind: "db_unavailable" };
+  }
 
   // (3) R2：user-role 兜底不再放行授权面
   if (input.adminUserRole && input.hasAccessToken) {
