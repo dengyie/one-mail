@@ -22,6 +22,7 @@ from .config import AccountConfig
 from .oauth import oauth_client_factory
 from .proxy_client import (
     create_socks5_socket,
+    get_socks5_proxy,
     OVERSEAS_SMTP_HOSTS,
     is_overseas_smtp_host,
     should_use_proxy,
@@ -86,22 +87,24 @@ def _use_proxy(host: str, proxy_policy: str = "auto") -> bool:
 class _ProxySMTP_SSL(smtplib.SMTP_SSL):
     """SMTP_SSL whose TCP socket is established through the local SOCKS5 proxy."""
 
-    proxy_host: str = "127.0.0.1"
-    proxy_port: int = 1080
+    proxy_host: str | None = None
+    proxy_port: int | None = None
 
     def _get_socket(self, host, port, timeout):
-        raw = create_socks5_socket(self.proxy_host, self.proxy_port, host, port, timeout)
+        p_host, p_port = (self.proxy_host, self.proxy_port) if self.proxy_host else get_socks5_proxy()
+        raw = create_socks5_socket(p_host, p_port, host, port, timeout)
         return self.context.wrap_socket(raw, server_hostname=host)
 
 
 class _ProxySMTP(smtplib.SMTP):
     """Plain SMTP (STARTTLS upgrade path) whose socket goes through SOCKS5."""
 
-    proxy_host: str = "127.0.0.1"
-    proxy_port: int = 1080
+    proxy_host: str | None = None
+    proxy_port: int | None = None
 
     def _get_socket(self, host, port, timeout):
-        return create_socks5_socket(self.proxy_host, self.proxy_port, host, port, timeout)
+        p_host, p_port = (self.proxy_host, self.proxy_port) if self.proxy_host else get_socks5_proxy()
+        return create_socks5_socket(p_host, p_port, host, port, timeout)
 
 
 def _connect_smtp_ssl(host: str, port: int, timeout: float, proxy_policy: str = "auto") -> smtplib.SMTP_SSL:
