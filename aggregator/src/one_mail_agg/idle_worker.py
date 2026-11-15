@@ -11,7 +11,7 @@ from .sync import sync_imap, sync_warning, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .remote_accounts import report_sync_status
 from .uploader import quota_retry_at
-from .proxy_client import OVERSEAS_IMAP_HOSTS, is_overseas_imap_host
+from .proxy_client import OVERSEAS_IMAP_HOSTS, get_socks5_proxy, is_overseas_imap_host, probe_socks5_proxy
 
 log = logging.getLogger("one-mail-agg")
 
@@ -361,6 +361,15 @@ class ImapIdleWorker(threading.Thread):
                     except Exception:
                         pass
                     client = None
+
+                # 区分「本地隧道口死了」与「上游邮箱不可达」：ConnectionRefused
+                # 多半是 1080 隧道未监听，一次毫秒级 probe 就能定性。
+                if isinstance(e, ConnectionRefusedError) and not probe_socks5_proxy():
+                    log.warning(
+                        "Account %s SOCKS5 tunnel %s:%d is down (probe refused); "
+                        "overseas IMAP cannot recover until the tunnel is restored",
+                        self.account.id, *get_socks5_proxy(),
+                    )
 
                 retry_at = quota_retry_at(e)
                 if retry_at is not None:

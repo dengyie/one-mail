@@ -25,6 +25,8 @@ from urllib.parse import urlparse
 # The local SOCKS5 tunnel used for overseas IMAP hosts and the local proxy (Mihomo)
 # are the only loopback destinations the aggregator may connect to.
 # Precise host:port exceptions, never a whole loopback range.
+# The tunnel port follows ONE_MAIL_SOCKS5_PROXY (see proxy_client.get_socks5_proxy);
+# 1080 is the pxed default and stays allowed so a stale env cannot lock egress out.
 _SOCKS_LOOPBACK = (ipaddress.ip_address("127.0.0.1"), 1080)
 _DEFAULT_ALLOWED_LOOPBACKS: set[tuple[ipaddress._BaseAddress, int]] = {
     _SOCKS_LOOPBACK,                             # Local SOCKS5 tunnel for overseas IMAP (Google Cloud VPS)
@@ -43,6 +45,17 @@ def _refresh_allowed_loopbacks() -> None:
     """
     global _ALLOWED_LOOPBACKS
     new_allowed = set(_DEFAULT_ALLOWED_LOOPBACKS)
+    # ONE_MAIL_SOCKS5_PROXY may relocate the overseas tunnel; allow its loopback
+    # listener alongside the built-in defaults (1080/7897 are never revoked).
+    socks_raw = os.environ.get("ONE_MAIL_SOCKS5_PROXY", "").strip()
+    if socks_raw:
+        try:
+            host, _, port = socks_raw.rpartition(":")
+            if port and int(port) and host in ("127.0.0.1", "localhost", "::1", ""):
+                new_allowed.add((ipaddress.ip_address("127.0.0.1"), int(port)))
+                new_allowed.add((ipaddress.ip_address("::1"), int(port)))
+        except (ValueError, ipaddress.AddressValueError):
+            pass
     for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         val = os.environ.get(var, "").strip()
         if not val:

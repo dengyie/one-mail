@@ -1,6 +1,7 @@
 import { Context, Hono } from "hono";
 import { handleListQuery, commonGetUserRole } from "../common";
 import { checkIsAdmin } from "../utils";
+import { isAdminLockedOut, recordAdminFailure, clearAdminFailures, getAdminFailCount } from "./admin_lockout";
 import { ingestHandler } from "./ingest";
 import { countEmails, statsEmails, verifCodes, getMetaOptions } from "./extra_endpoints";
 import {
@@ -47,6 +48,7 @@ import {
 } from "../quota.ts";
 import { attachmentDownloadRateLimit, downloadAttachment, uploadAttachment } from "./attachment_routes.ts";
 import { publicAttachmentJson, safeAttachmentId } from "./attachments.ts";
+import { decideUserTokenAuth } from "./user_token_auth.ts";
 
 const api = new Hono<HonoCustomType>();
 
@@ -59,27 +61,55 @@ const api = new Hono<HonoCustomType>();
 // 均不满足 → 401。
 api.use("/api/unified/*", async (c, next) => {
     const userToken = c.req.raw.headers.get("x-user-token");
+    const hasAdminAuthHeader = !!c.req.raw.headers.get("x-admin-auth");
     if (userToken) {
         // worker.ts has already verified the signature, expiry, and the
         // user_id + user_email identity binding before this route runs.
         const payload = c.get("userPayload") as UserPayload | undefined;
-        if (!payload || !payload.exp || payload.exp < Math.floor(Date.now() / 1000)) {
-            return c.json({ error: "invalid user token" }, 401);
+        const decision = decideUserTokenAuth({
+            hasUserToken: true,
+            hasPayload: !!payload,
+            payloadExpired: !!payload && (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)),
+            livenessUnknown: c.get("userTokenDbError") === true,
+        });
+        if (!decision.relay) {
+            // 401 = 凭据真的失效（前端自愈清凭据）；503 = D1 瞬时故障（可重试，
+            // 前端不清凭据）。分界逻辑见 user_token_auth.ts 的单测。
+            return c.json({ error: decision.error }, decision.status);
         }
+        // 角色只查一次并放入上下文：权限和资源配额必须使用同一事实来源。
+        // 不再预取用户所有地址/邮箱账号，避免随着租户资源增加构造越来越大的 IN 列表。
+        // 只包住 D1/Crypto 查询本身：下游 handler（await next()）抛出的异常是
+        // 另一类错误，必须交给 app.onError 返回 500，而不是在这里被误标成
+        // "database temporarily unavailable"（PR #172 review P2）。
+        let userRole: string | null;
+        let isAdmin: boolean;
         try {
-            // 角色只查一次并放入上下文：权限和资源配额必须使用同一事实来源。
-            // 不再预取用户所有地址/邮箱账号，避免随着租户资源增加构造越来越大的 IN 列表。
-            const userRole = (await commonGetUserRole(c, payload.user_id))?.role ?? null;
-            let isAdmin = !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
-            if (!isAdmin && (await checkIsAdmin(c))) {
-                isAdmin = true;
+            userRole = (await commonGetUserRole(c, payload!.user_id))?.role ?? null;
+            isAdmin = !!c.env.ADMIN_USER_ROLE && userRole === c.env.ADMIN_USER_ROLE;
+            if (!isAdmin && hasAdminAuthHeader) {
+                // 复合提权通道（普通用户 token + x-admin-auth）与 /admin/* 的头通道
+                // 共用同一锁定桶：密码对 → 提权并清零；密码错 → 记一次失败但仍以
+                // 普通用户身份继续（响应内容含角色信号，不能给爆破者免计费的
+                // 试错预言机，也不能因管理密码失效把正常用户会话踢下线）。
+                // 锁定门 fail-closed：锁定或 KV 不可达时不提权（isAdmin 保持 false），
+                // 不破坏普通用户会话，仅拒绝本次提权。
+                if (await isAdminLockedOut(c)) {
+                    console.error("[unified] admin escalation blocked (lockout or KV unavailable)");
+                } else if (await checkIsAdmin(c)) {
+                    isAdmin = true;
+                    await clearAdminFailures(c, await getAdminFailCount(c));
+                } else {
+                    await recordAdminFailure(c);
+                }
             }
-            c.set("unifiedUserAuth", { userPayload: payload, isAdmin, userRole });
-            await next();
-            return;
-        } catch {
-            return c.json({ error: "invalid user token" }, 401);
+        } catch (e) {
+            console.error("[unified] user role lookup failed (DB transient?)", e);
+            return c.json({ error: "database temporarily unavailable" }, 503);
         }
+        c.set("unifiedUserAuth", { userPayload: payload!, isAdmin, userRole });
+        await next();
+        return;
     }
 
     // 回退：x-admin-auth 管理密码通道（管理员后台/运维直接凭管理密码访问统一收件箱与域名邮箱）

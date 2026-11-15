@@ -291,3 +291,75 @@ test("R2: correct admin token clears failures via caller contract", async () => 
   // 正确 admin 头命中后清零 → 之后错误不再 429
   assert.equal(await isAdminLockedOut(c), false);
 });
+
+test("liveness unknown (D1 transient) → 503 for token-only admin, no failure recorded", async () => {
+  const d = decideAdminAuth({
+    hasAdminAuth: false,
+    hasAccessToken: true,
+    adminAuthValid: false,
+    adminFailCount: 0,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: { exp: 0, user_role: "admin" }, // 过期哨兵
+    livenessUnknown: true,
+  });
+  // 存活未知 = 拒绝（fail-closed）但不计失败：否则 D1 抖动会把纯 token
+  // 管理员 15min 内 429 锁死。
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 503);
+  assert.equal(d.kind, "db_unavailable");
+  assert.equal(d.recordFailure, false);
+});
+
+test("liveness unknown with DISABLE_ADMIN_PASSWORD_CHECK still rejects (fail-closed)", async () => {
+  // 逃生舱在 liveness 判定之后：存活未知时即使配置了 bypass 也不放行，
+  // 因为无法确认 token 指向的用户仍然存活。
+  const d = decideAdminAuth({
+    hasAdminAuth: false,
+    hasAccessToken: true,
+    adminAuthValid: false,
+    adminFailCount: 0,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: true,
+    accessTokenPayload: { exp: 0, user_role: "admin" },
+    livenessUnknown: true,
+  });
+  assert.equal(d.relay, false);
+  assert.equal(d.status, 503);
+  assert.equal(d.recordFailure, false);
+});
+
+test("liveness unknown does not affect pure x-admin-auth header channel", async () => {
+  // 头通道不查 D1：即使标志误置，正确的管理密码照常放行。
+  const d = decideAdminAuth({
+    hasAdminAuth: true,
+    hasAccessToken: false,
+    adminAuthValid: true,
+    adminFailCount: 0,
+    adminUserRole: "admin",
+    disableAdminPasswordCheck: false,
+    accessTokenPayload: null,
+    livenessUnknown: true,
+  });
+  assert.equal(d.relay, true);
+  assert.equal(d.status, 0);
+});
+
+// 统一收件箱复合提权通道（unified/index.ts）的锁定门回归：与 /admin/* 共用
+// 同一 IP 失败桶，isAdminLockedOut 是唯一的门判定。锁定 → 提权被拒（isAdmin
+// 保持 false），但通道本身不 429，普通用户会话照常。
+test("escalation lockout door: window at MAX blocks unified escalation", async () => {
+  const kv = new MemoryKV();
+  const c = makeCtx(kv);
+  for (let i = 0; i < 10; i++) await recordAdminFailure(c);
+  assert.equal(await isAdminLockedOut(c), true);
+});
+
+test("escalation lockout door: KV unavailable fails closed (locked)", async () => {
+  const brokenKV = { get: async () => { throw new Error("kv down"); } };
+  assert.equal(await isAdminLockedOut(makeCtx(brokenKV)), true);
+});
+
+test("escalation lockout door: healthy KV with zero failures does not block", async () => {
+  assert.equal(await isAdminLockedOut(makeCtx(new MemoryKV())), false);
+});

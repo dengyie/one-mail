@@ -147,12 +147,23 @@ const checkUserPayload = async (
 		}
 		// Bind the token to both immutable identity attributes. Checking only the
 		// numeric id would let a deleted user's token follow a reused row id.
-		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
+		// null = the DB itself failed (transient), not an invalid credential:
+		// flag it so downstream unified routes answer 503 instead of 401 —
+		// otherwise a D1 hiccup would make the frontend clear a valid token.
+		const active = await isActiveUser(c.env.DB, payload.user_id, payload.user_email);
+		if (active === null) {
+			console.error("[auth] liveness check unavailable (DB transient failure)");
+			c.set("userTokenDbError", true);
+			return;
+		}
+		if (!active) {
 			return;
 		}
 		c.set("userPayload", payload as UserPayload);
 	} catch (e) {
-		console.error(e);
+		// 分类日志：签名伪造/格式损坏会走到这里，线上聚合探针只能看到 401
+		// 计数，无法区分「凭据真的失效」与「verify 内部异常」——留一行指认。
+		console.error("[auth] user token verify failed", e);
 	}
 }
 
@@ -170,12 +181,15 @@ const checkoutUserRolePayload = async (
 			return;
 		}
 		if (typeof payload?.user_role !== "string") return;
+		// isActiveUser 三态在此有意折叠为布尔：access_token 只是 UX 信号
+		// （角色前缀/角色徽标），无论「确认无效(false)」还是「无法判定(null)」
+		// 都直接跳过、走默认前缀兜底，不影响任何授权面。
 		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
 			return;
 		}
 		c.set("userRolePayload", payload.user_role);
 	} catch (e) {
-		console.error(e);
+		console.error("[auth] access token verify failed (UX role signal skipped)", e);
 	}
 }
 
@@ -258,12 +272,21 @@ app.use('/user_api/*', async (c, next) => {
 		if (payload.exp < Math.floor(Date.now() / 1000)) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
-		if (!(await isActiveUser(c.env.DB, payload.user_id, payload.user_email))) {
+		// null = D1 瞬时故障，存活状态未知：503（可重试）而非 401，避免前端
+		// 自愈逻辑把有效 token 当失效清空、把用户踢回登录页。
+		const active = await isActiveUser(c.env.DB, payload.user_id, payload.user_email);
+		if (active === null) {
+			console.error("[auth] user liveness check unavailable (DB transient failure)");
+			return c.text(msgs.DBNotAvailableMsg, 503)
+		}
+		if (!active) {
 			return c.text(msgs.UserTokenExpiredMsg, 401)
 		}
 		c.set("userPayload", payload as UserPayload);
 	} catch (e) {
-		console.error(e);
+		// verify 抛错（签名/格式问题）→ 401；这里与上方 503 分支语义不同，
+		// 分类日志便于聚合探针把 401 上升指认到 verify 环节。
+		console.error("[auth] user token verify failed (user_api)", e);
 		return c.text(msgs.UserTokenExpiredMsg, 401)
 	}
 	if (c.req.path.startsWith("/user_api/bind_address")) {
@@ -294,18 +317,29 @@ app.use('/admin/*', async (c, next) => {
 
 	// 解析 x-user-access-token（verify 抛错 -> null，交由 decideAdminAuth 处理）
 	let accessTokenPayload: { exp?: number; user_role?: unknown; user_id?: unknown; user_email?: unknown } | null = null;
+	// isActiveUser 返回 null（D1 瞬时故障，存活未知）→ decideAdminAuth 拒绝但
+	// 不记 IP 失败（否则 D1 抖动会把纯 token 管理员 15min 内 429 锁死）。
+	let tokenLivenessUnknown = false;
 	if (hasAccessToken) {
 		try {
 			const raw = c.req.raw.headers.get("x-user-access-token") as string;
 			const verifiedPayload = await Jwt.verify(raw, c.env.JWT_SECRET, "HS256") as {
 				exp?: number; user_role?: unknown; user_id?: unknown; user_email?: unknown;
 			};
-			// A signed token must still reference a live user. Use an expired
-			// sentinel instead of null so decideAdminAuth cannot fall through to
-			// the operator bypass when a revoked role token is presented.
-			accessTokenPayload = await isActiveUser(c.env.DB, verifiedPayload.user_id, verifiedPayload.user_email)
-				? verifiedPayload
-				: { exp: 0, user_role: verifiedPayload.user_role };
+			const active = await isActiveUser(c.env.DB, verifiedPayload.user_id, verifiedPayload.user_email);
+			if (active === null) {
+				tokenLivenessUnknown = true;
+				// Expired sentinel keeps decideAdminAuth from falling through to
+				// the operator bypass when a revoked role token is presented.
+				accessTokenPayload = { exp: 0, user_role: verifiedPayload.user_role };
+			} else {
+				// A signed token must still reference a live user. Use an expired
+				// sentinel instead of null so decideAdminAuth cannot fall through to
+				// the operator bypass when a revoked role token is presented.
+				accessTokenPayload = active
+					? verifiedPayload
+					: { exp: 0, user_role: verifiedPayload.user_role };
+			}
 		} catch { /* verify 抛错 -> null */ }
 	}
 
@@ -321,6 +355,7 @@ app.use('/admin/*', async (c, next) => {
 		adminUserRole: c.env.ADMIN_USER_ROLE,
 		disableAdminPasswordCheck: getBooleanValue(c.env.DISABLE_ADMIN_PASSWORD_CHECK),
 		accessTokenPayload,
+		livenessUnknown: tokenLivenessUnknown,
 	});
 
 	if (decision.relay) {
@@ -348,14 +383,19 @@ app.use('/admin/*', async (c, next) => {
 		case "role_not_admin":
 			body = msgs.UserRoleIsNotAdminMsg;
 			break;
+		case "db_unavailable":
+			body = msgs.DBNotAvailableMsg;
+			break;
 		default:
 			body = msgs.NeedAdminPasswordMsg;
 	}
-		let finalStatus: 401 | 403 | 429 = 401;
+		let finalStatus: 401 | 403 | 429 | 503 = 401;
 		if (decision.kind === "role_not_admin") {
 			finalStatus = 403;
 		} else if (decision.kind === "rate_limit") {
 			finalStatus = 429;
+		} else if (decision.kind === "db_unavailable") {
+			finalStatus = 503;
 		}
 		return c.text(body, finalStatus);
 });

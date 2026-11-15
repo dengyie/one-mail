@@ -1,4 +1,5 @@
 import logging
+import os
 import socket
 import ssl
 import imaplib
@@ -25,6 +26,40 @@ OVERSEAS_SMTP_HOSTS = {
 }
 
 DEFAULT_SOCKS5_PROXY = ("127.0.0.1", 1080)
+SOCKS5_PROXY_ENV = "ONE_MAIL_SOCKS5_PROXY"
+
+
+def get_socks5_proxy() -> tuple[str, int]:
+    """海外出站 SOCKS5 代理的唯一配置源。
+
+    通过 ``ONE_MAIL_SOCKS5_PROXY``（``host:port``）可整体切换出口；
+    缺省保持 pxed 本地 ssh -D 隧道 ``127.0.0.1:1080``。egress_guard 的
+    loopback 白名单与 IMAP/SMTP 客户端默认值都从这里取，改一处即全局生效。
+    """
+    raw = os.environ.get(SOCKS5_PROXY_ENV, "").strip()
+    if not raw:
+        return DEFAULT_SOCKS5_PROXY
+    host, _, port = raw.rpartition(":")
+    try:
+        return (host or DEFAULT_SOCKS5_PROXY[0], int(port) if port else DEFAULT_SOCKS5_PROXY[1])
+    except ValueError:
+        log.warning("Invalid %s=%r; falling back to %s:%d",
+                    SOCKS5_PROXY_ENV, raw, *DEFAULT_SOCKS5_PROXY)
+        return DEFAULT_SOCKS5_PROXY
+
+
+def probe_socks5_proxy(timeout: float = 2.0) -> bool:
+    """探测 SOCKS5 代理端口是否可连（廉价 TCP probe，refused 毫秒级返回）。
+
+    供重连路径在退避等待前区分「隧道口死了」与「上游邮箱不可达」：
+    探测失败时调用方给出指向性诊断，避免误判为邮箱服务端故障。
+    """
+    host, port = get_socks5_proxy()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 # 运行时自愈代理缓存：若直连受阻/握手降级，自动记录该域名走代理隧道
 _AUTO_PROXY_FALLBACK_CACHE: set[str] = set()
@@ -116,13 +151,14 @@ def create_socks5_socket(
 class SOCKS5IMAP4_SSL(imaplib.IMAP4_SSL):
     """支持走 SOCKS5 代理的 IMAP4_SSL 客户端。"""
 
-    proxy_host: str = "127.0.0.1"
-    proxy_port: int = 1080
+    proxy_host: str | None = None
+    proxy_port: int | None = None
 
     def _create_socket(self, timeout=None):
+        host, port = (self.proxy_host, self.proxy_port) if self.proxy_host else get_socks5_proxy()
         raw_sock = create_socks5_socket(
-            self.proxy_host,
-            self.proxy_port,
+            host,
+            port,
             self.host,
             self.port,
             timeout=30.0,
@@ -133,7 +169,9 @@ class SOCKS5IMAP4_SSL(imaplib.IMAP4_SSL):
 class ProxiedIMAPClient(IMAPClient):
     """在需要海外代理出站时使用的 IMAPClient。"""
 
-    def __init__(self, *args, proxy_host: str = "127.0.0.1", proxy_port: int = 1080, **kwargs):
+    def __init__(self, *args, proxy_host: str | None = None, proxy_port: int | None = None, **kwargs):
+        if proxy_host is None:
+            proxy_host, proxy_port = get_socks5_proxy()
         self.proxy_host = proxy_host
         self.proxy_port = proxy_port
         super().__init__(*args, **kwargs)

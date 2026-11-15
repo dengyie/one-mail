@@ -44,7 +44,10 @@ test("legacy token without email and malformed IDs fail closed", async () => {
   assert.equal(db.calls.length, 0);
 });
 
-test("database errors fail closed", async () => {
+test("database errors are reported as unknown (null), not invalid credential", async () => {
   const db = makeDb(null, async () => { throw new Error("d1 down"); });
-  assert.equal(await isActiveUser(db, 7, "alice@example.com"), false);
+  assert.equal(await isActiveUser(db, 7, "alice@example.com"), null);
+  // A structurally broken token still fails closed even when the DB is down.
+  assert.equal(await isActiveUser(null, 7, "alice@example.com"), false);
+  assert.equal(await isActiveUser(db, 7, undefined), false);
 });
