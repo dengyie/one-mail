@@ -65,6 +65,9 @@ const createNewAddress = async (c: Context<HonoCustomType>) => {
             addressPrefix: null,
             checkAllowDomains: false,
             enableCheckNameRegex: false,
+            // admin 指定的 name 必须与落库一致：宽松白名单通过即原样落库，不 strip
+            // （strip 曾把带点地址静默改写，收信按 name 精确匹配 → 收信黑洞）。
+            preserveName: true,
             sourceMeta: 'admin'
         });
         return c.json(res);

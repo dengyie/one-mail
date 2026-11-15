@@ -128,4 +128,36 @@ test.describe('Admin New Address', () => {
     expect(addressBody.jwt).toBeTruthy();
     expect(addressBody.address_id).toBeGreaterThan(0);
   });
+
+  test('preserves dotted admin names verbatim in response and database', async ({ request }) => {
+    const uniqueName = `e2e.dot.test${Date.now()}`;
+    const res = await request.post(`${WORKER_URL}/admin/new_address`, {
+      data: { name: uniqueName, domain: TEST_DOMAIN },
+    });
+
+    expect(res.ok()).toBe(true);
+    const body = await res.json();
+    const expectedAddress = `${uniqueName}@${TEST_DOMAIN}`;
+
+    // The receive path matches addresses by exact name, so the response address
+    // and the stored name must both be the verbatim dotted address.
+    expect(body.address).toBe(expectedAddress);
+
+    const listRes = await request.get(`${WORKER_URL}/admin/address`, {
+      params: { limit: '5', offset: '0', query: uniqueName },
+    });
+    expect(listRes.ok()).toBe(true);
+    const listBody = await listRes.json();
+    const stored = listBody.results.find((row: { name: string }) => row.name === expectedAddress);
+    expect(stored).toBeTruthy();
+  });
+
+  test('rejects admin names outside the lenient whitelist explicitly', async ({ request }) => {
+    const res = await request.post(`${WORKER_URL}/admin/new_address`, {
+      data: { name: `bad name ${Date.now()}`, domain: TEST_DOMAIN },
+    });
+
+    expect(res.status()).toBe(400);
+    expect(await res.text()).toContain('Name only allows');
+  });
 });
