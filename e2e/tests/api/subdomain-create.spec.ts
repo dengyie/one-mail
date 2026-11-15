@@ -122,7 +122,10 @@ test.describe('Create Address Subdomain Match', () => {
   test('persisted false still keeps exact match only', async ({ request }) => {
     await saveSubdomainMatchSetting(request, CREATE_ADDRESS_WORKER_URL, false);
 
-    const uniqueName = `subdomain-default-${Date.now()}`;
+    // keep the name within the 30-char limit: admin names are stored verbatim
+    // now, so a name over the limit fails with "Name is too long" before the
+    // domain check this test asserts
+    const uniqueName = `subdef${Date.now()}`;
     const res = await request.post(`${CREATE_ADDRESS_WORKER_URL}/admin/new_address`, {
       data: { name: uniqueName, domain: SUBDOMAIN },
     });
@@ -189,8 +192,11 @@ test.describe('Create Address Subdomain Match', () => {
 
     await saveSubdomainMatchSetting(request, WORKER_URL_ENV_OFF, true);
 
+    // keep the name within the 30-char limit: admin names are stored verbatim
+    // now, so a name over the limit fails with "Name is too long" before the
+    // domain check this test asserts
     const res = await request.post(`${WORKER_URL_ENV_OFF}/admin/new_address`, {
-      data: { name: `subdomain-env-off-${Date.now()}`, domain: SUBDOMAIN },
+      data: { name: `subenvoff${Date.now()}`, domain: SUBDOMAIN },
     });
     expect(res.ok()).toBe(false);
     expect(await res.text()).toContain('Invalid domain');
