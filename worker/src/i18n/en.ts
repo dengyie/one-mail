@@ -60,6 +60,7 @@ const messages: LocaleMessages = {
     InvalidDomainMsg: "Invalid domain",
     RandomSubdomainNotAllowedMsg: "Random subdomain is not enabled for this domain",
     AddressAlreadyExistsMsg: "Address already exists",
+    AdminNameNotAllowedMsg: "Name only allows lowercase letters, digits, dot, underscore and hyphen",
     MaxAddressCountReachedMsg: "Max address count reached",
     AddressNotBindedMsg: "Address is not binded",
     AddressAlreadyBindedMsg: "Address is already binded, please unbind first",

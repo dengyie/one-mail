@@ -60,6 +60,7 @@ const messages: LocaleMessages = {
     InvalidDomainMsg: "无效的域名",
     RandomSubdomainNotAllowedMsg: "当前域名未启用随机子域名",
     AddressAlreadyExistsMsg: "邮箱地址已存在",
+    AdminNameNotAllowedMsg: "名称仅允许小写字母、数字、点、下划线和连字符",
     MaxAddressCountReachedMsg: "已达到最大地址数量限制",
     AddressNotBindedMsg: "邮箱地址未绑定",
     AddressAlreadyBindedMsg: "邮箱地址已绑定, 请先解绑",

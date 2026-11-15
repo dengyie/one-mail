@@ -63,3 +63,70 @@ test('admin deleteAddress refuses external reference rows and touches nothing', 
     assert.equal(response.status, 404);
     assert.equal(db.batchCalls, 0);
 });
+
+// Admin-specified names must land verbatim: the receive path matches addresses
+// by exact name, so a silently stripped name (e.g. dots removed from
+// iris.finch28) turns the requested address into a mail blackhole.
+const makeCreateDb = () => {
+    const inserts = [];
+    return {
+        inserts,
+        prepare(sql) {
+            let args = null;
+            return {
+                sql,
+                bind(...bound) { args = bound; return this; },
+                run: async () => {
+                    if (/INSERT INTO address/.test(sql)) {
+                        inserts.push({ name: args[0], sourceMeta: args[1] });
+                    }
+                    return { success: true, meta: { last_row_id: 1 } };
+                },
+                first: async () => {
+                    if (/SELECT value FROM settings/.test(sql)) return null;
+                    if (/SELECT id FROM address/.test(sql)) return 42;
+                    return null;
+                },
+            };
+        },
+    };
+};
+
+const createContext = (db, body) => ({
+    env: {
+        DB: db,
+        JWT_SECRET: 'test-jwt-secret-0123456789',
+        DOMAINS: JSON.stringify(['example.com']),
+    },
+    req: { json: async () => body },
+    get: () => undefined,
+    text: (body, status) => new Response(body, { status }),
+    json: (value) => Response.json(value),
+    executionCtx: { waitUntil: (promise) => { promise.catch(() => { }); } },
+});
+
+test('admin create keeps dotted and underscored names verbatim', async () => {
+    for (const requested of ['e2e.dot.test', 'foo_bar']) {
+        const db = makeCreateDb();
+        const response = await addressApi.createNewAddress(createContext(db, {
+            name: requested, domain: 'example.com', enablePrefix: false,
+        }));
+        assert.equal(response.status, 200, requested);
+        const body = await response.json();
+        assert.equal(db.inserts.length, 1, requested);
+        assert.equal(db.inserts[0].name, `${requested}@example.com`, requested);
+        assert.equal(db.inserts[0].sourceMeta, 'admin', requested);
+        // the response address must always equal the stored name
+        assert.equal(body.address, db.inserts[0].name, requested);
+    }
+});
+
+test('admin create rejects names outside the whitelist without inserting', async () => {
+    const db = makeCreateDb();
+    const response = await addressApi.createNewAddress(createContext(db, {
+        name: 'bad name!', domain: 'example.com', enablePrefix: false,
+    }));
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /Name only allows lowercase letters/);
+    assert.equal(db.inserts.length, 0);
+});

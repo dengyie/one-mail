@@ -20,6 +20,12 @@ export { sendWebhook, isValidWebhookHeaders, WEBHOOK_TIMEOUT_MS } from './webhoo
 import i18n from './i18n';
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
+// Admin-specified names must land verbatim: the receive path matches addresses
+// by exact name, so silently stripping characters (e.g. the dot in
+// iris.finch28) turns the requested address into a mail blackhole. The admin
+// channel validates against this lenient whitelist and fails explicitly
+// instead; open registration keeps the strict strip anti-abuse semantics.
+const ADMIN_NAME_REGEX = /^[a-z0-9._-]+$/;
 const DEFAULT_RANDOM_SUBDOMAIN_LENGTH = 8;
 const MAX_RANDOM_SUBDOMAIN_ATTEMPTS = 5;
 const MAX_DOMAIN_LENGTH = 253;
@@ -379,6 +385,7 @@ export const newAddress = async (
         addressPrefix = null,
         checkAllowDomains = true,
         enableCheckNameRegex = true,
+        preserveName = false,
         sourceMeta = null,
     }: {
         name: string, domain: string | undefined | null,
@@ -388,12 +395,22 @@ export const newAddress = async (
         addressPrefix?: string | undefined | null,
         checkAllowDomains?: boolean,
         enableCheckNameRegex?: boolean,
+        preserveName?: boolean,
         sourceMeta?: string | undefined | null,
     }
 ): Promise<{ address: string, jwt: string, password?: string | null, address_id: number }> => {
     const msgs = i18n.getMessagesbyContext(c);
-    // trim whitespace and remove special characters
-    name = name.trim().replace(getNameRegex(c), '')
+    if (preserveName) {
+        // preserve the requested name verbatim: no strip rewrite, and anything
+        // outside the lenient whitelist fails explicitly instead of being
+        // silently rewritten into a different address
+        if (!ADMIN_NAME_REGEX.test(name)) {
+            throw new Error(msgs.AdminNameNotAllowedMsg);
+        }
+    } else {
+        // trim whitespace and remove special characters
+        name = name.trim().replace(getNameRegex(c), '')
+    }
     // check name
     if (enableCheckNameRegex) {
         await checkNameBlockList(c, name);
