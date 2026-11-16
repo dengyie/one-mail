@@ -4,7 +4,7 @@ import test from "node:test";
 import {
     breakerStateFor, getShardBreakerModes, loadShardSnapshot, resetShardBreakerCacheForTests,
     resetShardSnapshotThrottleForTests, resolveBreakerThresholds, saveShardSnapshot,
-    snapshotFingerprint, snapshotKey,
+    serveStalePages, snapshotFingerprint, snapshotKey,
 } from "./shard_breaker.ts";
 
 const shard = { id: "s1", name: "one_mail_shard1", base_url: "https://shard.invalid", token: "t".repeat(32) };
@@ -99,4 +99,33 @@ test("快照存取 + 512KiB 截行 + 写节流（KV 写预算）", async () => {
     store.set(key, "{{{");
     assert.equal(await loadShardSnapshot(env, key), null);
     resetShardSnapshotThrottleForTests();
+});
+
+test("指纹必须含分页位置：stale 只服务同形状第一页，翻页必须 miss", () => {
+    const scope = { account_ids: ["mine"], sources: null };
+    const base = snapshotFingerprint(scope, {}, 2);
+    assert.equal(base, snapshotFingerprint(scope, {}, 2), "同形状同页必须同键");
+    assert.notEqual(base, snapshotFingerprint(scope, {}, 2, { cursor: "MQ==" }), "cursor 参与指纹");
+    assert.notEqual(base, snapshotFingerprint(scope, {}, 2, { offset: 20 }), "offset 参与指纹");
+});
+
+test("坏快照行整份弃用（垃圾行绝不进全局归并）", async () => {
+    const target = { shard, scope: { account_ids: ["mine"], sources: null } };
+    const rows = [
+        { id: "ok", received_at: 100 },
+        { id: "bad", received_at: "500" },  // 类型漂移：received_at 非数字
+    ];
+    const result = await serveStalePages(
+        { KV: { get: async () => JSON.stringify({ rows, saved_at: 1 }) } },
+        [target], {}, 2,
+    );
+    assert.deepEqual(result.staleIds, [], "含坏行的快照必须整份弃用");
+    assert.deepEqual(result.degradedIds, ["s1"]);
+    // 全部合规才服务
+    const good = await serveStalePages(
+        { KV: { get: async () => JSON.stringify({ rows: [{ id: "ok", received_at: 100 }], saved_at: 1 }) } },
+        [target], {}, 2,
+    );
+    assert.deepEqual(good.staleIds, ["s1"]);
+    assert.equal(good.pages[0][0].id, "ok");
 });

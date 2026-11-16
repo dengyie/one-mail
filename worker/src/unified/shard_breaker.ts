@@ -126,14 +126,29 @@ export interface ShardSnapshot {
 export const snapshotKey = (shardId: string, fingerprint: string): string =>
     `one-mail:shard-snapshot:${shardId}:${fingerprint}`;
 
-/** 稳定指纹：作用域 + 影响行集的过滤参数 + 页宽（不含游标/offset——
- * 快照服务的是「同一查询形状的第一页」）。FNV-1a 32bit，无异步依赖。 */
-export const snapshotFingerprint = (scope: { account_ids: string[] | null; sources: string[] | null }, rest: Record<string, unknown>, pageSize: number): string => {
+/** 稳定指纹：作用域 + 影响行集的过滤参数 + 页宽 + **分页位置**。
+ *
+ * 快照存的是「该查询形状当页的结果」——分页位置（cursor/offset）必须参与
+ * 指纹：否则 stale 模式下 offset=2 的请求会拿到第一页快照（错行）。
+ * 实际效果：只有无游标的第一页刷新能命中快照（收件箱轮询的主形态），
+ * 翻页请求在 stale 分片上退化为 degraded，符合「延迟可见只保第一屏」的语义。
+ * FNV-1a 32bit，无异步依赖。 */
+export interface SnapshotPaging {
+    cursor?: string | null;
+    offset?: number | null;
+}
+
+export const snapshotFingerprint = (
+    scope: { account_ids: string[] | null; sources: string[] | null },
+    rest: Record<string, unknown>,
+    pageSize: number,
+    paging: SnapshotPaging = {},
+): string => {
     const material = JSON.stringify([
         [...(scope.account_ids ?? [])].sort(), scope.sources,
         rest.unread ?? null, rest.starred ?? null, rest.q ?? null,
         rest.since ?? null, rest.until ?? null, rest.to_addr ?? null,
-        pageSize,
+        pageSize, paging.cursor ?? null, paging.offset ?? null,
     ]);
     let hash = 0x811c9dc5;
     for (let index = 0; index < material.length; index++) {
@@ -147,6 +162,13 @@ const isSnapshot = (value: unknown): value is ShardSnapshot =>
     typeof value === "object" && value !== null
     && Array.isArray((value as ShardSnapshot).rows)
     && typeof (value as ShardSnapshot).saved_at === "number";
+
+/** 快照行必须满足归并的最小不变量（与 validRemotePage 同源）：
+ * id 非空字符串 + received_at 安全整数。任何一行不满足就整份弃用——
+ * stale 的语义是「延迟可见」，绝不是「把垃圾行喂进全局归并」。 */
+const validSnapshotRows = (rows: Array<Record<string, unknown>>): rows is Array<Record<string, unknown>> =>
+    rows.every(row => typeof row?.id === "string" && row.id !== ""
+        && typeof row?.received_at === "number" && Number.isSafeInteger(row.received_at));
 
 export const loadShardSnapshot = async (env: { KV?: KVNamespace }, key: string): Promise<ShardSnapshot | null> => {
     if (!env.KV) return null;
@@ -231,8 +253,8 @@ export const planListShards = async (
     return plan;
 };
 
-const fingerprintOf = (target: ListTarget, rest: Record<string, unknown>, pageSize: number): string =>
-    snapshotFingerprint(target.scope, rest, pageSize);
+const fingerprintOf = (target: ListTarget, rest: Record<string, unknown>, pageSize: number, paging: SnapshotPaging = {}): string =>
+    snapshotFingerprint(target.scope, rest, pageSize, paging);
 
 /** 成功页落快照（best-effort + 写节流）；degraded 分片的失败页不落。 */
 export const persistListSnapshots = async (
@@ -243,12 +265,13 @@ export const persistListSnapshots = async (
     rest: Record<string, unknown>,
     pageSize: number,
     nowMs: number = Date.now(),
+    paging: SnapshotPaging = {},
 ): Promise<void> => {
     for (let index = 0; index < liveTargets.length; index++) {
         const page = pages[index];
         if (!page?.length || degradedIds.includes(liveTargets[index].shard.id)) continue;
         try {
-            await saveShardSnapshot(env, snapshotKey(liveTargets[index].shard.id, fingerprintOf(liveTargets[index], rest, pageSize)), page, nowMs);
+            await saveShardSnapshot(env, snapshotKey(liveTargets[index].shard.id, fingerprintOf(liveTargets[index], rest, pageSize, paging)), page, nowMs);
         } catch { /* best-effort */ }
     }
 };
@@ -268,11 +291,12 @@ export const serveStalePages = async (
     rest: Record<string, unknown>,
     pageSize: number,
     nowMs: number = Date.now(),
+    paging: SnapshotPaging = {},
 ): Promise<StalePages> => {
     const result: StalePages = { pages: [], counts: [], staleIds: [], degradedIds: [], unavailableAccounts: [] };
     for (const target of staleTargets) {
-        const snapshot = await loadShardSnapshot(env, snapshotKey(target.shard.id, fingerprintOf(target, rest, pageSize)));
-        if (snapshot?.rows.length) {
+        const snapshot = await loadShardSnapshot(env, snapshotKey(target.shard.id, fingerprintOf(target, rest, pageSize, paging)));
+        if (snapshot?.rows.length && validSnapshotRows(snapshot.rows)) {
             result.pages.push(snapshot.rows);
             result.counts.push(null);
             result.staleIds.push(target.shard.id);

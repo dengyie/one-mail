@@ -143,3 +143,48 @@ test("P4 stale 无快照 → 按不可达降级（unavailable + incomplete）", 
         assert.deepEqual(body.degraded, ["s1"]);
     });
 });
+
+test("P4 stale 翻页请求不命中第一页快照（offset 参与指纹 → 退化 degraded）", async () => {
+    breakerMod.resetShardBreakerCacheForTests();
+    breakerMod.resetShardSnapshotThrottleForTests();
+    const { store, kv } = snapshotStore();
+    // 只预置第一页形状的快照
+    const fp = breakerMod.snapshotFingerprint({ account_ids: ["mine"], sources: null }, {}, 2);
+    store.set(breakerMod.snapshotKey("s1", fp), JSON.stringify({
+        rows: [{ id: "stale-1", received_at: 500 }], saved_at: 1,
+    }));
+    await withFetch(async (url) => {
+        if (String(url).includes("/shard/quota")) return quotaResponse(95);
+        throw new Error("stale 分片不该被请求: " + url);
+    }, async () => {
+        const response = await federation.federatedListEmails(
+            breakerContext(db(), kv), map, { rest: {}, limit: 1, offset: 20, withCount: false });
+        const body = await response.json();
+        assert.deepEqual(body.stale, undefined, "翻页请求不得消费第一页快照");
+        assert.deepEqual(body.degraded, ["s1"]);
+        assert.equal(body.incomplete, true);
+    });
+});
+
+test("P4 count 端点熔断：degraded/stale 分片跳过扇出（数值不变 + degraded 标注）", async () => {
+    breakerMod.resetShardBreakerCacheForTests();
+    const readonlyKey = { role: "readonly", allowed_accounts: '["mine"]', allowed_sources: '["imap_gmail"]' };
+    const calls = [];
+    const c = {
+        env: { DB: db(), KV: snapshotStore().kv },
+        get: name => name === "apiKey" ? readonlyKey : undefined,
+        req: { query: () => ({}) },
+        json: (body, status = 200) => Response.json(body, { status }),
+    };
+    await withFetch(async (url) => {
+        calls.push(String(url));
+        if (String(url).includes("/shard/quota")) return quotaResponse(92);
+        throw new Error("stale 分片不该被请求: " + url);
+    }, async () => {
+        const response = await federation.federatedCount(c, map);
+        const body = await response.json();
+        assert.deepEqual(calls.filter(url => url.includes("/shard/count")), [], "stale 分片不得被 count 扇出");
+        assert.deepEqual(body.degraded, ["s1"]);
+        assert.equal(body.count, 0);
+    });
+});

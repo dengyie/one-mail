@@ -201,8 +201,9 @@ export const federatedListEmails = async (
         counts.push(...remote.counts);
         degraded.push(...remote.degraded);
         unavailable = remote.unavailable;
-        await persistListSnapshots(c.env, plan.live, remote.pages, remote.degraded, input.rest, pageSize);
-        const stale = await serveStalePages(c.env, plan.stale, input.rest, pageSize);
+        const paging = { cursor: input.cursor ?? null, offset: input.offset ?? null };
+        await persistListSnapshots(c.env, plan.live, remote.pages, remote.degraded, input.rest, pageSize, Date.now(), paging);
+        const stale = await serveStalePages(c.env, plan.stale, input.rest, pageSize, Date.now(), paging);
         pages.push(...stale.pages as MergeEmailRow[][]);
         counts.push(...stale.counts);
         staleShards.push(...stale.staleIds);
@@ -467,13 +468,26 @@ const fanOutExtra = async <T>(
     path: string,
     rest: Record<string, string | undefined>,
     limits: ShardFetchOptions,
+    options: { breaker?: boolean } = {},
 ): Promise<{ results: FanOutOk<T>[]; degraded: string[] }> => {
     const degraded: string[] = [];
     const results: FanOutOk<T>[] = [];
     rest = scopedRest(c, rest);
     if (skipRemoteForFilter(rest)) return { results, degraded };
     const owned = await listOwnedAccountIds(c);
-    const remote = await fanOutShardRequests<T>(scopedTargets(map, rest, owned).map(target => ({
+    let targets = scopedTargets(map, rest, owned);
+    // P4 熔断（/shard/count 等 count 类端点）：degraded/stale 分片不参与扇出，
+    // 既不烧濒死分片的配额，也不改变合并数值（此前它们按 ?? 0 计入）。
+    // 跳过的分片计入 degraded，保持「结果可能不完整」的既有语义。
+    if (options.breaker && targets.length) {
+        const plan = await planListShards(c.env, targets, rest, 0);
+        const skipIds = new Set<string>([...plan.countDisabled, ...plan.stale.map(target => target.shard.id)]);
+        if (skipIds.size) {
+            degraded.push(...targets.filter(target => skipIds.has(target.shard.id)).map(target => target.shard.id));
+            targets = targets.filter(target => !skipIds.has(target.shard.id));
+        }
+    }
+    const remote = await fanOutShardRequests<T>(targets.map(target => ({
         shard: target.shard, path: `${path}${queryStringForShard(rest, null)}`, init: { scope: target.scope },
     })), limits);
     for (const result of remote) {
@@ -532,7 +546,8 @@ export const federatedCount = async (
     const scoped = await localScopedWhere(c, map, rest);
     const localCount = await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${scoped.where}`)
         .bind(...scoped.params).first("count");
-    const { results, degraded } = await fanOutExtra<{ count?: number }>(c, map, "/shard/count", rest, limits);
+    // P4：count 是全表扫描级端点，degraded/stale 分片跳过（数值不变，省配额）。
+    const { results, degraded } = await fanOutExtra<{ count?: number }>(c, map, "/shard/count", rest, limits, { breaker: true });
     const count = mergeCounts([
         Number(localCount || 0),
         ...results.map((result) => result.data.count ?? 0),
