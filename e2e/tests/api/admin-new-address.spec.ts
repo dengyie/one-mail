@@ -164,13 +164,15 @@ test.describe('Admin New Address', () => {
   test('rejects admin names with invalid dot positions explicitly', async ({ request }) => {
     // leading/trailing/double dots are undeliverable for most sending MTAs;
     // they must fail explicitly instead of landing verbatim as a dead address
-    for (const suffix of ['.lead', 'trail.', 'dou..ble']) {
+    const ts = Date.now();
+    const invalidNames = [`.lead${ts}`, `trail${ts}.`, `dou${ts}..ble`];
+    for (const name of invalidNames) {
       const res = await request.post(`${WORKER_URL}/admin/new_address`, {
-        data: { name: `e2e.dot${Date.now()}${suffix}`, domain: TEST_DOMAIN },
+        data: { name, domain: TEST_DOMAIN },
       });
 
-      expect(res.status(), suffix).toBe(400);
-      expect(await res.text(), suffix).toContain('Name only allows');
+      expect(res.status(), name).toBe(400);
+      expect(await res.text(), name).toContain('Name only allows');
     }
   });
 });
