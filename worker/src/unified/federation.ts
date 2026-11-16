@@ -203,7 +203,7 @@ export const federatedListEmails = async (
         unavailable = remote.unavailable;
         const paging = { cursor: input.cursor ?? null, offset: input.offset ?? null };
         await persistListSnapshots(c.env, plan.live, remote.pages, remote.degraded, input.rest, pageSize, Date.now(), paging);
-        const stale = await serveStalePages(c.env, plan.stale, input.rest, pageSize, Date.now(), paging);
+        const stale = await serveStalePages(c.env, plan.stale, input.rest, pageSize, paging);
         pages.push(...stale.pages as MergeEmailRow[][]);
         counts.push(...stale.counts);
         staleShards.push(...stale.staleIds);

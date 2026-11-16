@@ -16,9 +16,9 @@ import {
 import type { UnifiedListRow } from "./unified_list.ts";
 
 export type RemoteList = { results?: UnifiedListRow[]; count?: number | null; has_more?: boolean; next_cursor?: string | null };
-export const MAX_REMOTE_LIST_CALLS = 24;
+const MAX_REMOTE_LIST_CALLS = 24;
 
-export const validRemotePage = (data: RemoteList, limit: number): data is RemoteList & { results: UnifiedListRow[] } => {
+const validRemotePage = (data: RemoteList, limit: number): data is RemoteList & { results: UnifiedListRow[] } => {
     if (!Array.isArray(data.results) || data.results.length > limit) return false;
     const ids = new Set<string>();
     for (let index = 0; index < data.results.length; index++) {

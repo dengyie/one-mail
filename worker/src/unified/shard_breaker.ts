@@ -290,9 +290,10 @@ export const serveStalePages = async (
     staleTargets: readonly ListTarget[],
     rest: Record<string, unknown>,
     pageSize: number,
-    nowMs: number = Date.now(),
     paging: SnapshotPaging = {},
 ): Promise<StalePages> => {
+    // 快照新鲜度由 KV TTL（saveShardSnapshot 的 expirationTtl）保证，
+    // 这里没有也不需要第二个时间参数。
     const result: StalePages = { pages: [], counts: [], staleIds: [], degradedIds: [], unavailableAccounts: [] };
     for (const target of staleTargets) {
         const snapshot = await loadShardSnapshot(env, snapshotKey(target.shard.id, fingerprintOf(target, rest, pageSize, paging)));
