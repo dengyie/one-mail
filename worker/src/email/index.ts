@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 
-import { getBooleanValue, getJsonSetting, normalizeAddressDomain } from "../utils";
+import { getBooleanValue, getJsonSetting } from "../utils";
+import { normalizeRawMailAddress } from "../unified/addr_case.ts";
 import { commonParseMail, triggerAnotherWorker, triggerWebhook } from "../common";
 import { sendMailToTelegram } from "../telegram_api";
 import { auto_reply } from "./auto_reply";
@@ -26,7 +27,10 @@ const postIngestDeps: PostIngestDeps = {
 };
 
 async function email(message: ForwardableEmailMessage, env: Bindings, ctx: ExecutionContext) {
-    const toAddress = normalizeAddressDomain(message.to);
+    // raw_mails/emails/设置键共用规范形：local part 一并小写（此前
+    // normalizeAddressDomain 只小写域名，raw_mails.address 保留 local 大小写，
+    // 与字节精确的 idx_raw_mails_address 读路径错位——PR #180 审计残留）。
+    const toAddress = normalizeRawMailAddress(message.to);
     if (await isBlocked(message.from, env)) {
         message.setReject("Reject from address");
         console.log(`Reject message from ${message.from} to ${toAddress}`);
@@ -59,8 +63,11 @@ async function email(message: ForwardableEmailMessage, env: Bindings, ctx: Execu
             // 到此 Worker；外部邮箱经聚合器 IMAP/POP3 抓取走 ingest 路径，不进这里）。
             // 仍排除 source_meta='external' 引用行以明确语义：外部引用行不计作「本站已知
             // 地址」，避免管理员误把外部引用当本站地址放行（防御性，域名不同本不冲突）。
+            // COLLATE NOCASE + 归一绑定：历史混合大小写 address.name（受控
+            // UPDATE 订正前）也不至于误拒收信；address 表小且 #180 已建
+            // idx_address_name_nocase，代价可忽略。
             const db_address_id = await env.DB.prepare(
-                `SELECT id FROM address where name = ? AND (source_meta IS NULL OR source_meta != 'external')`
+                `SELECT id FROM address where name = ? COLLATE NOCASE AND (source_meta IS NULL OR source_meta != 'external')`
             ).bind(toAddress).first("id");
             if (!db_address_id) {
                 message.setReject("Unknown address");

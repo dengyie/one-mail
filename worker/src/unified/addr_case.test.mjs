@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 
-import { normalizeToAddr, TO_ADDR_NOCASE } from "./addr_case.ts";
+import { normalizeToAddr, normalizeRawMailAddress, TO_ADDR_NOCASE } from "./addr_case.ts";
 import { buildVerifAddrClause } from "./verifcode.ts";
 import { buildEmailFilters } from "./unified_query.ts";
 import { boundedEmailFilter } from "./unified_sql.ts";
@@ -224,4 +224,11 @@ test("租户归属：地址名小写时也能认领混合大小写的本站邮�
   const lossy = scope.replace("emails.to_addr COLLATE NOCASE IN", "emails.to_addr IN");
   assert.deepEqual(rowsFor(db, lossy, [7, 7]).map((r) => r.id), ["mail-lower"]);
   db.close();
+});
+
+test("normalizeRawMailAddress canonicalizes raw_mails.address", () => {
+  assert.equal(normalizeRawMailAddress("  KevinWalters5892@Outlook.COM "), "kevinwalters5892@outlook.com");
+  assert.equal(normalizeRawMailAddress(""), "");
+  // 与 normalizeToAddr 同一契约：整地址小写（local + domain）
+  assert.equal(normalizeRawMailAddress("Some.One+Tag@Gmail.com"), normalizeToAddr("Some.One+Tag@Gmail.com"));
 });
