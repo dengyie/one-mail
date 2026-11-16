@@ -302,8 +302,12 @@ const executeCreateAccount = async (c: Context<HonoCustomType>, body: Record<str
     // 另一用户在此窗口接入会把旧历史暴露给新用户。移除账号会一并清理其归集邮件，
     // 然后才允许该用户名重新绑定。
     // DB 部分唯一索引 idx_user_mail_accounts_username_uq 是最终兜底；此处前置给出明确 400。
+    // username 是**凭据列**（聚合器 remote_accounts.py 原样映射进 IMAP 登录串），
+    // 绝不为了查重而小写化存量数据——比较用 COLLATE NOCASE 吸收历史混合行，
+    // 否则大小写变体可绕过本查重绑定同一真实邮箱（write 侧 line-208 已 lower，
+    // 存量 2 行混合形态只能靠这里兜住）。
     const dupRow = await c.env.DB.prepare(
-        `SELECT COUNT(*) AS c FROM user_mail_accounts WHERE username = ? AND user_id != ?`
+        `SELECT COUNT(*) AS c FROM user_mail_accounts WHERE username COLLATE NOCASE = ? AND user_id != ?`
     ).bind(username, user_id).first<{ c: number }>();
     if (dupRow && dupRow.c > 0) {
         return c.text(msgs.AddressAlreadyExistsMsg, 400);
