@@ -297,15 +297,11 @@ const executeCreateAccount = async (c: Context<HonoCustomType>, body: Record<str
         return c.text(msgs.MaxAddressCountReachedMsg, 400);
     }
 
-    // C1 一址一户：跨用户接入同名外部邮箱直接拒绝。同一用户重连/同名合法（user_id != ?）。
-    // 已禁用的账号也必须计入查重：删除账号前历史邮件按 to_addr 归属，允许
-    // 另一用户在此窗口接入会把旧历史暴露给新用户。移除账号会一并清理其归集邮件，
-    // 然后才允许该用户名重新绑定。
-    // DB 部分唯一索引 idx_user_mail_accounts_username_uq 是最终兜底；此处前置给出明确 400。
+    // C1 一址一户：跨用户接入同名外部邮箱直接拒绝（user_id != ?；禁用账号也计入，
+    // 否则历史邮件会暴露给新用户；DB 唯一索引兜底，此处前置明确 400）。
     // username 是**凭据列**（聚合器 remote_accounts.py 原样映射进 IMAP 登录串），
-    // 绝不为了查重而小写化存量数据——比较用 COLLATE NOCASE 吸收历史混合行，
-    // 否则大小写变体可绕过本查重绑定同一真实邮箱（write 侧 line-208 已 lower，
-    // 存量 2 行混合形态只能靠这里兜住）。
+    // 绝不为了查重而小写化存量数据——COLLATE NOCASE 吸收历史混合行，否则
+    // 大小写变体可绕过本查重绑定同一真实邮箱。
     const dupRow = await c.env.DB.prepare(
         `SELECT COUNT(*) AS c FROM user_mail_accounts WHERE username COLLATE NOCASE = ? AND user_id != ?`
     ).bind(username, user_id).first<{ c: number }>();
