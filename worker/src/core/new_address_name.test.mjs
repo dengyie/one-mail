@@ -103,3 +103,52 @@ test('preserveName rejects names outside the lenient whitelist explicitly', asyn
         assert.equal(db.inserts.length, 0, requested);
     }
 });
+
+// RegExp.test coerces non-strings (e.g. a JSON number body 123 -> "123"),
+// which would silently pass validation; the admin channel must reject them.
+test('preserveName rejects non-string names without inserting', async () => {
+    for (const requested of [123, null, { evil: true }]) {
+        const db = makeDb();
+        await assert.rejects(
+            newAddress(context(db), {
+                name: requested, domain: 'example.com', enablePrefix: false,
+                preserveName: true,
+            }),
+            /Name only allows lowercase letters, digits, dot, underscore and hyphen/,
+            String(requested),
+        );
+        assert.equal(db.inserts.length, 0, String(requested));
+    }
+});
+
+// Leading/trailing/double dots make the local part undeliverable for most
+// sending MTAs (they normalize or reject), which recreates the receive
+// blackhole from the other side even though the name is stored verbatim.
+test('preserveName rejects invalid dot positions in the name', async () => {
+    for (const requested of ['.foo', 'foo.', 'foo..bar', '.']) {
+        const db = makeDb();
+        await assert.rejects(
+            newAddress(context(db), {
+                name: requested, domain: 'example.com', enablePrefix: false,
+                preserveName: true,
+            }),
+            /Name only allows lowercase letters, digits, dot, underscore and hyphen/,
+            requested,
+        );
+        assert.equal(db.inserts.length, 0, requested);
+    }
+});
+
+// Interior single dots stay valid dot-atoms and must keep landing verbatim.
+test('preserveName keeps interior-dot names verbatim', async () => {
+    for (const requested of ['iris.finch28', 'a.b.c']) {
+        const db = makeDb();
+        const res = await newAddress(context(db), {
+            name: requested, domain: 'example.com', enablePrefix: false,
+            preserveName: true,
+        });
+        assert.equal(db.inserts.length, 1, requested);
+        assert.equal(db.inserts[0].name, `${requested}@example.com`, requested);
+        assert.equal(res.address, db.inserts[0].name, requested);
+    }
+});

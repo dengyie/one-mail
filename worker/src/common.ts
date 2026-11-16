@@ -25,7 +25,12 @@ const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
 // iris.finch28) turns the requested address into a mail blackhole. The admin
 // channel validates against this lenient whitelist and fails explicitly
 // instead; open registration keeps the strict strip anti-abuse semantics.
-const ADMIN_NAME_REGEX = /^[a-z0-9._-]+$/;
+// Dots must form valid dot-atoms (no leading/trailing/double dot) so the
+// stored local part stays RFC 5321 deliverable — most sending MTAs normalize
+// or reject `.foo` / `foo.` / `foo..bar`, which would recreate the blackhole
+// from the other side (the address is stored verbatim but never receives).
+const ADMIN_NAME_CHARS_RE = /^[a-z0-9._-]+$/;
+const ADMIN_NAME_INVALID_DOTS_RE = /^\.|\.$|\.\./;
 const DEFAULT_RANDOM_SUBDOMAIN_LENGTH = 8;
 const MAX_RANDOM_SUBDOMAIN_ATTEMPTS = 5;
 const MAX_DOMAIN_LENGTH = 253;
@@ -403,8 +408,12 @@ export const newAddress = async (
     if (preserveName) {
         // preserve the requested name verbatim: no strip rewrite, and anything
         // outside the lenient whitelist fails explicitly instead of being
-        // silently rewritten into a different address
-        if (!ADMIN_NAME_REGEX.test(name)) {
+        // silently rewritten into a different address. The typeof guard keeps
+        // RegExp.test's implicit String coercion (e.g. JSON number 123) from
+        // slipping through validation.
+        if (typeof name !== 'string'
+            || !ADMIN_NAME_CHARS_RE.test(name)
+            || ADMIN_NAME_INVALID_DOTS_RE.test(name)) {
             throw new Error(msgs.AdminNameNotAllowedMsg);
         }
     } else {
