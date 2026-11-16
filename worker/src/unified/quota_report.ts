@@ -25,6 +25,7 @@ import {
 } from "./shard_client.ts";
 import { SHARD_FETCH_TIMEOUT_MS } from "./shard_merge.ts";
 import { accountsOnShard, hasRemoteShards, loadShardMap, type ShardMap } from "./shard_map.ts";
+import { breakerStateFor, resolveBreakerThresholds } from "./shard_breaker.ts";
 
 export type D1QuotaShardReport = D1QuotaView & {
     /** Human-readable D1 database name (`one_mail_db`, `one_mail_shard1`, …). */
@@ -42,6 +43,9 @@ export type D1QuotaShardReport = D1QuotaView & {
      * `invalid_quota_payload`, ...), so the operator sees *why* it is blank.
      * Null for reachable rows. */
     unavailable_reason: string | null;
+    /** P4 熔断档位（读配额 80%→degraded 关远端 COUNT；90%→stale 延迟可见）。
+     * 主库恒为 null（熔断只作用于远端分片读路径）。 */
+    breaker: "normal" | "degraded" | "stale" | null;
 };
 
 const isFiniteNumber = (value: unknown): value is number =>
@@ -104,6 +108,7 @@ const unavailableReport = (
     accounts_known: accountsKnown,
     reachable: false,
     unavailable_reason: reason,
+    breaker: null,
 });
 
 export const d1QuotaByShard = async (c: Context<HonoCustomType>): Promise<D1QuotaShardReport[]> => {
@@ -115,7 +120,9 @@ export const d1QuotaByShard = async (c: Context<HonoCustomType>): Promise<D1Quot
         accounts_known: false,
         reachable: true,
         unavailable_reason: null,
+        breaker: null,
     }];
+    const thresholds = resolveBreakerThresholds(c.env);
     let map: ShardMap;
     try {
         map = await loadShardMap(c.env);
@@ -145,6 +152,7 @@ export const d1QuotaByShard = async (c: Context<HonoCustomType>): Promise<D1Quot
                 accounts_known: true,
                 reachable: true,
                 unavailable_reason: null,
+                breaker: breakerStateFor(result.data.rows_read_pct, thresholds),
             });
             continue;
         }

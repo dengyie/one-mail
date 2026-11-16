@@ -1,5 +1,9 @@
 import type { Context } from "hono";
 import {
+    getShardBreakerModes, loadShardSnapshot, saveShardSnapshot,
+    snapshotFingerprint, snapshotKey, type BreakerMode,
+} from "./shard_breaker.ts";
+import {
     createShardResponseBudget, fanOutShardRequests, fetchShardJson,
     fetchShardStream,
     SHARD_ATTACHMENT_MAX_BYTES,
@@ -174,6 +178,7 @@ const validRemotePage = (data: RemoteList, limit: number): data is RemoteList & 
 const remoteListPages = async (
     targets: ScopedTarget[], input: FederatedListInput, local: MergeEmailRow[],
     needed: number, limits: ShardFetchOptions,
+    countDisabled: ReadonlySet<string> = new Set<string>(),
 ): Promise<{ pages: MergeEmailRow[][]; counts: (number | null)[]; degraded: string[]; unavailable: string[] }> => {
     const states = targets.map(target => ({ ...target, rows: [] as UnifiedListRow[], cursor: input.offset === undefined ? input.cursor : undefined,
         count: null as number | null, more: true, failed: false }));
@@ -193,7 +198,9 @@ const remoteListPages = async (
                     unread: input.rest.unread, starred: input.rest.starred, q: input.rest.q,
                     since: input.rest.since, until: input.rest.until, to_addr: input.rest.to_addr,
                     limit: pageSize, cursor: state.cursor,
-                    with_count: input.withCount && state.rows.length === 0 ? 1 : 0,
+                    // P4 熔断 degraded 档：远端 COUNT 直接关闭（80%+），列表继续。
+                    with_count: input.withCount && state.rows.length === 0
+                        && !countDisabled.has(state.shard.id) ? 1 : 0,
                 },
             },
         }));
@@ -257,13 +264,56 @@ export const federatedListEmails = async (
     const counts: (number | null)[] = [local.count];
 
     let unavailable: string[] = [];
+    const staleShards: string[] = [];
     if (!skipRemoteForFilter(input.rest)) {
         const owned = await listOwnedAccountIds(c);
-        const remote = await remoteListPages(scopedTargets(map, input.rest, owned), input, local.results, fetchLimit, limits);
+        const allTargets = scopedTargets(map, input.rest, owned);
+        // P4 每分片熔断：90%+ 列表读切 KV 快照（延迟可见），80%+ 关远端 COUNT。
+        // 状态获取失败按全 normal（fail-open）；verifcodes/写路径不经过这里。
+        let modes = new Map<string, BreakerMode>();
+        try {
+            modes = await getShardBreakerModes(c.env, allTargets.map(target => target.shard));
+        } catch { /* fail-open */ }
+        const pageSize = Math.min(100, fetchLimit);
+        const fingerprintOf = (target: ScopedTarget) =>
+            snapshotFingerprint(target.scope, input.rest, pageSize);
+        const staleTargets: ScopedTarget[] = [];
+        const liveTargets: ScopedTarget[] = [];
+        const countDisabled = new Set<string>();
+        for (const target of allTargets) {
+            const mode = modes.get(target.shard.id) ?? "normal";
+            if (mode === "stale") staleTargets.push(target);
+            else {
+                liveTargets.push(target);
+                if (mode === "degraded") countDisabled.add(target.shard.id);
+            }
+        }
+        const remote = await remoteListPages(liveTargets, input, local.results, fetchLimit, limits, countDisabled);
         pages.push(...remote.pages);
         counts.push(...remote.counts);
         degraded.push(...remote.degraded);
         unavailable = remote.unavailable;
+        // 成功页落快照（best-effort + 节流），供该分片进 stale 档时延迟可见。
+        for (let index = 0; index < liveTargets.length; index++) {
+            const page = remote.pages[index];
+            if (page.length && !remote.degraded.includes(liveTargets[index].shard.id)) {
+                try {
+                    await saveShardSnapshot(c.env, snapshotKey(liveTargets[index].shard.id, fingerprintOf(liveTargets[index])), page);
+                } catch { /* best-effort */ }
+            }
+        }
+        // stale 分片：不发网络请求，上次快照顶上；无快照按不可达降级。
+        for (const target of staleTargets) {
+            const snapshot = await loadShardSnapshot(c.env, snapshotKey(target.shard.id, fingerprintOf(target)));
+            if (snapshot?.rows.length) {
+                pages.push(snapshot.rows as MergeEmailRow[]);
+                counts.push(null);
+                staleShards.push(target.shard.id);
+            } else {
+                degraded.push(target.shard.id);
+                unavailable.push(...(target.scope.account_ids ?? []));
+            }
+        }
     }
 
     const keep = input.offset !== undefined ? input.limit : input.limit + 1;
@@ -279,7 +329,9 @@ export const federatedListEmails = async (
     // A partial merge is not a complete snapshot. Never publish a total derived
     // from only the healthy owners, and never let a cursor cross an unavailable
     // owner boundary: the caller must retry this exact page after recovery.
-    const incomplete = degraded.length > 0;
+    // stale（延迟可见）与 degraded（不可达）同样构成不完整视图：count 置
+    // null、has_more 保持 true、游标不越过边界 —— 但用户仍能看到快照里的行。
+    const incomplete = degraded.length > 0 || staleShards.length > 0;
     // 没要总数就一律 null。翻了页（cursor / offset>0）即使要总数也不会重算，
     // 同样返回 null 而不是 0：0 会被读成「邮箱是空的」，而事实是「没算」。
     // 与单库 listEmails 的语义保持一致。
@@ -298,6 +350,7 @@ export const federatedListEmails = async (
         body.has_more = incomplete ? true : hasMore;
     }
     if (incomplete) body.degraded = degraded;
+    if (staleShards.length) body.stale = staleShards;
     return c.json(body);
 };
 

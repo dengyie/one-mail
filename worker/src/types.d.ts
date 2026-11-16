@@ -155,6 +155,9 @@ type Bindings = {
     PASSKEY_CHALLENGES: DurableObjectNamespace
     D1_QUOTA_COORDINATOR?: DurableObjectNamespace
     D1_QUOTA_KV?: KVNamespace
+    // P4 每分片熔断阈值（读配额百分比；缺省 80/90，仅测试/紧急调整用）
+    SHARD_BREAKER_DEGRADE_PCT?: string
+    SHARD_BREAKER_STALE_PCT?: string
     // Fleet control plane; data routing remains static until D2/D3 are enabled.
     FLEET_MODE?: string
     FLEET_REGISTRY?: DurableObjectNamespace
