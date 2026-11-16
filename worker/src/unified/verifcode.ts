@@ -1,3 +1,5 @@
+import { TO_ADDR_NOCASE } from "./addr_case.ts";
+
 const KW_PREFIX = "(?:code|验证码|verification|otp|pin|安全码|动态码|校验码|授权码|代码|口令|passcode)";
 const DATE_PATTERN = "(?:\\d{4}[-/.]\\d{1,2}(?:[-/.]\\d{1,2})?(?:\\s*\\d{1,2}:\\d{1,2}(?::\\d{1,2})?)?|\\d{4}年\\d{1,2}月(?:\\d{1,2}日)?)";
 const OPTIONAL_DATE_PREFIX = "(?:[^\\d]{0,24}" + DATE_PATTERN + ")?";
@@ -67,7 +69,7 @@ export function buildVerifAddrClause(addrInput: string): VerifAddrClause {
         const domainPart = addr.slice(1);
         const escaped = escapeSqlLike(domainPart);
         return {
-            clause: " AND to_addr LIKE ? ESCAPE '\\'",
+            clause: ` AND ${TO_ADDR_NOCASE} LIKE ? ESCAPE '\\'`,
             params: [`%@${escaped}`],
         };
     }
@@ -76,7 +78,7 @@ export function buildVerifAddrClause(addrInput: string): VerifAddrClause {
     if (!addr.includes("@") && addr.includes(".")) {
         const escaped = escapeSqlLike(addr);
         return {
-            clause: " AND (to_addr = ? OR to_addr LIKE ? ESCAPE '\\')",
+            clause: ` AND (${TO_ADDR_NOCASE} = ? OR ${TO_ADDR_NOCASE} LIKE ? ESCAPE '\\')`,
             params: [addr, `%@${escaped}`],
         };
     }
@@ -85,14 +87,14 @@ export function buildVerifAddrClause(addrInput: string): VerifAddrClause {
     if (addr.includes("*")) {
         const escaped = escapeSqlLike(addr).replace(/\*/g, "%");
         return {
-            clause: " AND to_addr LIKE ? ESCAPE '\\'",
+            clause: ` AND ${TO_ADDR_NOCASE} LIKE ? ESCAPE '\\'`,
             params: [escaped],
         };
     }
 
-    // 4. 精准单地址匹配（使用参数化全等）
+    // 4. 精准单地址匹配（参数化全等，大小写不敏感）
     return {
-        clause: " AND to_addr = ?",
+        clause: ` AND ${TO_ADDR_NOCASE} = ?`,
         params: [addr],
     };
 }

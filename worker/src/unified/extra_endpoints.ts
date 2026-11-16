@@ -64,7 +64,7 @@ export const verifCodes = async (c: Context<HonoCustomType>) => {
     let nonAdminDomainClause = "";
     const nonAdminDomainParams: (string | number)[] = [];
     if (!isAdmin && hasValidDomain) {
-        nonAdminDomainClause = " AND emails.source = 'cf_routing' AND emails.to_addr LIKE ? ESCAPE '\\'";
+        nonAdminDomainClause = " AND emails.source = 'cf_routing' AND emails.to_addr COLLATE NOCASE LIKE ? ESCAPE '\\'";
         nonAdminDomainParams.push(`%@${escapeSqlLike(rawDomain)}`);
     }
 

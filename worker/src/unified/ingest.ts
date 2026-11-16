@@ -4,6 +4,7 @@ import { loadShardMap } from "./shard_map.ts";
 import { fetchShardJson } from "./shard_client.ts";
 import { isShardMode } from "../core/d1_quota.ts";
 import { IngestValidationError, insertArchive } from "./archival_ingest.ts";
+import { normalizeToAddr } from "./addr_case.ts";
 import { lifecycleState } from "./account_lifecycle_schema.ts";
 import { materializeAttachmentKeys, parseAttachments, releaseAttachmentGc } from "./attachments.ts";
 
@@ -91,7 +92,8 @@ const hasAttachments = (e: Record<string, unknown>): number | null => {
 export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowMs: number): unknown[] {
     // from_addr/to_addr/account_id 必须非空：account_id 是外部邮件稳定租户身份；
     // CF native 双写路径 account_id=toAddress 恒非空。
-    if (![e.from_addr, e.to_addr, e.account_id].every(value => typeof value === "string" && value.length > 0)) {
+    const toAddr = e.to_addr;
+    if (![e.from_addr, toAddr, e.account_id].every(value => typeof value === "string" && value.length > 0)) {
         throw new Error("from_addr/to_addr/account_id required");
     }
     if (e.id != null && (typeof e.id !== "string" || !e.id.length || e.id.length > 200)) throw new Error("invalid email id");
@@ -122,7 +124,7 @@ export function toEmailInsertParams(e: Record<string, unknown>, id: string, nowM
         id,
         e.source ?? "imap_unknown",
         e.account_id,
-        e.from_addr, e.to_addr,
+        e.from_addr, normalizeToAddr(toAddr as string),
         e.subject ?? "",
         e.text_body ?? "",
         e.html_body ?? "",

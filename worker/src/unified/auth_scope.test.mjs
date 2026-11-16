@@ -49,7 +49,7 @@ test("non-admin query uses indexed account/address ownership sets", async () => 
   assert.match(filter.where, /SELECT uma\.id FROM user_mail_accounts uma/);
   assert.match(filter.where, /uma\.user_id = \?/);
   assert.match(filter.where, /emails\.source = 'cf_routing'/);
-  assert.match(filter.where, /emails\.to_addr IN/);
+  assert.match(filter.where, /emails\.to_addr COLLATE NOCASE IN/);
   assert.match(filter.where, /SELECT a\.name FROM users_address ua/);
   assert.match(filter.where, /source_meta != 'external'/);
   assert.doesNotMatch(filter.where, /enabled\s*=\s*1/);
@@ -79,7 +79,7 @@ test("admin user querying domain catch-all succeeds", async () => {
   const c = makeContext({ auth: userAuth(1, true) });
   const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
   assert.match(filter.where, /source = 'cf_routing'/);
-  assert.match(filter.where, /to_addr LIKE \?/);
+  assert.match(filter.where, /to_addr COLLATE NOCASE LIKE \?/);
   assert.deepEqual(filter.params, ["%@mangoqwq.com"]);
   assert.doesNotMatch(filter.where, /user_mail_accounts/);
 });
@@ -88,7 +88,7 @@ test("admin context without userPayload (x-admin-auth) querying domain catch-all
   const c = makeContext({ auth: { userPayload: null, isAdmin: true, userRole: "admin" } });
   const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
   assert.match(filter.where, /source = 'cf_routing'/);
-  assert.match(filter.where, /to_addr LIKE \?/);
+  assert.match(filter.where, /to_addr COLLATE NOCASE LIKE \?/);
   assert.deepEqual(filter.params, ["%@mangoqwq.com"]);
 });
 
@@ -114,7 +114,7 @@ test("admin API key querying domain succeeds", async () => {
   });
   const filter = await resolveScopedEmailFilter(c, { domain: "mangoqwq.com" });
   assert.match(filter.where, /source = 'cf_routing'/);
-  assert.match(filter.where, /to_addr LIKE \?/);
+  assert.match(filter.where, /to_addr COLLATE NOCASE LIKE \?/);
   assert.deepEqual(filter.params, ["%@mangoqwq.com"]);
 });
 
@@ -200,7 +200,7 @@ test("addressAuth scopes email query strictly to its own to_addr", async () => {
     addressAuth: { address: "bot@dengyie.tech", address_id: 123 },
   });
   const filter = await resolveScopedEmailFilter(c, {});
-  assert.equal(filter.where, "(1=1) AND emails.to_addr = ?");
+  assert.equal(filter.where, "(1=1) AND emails.to_addr COLLATE NOCASE = ?");
   assert.deepEqual(filter.params, ["bot@dengyie.tech"]);
 
   // Passing domain under addressAuth must fail closed

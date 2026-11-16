@@ -1,5 +1,6 @@
 import { Context } from "hono";
 import { insertEmail } from "../core/ingest.ts";
+import { normalizeToAddr } from "./addr_case.ts";
 import {
     MAX_ATTACHMENT_BYTES,
     attachmentGcInsert,
@@ -43,7 +44,7 @@ export function buildUnifiedEmailRow(
         source: "cf_routing",
         account_id: toAddress,
         from_addr: stripAddr(parsed?.sender || fromAddress),
-        to_addr: toAddress,
+        to_addr: normalizeToAddr(toAddress),
         subject: parsed?.subject ?? "",
         text_body: parsed?.text ?? "",
         html_body: parsed?.html ?? "",

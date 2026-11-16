@@ -102,7 +102,7 @@ test("verifcode_api listVerifCodes queries emails table with bounded projection"
 
     const captured = getCapturedEmail();
     assert.ok(captured.sql.includes("substr(text_body, 1, 3000)"), "must truncate projection");
-    assert.ok(captured.sql.includes("to_addr = ? AND received_at >= ?"), "must use to_addr and received_at");
+    assert.ok(captured.sql.includes("to_addr COLLATE NOCASE = ? AND received_at >= ?"), "must use to_addr and received_at");
     assert.equal(captured.binds[0], "agent@dengyie.tech", "address must be normalized to lowercase");
     assert.ok(typeof captured.binds[1] === "number", "since timestamp must be number");
 });

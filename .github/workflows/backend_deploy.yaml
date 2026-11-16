@@ -361,6 +361,22 @@ jobs:
           fi
           echo "Remote D1 attachment GC schema is current"
 
+      - name: Ensure remote D1 case-insensitive recipient indexes
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "::error title=Missing Cloudflare credentials::D1 migrations require CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN."; exit 1
+          fi
+          cd worker/
+          # to_addr / address.name are read case-insensitively (COLLATE NOCASE).
+          pnpm exec wrangler d1 execute DB \
+            --remote --yes --file ../db/2026-11-16-email-to-addr-nocase-index.sql
+          echo "Remote D1 case-insensitive recipient indexes are current"
+
       - name: Ensure remote D1 unified mirror retry schema
         shell: bash
         env:
