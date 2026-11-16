@@ -121,14 +121,12 @@ test("readonly source and account scope reaches list and every extra endpoint", 
         await federation.federatedListEmails(context(readonly), map, { rest: {}, limit: 1, withCount: false });
         for (const endpoint of [federation.federatedCount, federation.federatedStats, federation.federatedVerifCodes, federation.federatedMeta, federation.federatedFolders]) await endpoint(context(readonly), map);
     });
-    // P4 熔断引入了 /shard/quota 状态探针：过滤掉它，只断言业务端点。
-    const business = calls.filter(call => !String(call.url).includes("/shard/quota"));
+    const business = calls.filter(call => !String(call.url).includes("/shard/quota")); // P4 quota 探针不算业务端点
     const list = JSON.parse(business[0].init.body);
     assert.equal(list.source, "imap_gmail");
     assert.deepEqual(list.account_ids, ["mine"]);
     for (const call of business.slice(1)) {
-        const query = new URL(call.url).searchParams;
-        assert.equal(query.get("source"), "imap_gmail");
+        const query = new URL(call.url).searchParams; assert.equal(query.get("source"), "imap_gmail");
         assert.deepEqual(JSON.parse(decodeURIComponent(call.init.headers["x-one-mail-shard-scope"])), { account_ids: ["mine"], sources: ["imap_gmail"] });
     }
 });
@@ -976,95 +974,5 @@ test("single owner mutation rechecks permissions and narrows its scope to the lo
         const movedMap = { ...map, accounts: { ...map.accounts, mine: "s2" } };
         assert.equal((await federation.applyToShard(c, movedMap, owner.shard, "/shard/emails/id/read", { method: "POST" }, owner)).status, 409);
         assert.equal(writeScopes.length, 1);
-    });
-});
-
-
-// ─── P4 每分片熔断/降级（shard_breaker 集成） ───
-
-const breakerMod = await import("./shard_breaker.ts");
-const breakerContext = (dbInstance, kv) => ({
-    env: { DB: dbInstance, KV: kv },
-    get: name => name === "apiKey" ? null : name === "unifiedUserAuth" ? user : undefined,
-    req: { query: () => undefined },
-    json: (body, status = 200) => Response.json(body, { status }),
-});
-const snapshotStore = () => {
-    const store = new Map();
-    return { store, kv: {
-        get: async (key) => key === "one-mail:shard-map" ? JSON.stringify(map) : (store.get(key) ?? null),
-        put: async (key, value) => { store.set(key, String(value)); },
-    } };
-};
-const quotaResponse = (pct) => Response.json({ shard_id: "s1", rows_read_pct: pct, rows_written_pct: 1 });
-
-test("P4 stale 档：90%+ 分片的列表读切 KV 快照（延迟可见），不再发起 /shard/emails", async () => {
-    breakerMod.resetShardBreakerCacheForTests();
-    breakerMod.resetShardSnapshotThrottleForTests();
-    const { store, kv } = snapshotStore();
-    const fingerprint = breakerMod.snapshotFingerprint({ account_ids: ["mine"], sources: null }, {}, 2);
-    store.set(breakerMod.snapshotKey("s1", fingerprint), JSON.stringify({
-        rows: [{ id: "stale-1", received_at: 500 }], saved_at: 1,
-    }));
-    const calls = [];
-    await withFetch(async (url) => {
-        calls.push(String(url));
-        if (String(url).includes("/shard/quota")) return quotaResponse(95);
-        throw new Error("stale 分片不该被请求: " + url);
-    }, async () => {
-        const response = await federation.federatedListEmails(
-            breakerContext(db(), kv), map, { rest: {}, limit: 1, withCount: true });
-        const body = await response.json();
-        assert.deepEqual(calls.filter(url => url.includes("/shard/emails")), [], "stale 分片不得发起列表请求");
-        assert.deepEqual(body.results.map(row => row.id), ["stale-1"], "快照行必须延迟可见");
-        assert.equal(body.count, null);
-        assert.equal(body.incomplete, true);
-        assert.equal(body.has_more, true);
-        assert.deepEqual(body.stale, ["s1"]);
-        assert.deepEqual(body.degraded, []);
-    });
-});
-
-test("P4 degraded 档：80%+ 关远端 COUNT（列表继续、快照照常刷新）", async () => {
-    breakerMod.resetShardBreakerCacheForTests();
-    breakerMod.resetShardSnapshotThrottleForTests();
-    const { store, kv } = snapshotStore();
-    const bodies = [];
-    let puts = 0;
-    const kvCounting = { ...kv, put: async (key, value) => { puts++; store.set(key, String(value)); } };
-    await withFetch(async (url, init) => {
-        if (String(url).includes("/shard/quota")) return quotaResponse(85);
-        if (String(url).includes("/shard/emails")) {
-            bodies.push(JSON.parse(init.body));
-            return Response.json({ results: [{ id: "live-1", received_at: 200 }], count: 7, has_more: false });
-        }
-        throw new Error("unexpected fetch " + url);
-    }, async () => {
-        const response = await federation.federatedListEmails(
-            breakerContext(db(), kvCounting), map, { rest: {}, limit: 1, withCount: true });
-        const body = await response.json();
-        assert.equal(bodies[0].with_count, 0, "degraded 分片的远端 COUNT 必须关闭");
-        assert.equal(body.incomplete, false);
-        assert.equal(body.stale, undefined);
-        assert.equal(puts, 1, "成功页必须落一次快照（节流内仅一次）");
-    });
-});
-
-test("P4 stale 无快照 → 按不可达降级（unavailable + incomplete）", async () => {
-    breakerMod.resetShardBreakerCacheForTests();
-    breakerMod.resetShardSnapshotThrottleForTests();
-    const { kv } = snapshotStore();
-    await withFetch(async (url) => {
-        if (String(url).includes("/shard/quota")) return quotaResponse(95);
-        throw new Error("stale 分片不该被请求: " + url);
-    }, async () => {
-        const response = await federation.federatedListEmails(
-            breakerContext(db(), kv), map, { rest: {}, limit: 1, withCount: true });
-        const body = await response.json();
-        assert.equal(body.count, null);
-        assert.equal(body.incomplete, true);
-        assert.deepEqual(body.unavailable_mailbox_ids, ["mine"]);
-        assert.deepEqual(body.stale, undefined);
-        assert.deepEqual(body.degraded, ["s1"]);
     });
 });

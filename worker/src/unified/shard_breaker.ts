@@ -188,3 +188,98 @@ export const saveShardSnapshot = async (
         kept = kept.slice(0, Math.floor(kept.length / 2));
     }
 };
+
+// ─── federation 列表路径的编排（P4 分桶 / 快照落盘 / stale 快照页） ───
+
+/** federation 的 ScopedTarget 结构（type-only，避免环形导入）。 */
+interface ListTarget {
+    shard: ShardEndpoint;
+    scope: { account_ids: string[] | null; sources: string[] | null };
+}
+
+export interface ListShardPlan {
+    live: ListTarget[];
+    stale: ListTarget[];
+    countDisabled: Set<string>;
+}
+
+/** 列表扇出前的分桶：stale（≥stalePct）不发网络请求走快照；degraded
+ * （≥degradePct）关远端 COUNT；其余原样。fail-open：状态不可得按全 live。 */
+export const planListShards = async (
+    env: { KV?: KVNamespace, SHARD_BREAKER_DEGRADE_PCT?: unknown, SHARD_BREAKER_STALE_PCT?: unknown },
+    targets: readonly ListTarget[],
+    rest: Record<string, unknown>,
+    pageSize: number,
+    nowMs: number = Date.now(),
+): Promise<ListShardPlan> => {
+    const plan: ListShardPlan = { live: [], stale: [], countDisabled: new Set<string>() };
+    if (!targets.length) return plan;
+    let modes = new Map<string, BreakerMode>();
+    try {
+        modes = await getShardBreakerModes(env, targets.map(target => target.shard), nowMs);
+    } catch {
+        return { live: [...targets], stale: [], countDisabled: plan.countDisabled };
+    }
+    for (const target of targets) {
+        const mode = modes.get(target.shard.id) ?? "normal";
+        if (mode === "stale") plan.stale.push(target);
+        else {
+            plan.live.push(target);
+            if (mode === "degraded") plan.countDisabled.add(target.shard.id);
+        }
+    }
+    return plan;
+};
+
+const fingerprintOf = (target: ListTarget, rest: Record<string, unknown>, pageSize: number): string =>
+    snapshotFingerprint(target.scope, rest, pageSize);
+
+/** 成功页落快照（best-effort + 写节流）；degraded 分片的失败页不落。 */
+export const persistListSnapshots = async (
+    env: { KV?: KVNamespace },
+    liveTargets: readonly ListTarget[],
+    pages: ReadonlyArray<Array<Record<string, unknown>>>,
+    degradedIds: readonly string[],
+    rest: Record<string, unknown>,
+    pageSize: number,
+    nowMs: number = Date.now(),
+): Promise<void> => {
+    for (let index = 0; index < liveTargets.length; index++) {
+        const page = pages[index];
+        if (!page?.length || degradedIds.includes(liveTargets[index].shard.id)) continue;
+        try {
+            await saveShardSnapshot(env, snapshotKey(liveTargets[index].shard.id, fingerprintOf(liveTargets[index], rest, pageSize)), page, nowMs);
+        } catch { /* best-effort */ }
+    }
+};
+
+export interface StalePages {
+    pages: Array<Array<Record<string, unknown>>>; // MergeEmailRow（结构化，见 federation 合并）
+    counts: null[];
+    staleIds: string[];
+    degradedIds: string[];
+    unavailableAccounts: string[];
+}
+
+/** stale 分片不发网络请求：有快照就「延迟可见」，无快照按不可达降级。 */
+export const serveStalePages = async (
+    env: { KV?: KVNamespace },
+    staleTargets: readonly ListTarget[],
+    rest: Record<string, unknown>,
+    pageSize: number,
+    nowMs: number = Date.now(),
+): Promise<StalePages> => {
+    const result: StalePages = { pages: [], counts: [], staleIds: [], degradedIds: [], unavailableAccounts: [] };
+    for (const target of staleTargets) {
+        const snapshot = await loadShardSnapshot(env, snapshotKey(target.shard.id, fingerprintOf(target, rest, pageSize)));
+        if (snapshot?.rows.length) {
+            result.pages.push(snapshot.rows);
+            result.counts.push(null);
+            result.staleIds.push(target.shard.id);
+        } else {
+            result.degradedIds.push(target.shard.id);
+            result.unavailableAccounts.push(...(target.scope.account_ids ?? []));
+        }
+    }
+    return result;
+};
