@@ -51,9 +51,9 @@ export default {
     getUnknowMails: async (c: Context<HonoCustomType>) => {
         const { limit, offset, with_count } = c.req.query();
         return await handleMailListQuery(c,
-            `SELECT * FROM raw_mails where address NOT IN (select name from address) `,
+            `SELECT * FROM raw_mails where address COLLATE NOCASE NOT IN (select name from address) `,
             `SELECT count(*) as count FROM raw_mails`
-            + ` where address NOT IN (select name from address) `,
+            + ` where address COLLATE NOCASE NOT IN (select name from address) `,
             [], limit, offset, undefined, { skipCount: !wantsLegacyCount(with_count) }
         );
     },

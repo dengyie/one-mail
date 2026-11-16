@@ -1,6 +1,7 @@
 import { Context } from "hono";
 import { createMimeMessage } from "mimetext";
 import { CONSTANTS } from "./constants.ts";
+import { normalizeRawMailAddress } from "./unified/addr_case.ts";
 import { compressText } from "./gzip.ts";
 import { getSetting, saveSetting, getJsonSetting, getJsonSettingStrict, deleteSetting } from './core/settings.ts';
 // settings 表读写唯一实现已迁至 core/settings.ts。此处既以 named re-export 保持
@@ -328,6 +329,8 @@ export const getEnvStringList = (value: string | string[] | undefined): string[]
 export const sendAdminInternalMail = async (
     c: Context<HonoCustomType>, toMail: string, subject: string, text: string
 ): Promise<boolean> => {
+    // raw_mails.address 写侧契约：统一小写规范形（与 emails.to_addr / 读侧绑定归一闭环）
+    const rawAddress = normalizeRawMailAddress(toMail);
     try {
 
         const msg = createMimeMessage();
@@ -355,14 +358,14 @@ export const sendAdminInternalMail = async (
                 try {
                     ({ success } = await c.env.DB.prepare(
                         `INSERT INTO raw_mails (source, address, raw_blob, message_id) VALUES (?, ?, ?, ?)`
-                    ).bind("admin@internal", toMail, compressed, message_id).run());
+                    ).bind("admin@internal", rawAddress, compressed, message_id).run());
                 } catch (dbError) {
                     const errMsg = String(dbError);
                     if (errMsg.includes('raw_blob') || errMsg.includes('no such column')) {
                         console.error("raw_blob column missing, falling back to plaintext", dbError);
                         ({ success } = await c.env.DB.prepare(
                             `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-                        ).bind("admin@internal", toMail, rawText, message_id).run());
+                        ).bind("admin@internal", rawAddress, rawText, message_id).run());
                     } else {
                         throw dbError;
                     }
@@ -370,12 +373,12 @@ export const sendAdminInternalMail = async (
             } else {
                 ({ success } = await c.env.DB.prepare(
                     `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-                ).bind("admin@internal", toMail, rawText, message_id).run());
+                ).bind("admin@internal", rawAddress, rawText, message_id).run());
             }
         } else {
             ({ success } = await c.env.DB.prepare(
                 `INSERT INTO raw_mails (source, address, raw, message_id) VALUES (?, ?, ?, ?)`
-            ).bind("admin@internal", toMail, rawText, message_id).run());
+            ).bind("admin@internal", rawAddress, rawText, message_id).run());
         }
         if (!success) {
             console.log(`Failed save message from admin@internal to ${toMail}`);
