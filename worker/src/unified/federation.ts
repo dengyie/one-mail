@@ -477,8 +477,9 @@ const fanOutExtra = async <T>(
     const owned = await listOwnedAccountIds(c);
     let targets = scopedTargets(map, rest, owned);
     // P4 熔断（/shard/count 等 count 类端点）：degraded/stale 分片不参与扇出，
-    // 既不烧濒死分片的配额，也不改变合并数值（此前它们按 ?? 0 计入）。
-    // 跳过的分片计入 degraded，保持「结果可能不完整」的既有语义。
+    // 不再烧濒死分片的配额。注意 80-90% 档的分片此前会贡献真实 count，跳过
+    // 后总数偏低——这正是规范「80% 跳 count」的预期取舍，响应以 degraded
+    // 标注「可能不完整」；≥90% 与不可达分片此前本就按失败计 0，数值不变。
     if (options.breaker && targets.length) {
         const plan = await planListShards(c.env, targets, rest, 0);
         const skipIds = new Set<string>([...plan.countDisabled, ...plan.stale.map(target => target.shard.id)]);
