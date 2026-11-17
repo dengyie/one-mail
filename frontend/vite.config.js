@@ -77,6 +77,16 @@ export default defineConfig({
       }
     })
   ],
+  // Vitest shares this config. plugin-vue compiles <img src="/logo.png"> into
+  // `import '/logo.png'` (includeAbsolute defaults to true outside devServer),
+  // and vitest's module runner turns that id into the file URL file:///logo.png,
+  // which createRequire rejects on Windows (no drive letter). Map the public
+  // asset to its real path so both platforms resolve it.
+  test: {
+    alias: {
+      '/logo.png': fileURLToPath(new URL('./public/logo.png', import.meta.url)),
+    },
+  },
   resolve: {
     alias: [
       {
