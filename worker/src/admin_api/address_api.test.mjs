@@ -49,7 +49,7 @@ test('admin deleteAddress also removes the unified emails rows', async () => {
     const db = makeDb({ source_meta: 'admin' });
     const response = await addressApi.deleteAddress(context(db));
     assert.equal(response.status, 200);
-    const emailsDelete = db.batchSql.filter((sql) => /DELETE FROM emails WHERE to_addr IN/.test(sql));
+    const emailsDelete = db.batchSql.filter((sql) => /DELETE FROM emails WHERE to_addr COLLATE NOCASE IN/.test(sql));
     assert.equal(emailsDelete.length, 1, JSON.stringify(db.batchSql));
     // The address row is deleted last, so the name subqueries still resolve.
     assert.match(db.batchSql.at(-1), /DELETE FROM address WHERE id = \?/);

@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS address (
 );
 
 CREATE INDEX IF NOT EXISTS idx_address_name ON address(name);
+CREATE INDEX IF NOT EXISTS idx_address_name_nocase ON address(name COLLATE NOCASE);
 
 CREATE INDEX IF NOT EXISTS idx_address_created_at ON address(created_at);
 
@@ -201,6 +202,8 @@ CREATE INDEX IF NOT EXISTS idx_emails_source_order_cursor
     ON emails(source, COALESCE(internal_date, received_at) DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_addr_nocase
+    ON emails(to_addr COLLATE NOCASE, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_imap_uid ON emails(imap_uid) WHERE imap_uid IS NOT NULL;
 
@@ -282,6 +285,9 @@ const UNIFIED_USAGE_INDEXES = [
     ['idx_emails_to_order_received', 'emails(to_addr, COALESCE(internal_date, received_at) DESC)'],
     ['idx_emails_to_read_received', 'emails(to_addr, is_read, received_at DESC)'],
     ['idx_emails_to_star_received', 'emails(to_addr, is_starred, received_at DESC)'],
+    // to_addr 是地址语义，读路径用 COLLATE NOCASE 比较。没有这个索引，
+    // 大小写不敏感的查询会退化成 emails 全表扫描，而 D1 按 rows_read 计费。
+    ['idx_emails_to_addr_nocase', 'emails(to_addr COLLATE NOCASE, received_at DESC)'],
 ] as const;
 const UNIFIED_USAGE_INDEX_STATEMENTS = UNIFIED_USAGE_INDEXES.map(([name, expression]) =>
     'CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + expression);
@@ -368,6 +374,8 @@ async function ensureLegacyColumns(db: D1Database): Promise<void> {
     await ensureTableColumns(db, 'raw_mails', [['metadata', 'TEXT'], ['raw_blob', 'BLOB'], ['unified_id', 'TEXT']]);
     await db.batch([
         db.prepare(`CREATE INDEX IF NOT EXISTS idx_address_source_meta ON address(source_meta)`),
+        // 归属作用域按地址名大小写不敏感匹配（address.name 保留原始大小写）。
+        db.prepare(`CREATE INDEX IF NOT EXISTS idx_address_name_nocase ON address(name COLLATE NOCASE)`),
         db.prepare(`CREATE INDEX IF NOT EXISTS idx_raw_mails_message_id ON raw_mails(message_id)`),
     ]);
     await ensureTableColumns(db, 'raw_mails', [['mirror_pending', 'INTEGER NOT NULL DEFAULT 0']]);

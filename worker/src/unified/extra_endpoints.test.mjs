@@ -45,8 +45,8 @@ test("verifCodes domain mode suffix-matches whole domain and returns source", as
     assert.equal(res.body.results[0].source, "cf_routing");
     const { sql, binds } = captured();
     assert.ok(sql.includes("source = 'cf_routing'"), "domain mode must pin cf_routing");
-    assert.ok(sql.includes("to_addr LIKE ?"), "domain mode must suffix-match to_addr");
-    assert.ok(!sql.includes("to_addr = ?"), "domain mode must not pin a single to_addr");
+    assert.ok(sql.includes("to_addr COLLATE NOCASE LIKE ?"), "domain mode must suffix-match to_addr");
+    assert.ok(!sql.includes("to_addr COLLATE NOCASE = ?"), "domain mode must not pin a single to_addr");
     assert.equal(binds[0], "%@mangoqwq.com");
     assert.equal(typeof binds[binds.length - 1], "number", "last bind is the fresh-window since");
 });
@@ -56,14 +56,14 @@ test("verifCodes addr mode handles @domain and naked domain patterns with ESCAPE
     const ctxAt = makeCtx({ addr: "@dengyie.tech" }, [CODE_ROW]);
     await verifCodes(ctxAt.c);
     const capAt = ctxAt.captured();
-    assert.ok(capAt.sql.includes("to_addr LIKE ? ESCAPE '\\'"));
+    assert.ok(capAt.sql.includes("to_addr COLLATE NOCASE LIKE ? ESCAPE '\\'"));
     assert.equal(capAt.binds[0], "%@dengyie.tech");
 
     // 2. dengyie.tech
     const ctxDomain = makeCtx({ addr: "dengyie.tech" }, [CODE_ROW]);
     await verifCodes(ctxDomain.c);
     const capDomain = ctxDomain.captured();
-    assert.ok(capDomain.sql.includes("(to_addr = ? OR to_addr LIKE ? ESCAPE '\\')"));
+    assert.ok(capDomain.sql.includes("(to_addr COLLATE NOCASE = ? OR to_addr COLLATE NOCASE LIKE ? ESCAPE '\\')"));
     assert.equal(capDomain.binds[0], "dengyie.tech");
     assert.equal(capDomain.binds[1], "%@dengyie.tech");
 
@@ -71,7 +71,7 @@ test("verifCodes addr mode handles @domain and naked domain patterns with ESCAPE
     const ctxWildcard = makeCtx({ addr: "user_test*@dengyie.tech" }, [CODE_ROW]);
     await verifCodes(ctxWildcard.c);
     const capWildcard = ctxWildcard.captured();
-    assert.ok(capWildcard.sql.includes("to_addr LIKE ? ESCAPE '\\'"));
+    assert.ok(capWildcard.sql.includes("to_addr COLLATE NOCASE LIKE ? ESCAPE '\\'"));
     assert.equal(capWildcard.binds[0], "user\\_test%@dengyie.tech");
 });
 
@@ -81,7 +81,7 @@ test("verifCodes addr mode keeps exact to_addr pin", async () => {
     assert.deepEqual(res.body.results.map((r) => r.code), ["123456"]);
     assert.equal(res.body.results[0].to_addr, "user@mangoqwq.com");
     const { sql, binds } = captured();
-    assert.ok(sql.includes("AND to_addr = ?"), "addr mode must pin to_addr");
+    assert.ok(sql.includes("AND to_addr COLLATE NOCASE = ?"), "addr mode must pin to_addr");
     assert.equal(binds[0], "user@mangoqwq.com");
 });
 
@@ -93,7 +93,7 @@ test("verifCodes non-admin user domain filter stays scoped to tenant ownership w
     const { sql, binds } = captured();
     assert.ok(!sql.includes("0=1"), "must not trigger 0=1 fail-closed breaker for valid domain query");
     assert.ok(sql.includes("emails.account_id IN"), "must contain tenant ownership clause");
-    assert.ok(sql.includes("emails.source = 'cf_routing' AND emails.to_addr LIKE ? ESCAPE '\\'"));
+    assert.ok(sql.includes("emails.source = 'cf_routing' AND emails.to_addr COLLATE NOCASE LIKE ? ESCAPE '\\'"));
     assert.ok(binds.includes("%@dengyie.tech"), "must bind domain suffix parameter");
     assert.ok(binds.includes("u_tenant_42"), "must bind tenant user_id");
 });
@@ -105,8 +105,8 @@ test("verifCodes unified mode allows query without addr or domain, returning to_
     assert.deepEqual(res.body.results.map((r) => r.code), ["123456"]);
     assert.equal(res.body.results[0].to_addr, "user@mangoqwq.com");
     const { sql, binds } = captured();
-    assert.ok(!sql.includes("AND to_addr = ?"), "unified mode must not pin to_addr");
-    assert.ok(!sql.includes("to_addr LIKE ?"), "unified mode must not filter by domain pattern");
+    assert.ok(!sql.includes("AND to_addr COLLATE NOCASE = ?"), "unified mode must not pin to_addr");
+    assert.ok(!sql.includes("to_addr COLLATE NOCASE LIKE ?"), "unified mode must not filter by domain pattern");
     assert.equal(typeof binds[binds.length - 1], "number", "last bind is the fresh-window since");
 });
 

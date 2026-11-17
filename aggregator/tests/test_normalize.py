@@ -69,6 +69,32 @@ def test_normalize_explicit_provider_identity_is_preserved():
     assert e["source_uidvalidity"] is None
 
 
+def test_normalize_to_addr_is_lowercased_but_username_stays_exact():
+    """to_addr 是「地址语义」，必须归一成小写；account.username 是 IMAP/POP3/SMTP
+    登录名，必须逐字节保留（折叠大小写会让登录直接失败）。
+
+    回归：Worker 的收件人精确匹配用 COLLATE NOCASE，但入库若保留原始大小写，
+    二进制索引与全等比较在存量行上会漏掉那封「明明在库里」的验证码邮件。
+    """
+    mixed = AccountConfig(id="kw", source="imap_outlook", host="outlook.office365.com",
+                          port=993, username="KevinWalters5892@outlook.com", password="p")
+    e = normalize_message(RAW, mixed, "INBOX", uidvalidity=7, uid=4242,
+                          internal_date_ms=1700000000000)
+    assert e["to_addr"] == "kevinwalters5892@outlook.com"
+    # 登录名本身没被动过
+    assert mixed.username == "KevinWalters5892@outlook.com"
+    # account_id 是租户边界，保持账号 slug 原样
+    assert e["account_id"] == "kw"
+
+
+def test_normalize_to_addr_strips_surrounding_whitespace():
+    spaced = AccountConfig(id="kw", source="imap_outlook", host="h", port=993,
+                           username="  Kevin.Walters@outlook.com  ", password="p")
+    e = normalize_message(RAW, spaced, "INBOX", uidvalidity=7, uid=4243,
+                          internal_date_ms=None)
+    assert e["to_addr"] == "kevin.walters@outlook.com"
+
+
 def test_normalize_header_not_json_serializable():
     """真实邮件里某些头（如含 WS 折行+encoded-word 的畸形头）会被解析成
     email.header.Header/bytes 值，裸 json.dumps 会 TypeError。修复后应串行化成功。

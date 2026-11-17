@@ -34,6 +34,10 @@ export const PROVIDER_IDENTITY_INDEX_STATEMENTS = [
         ON emails(account_id, COALESCE(internal_date, received_at) DESC, id DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_emails_to_order_cursor
         ON emails(to_addr, COALESCE(internal_date, received_at) DESC, id DESC)`,
+    // to_addr 是地址语义，读路径用 COLLATE NOCASE 比较。没有这个索引，
+    // 大小写不敏感的查询会退化成 emails 全表扫描，而 D1 按 rows_read 计费。
+    `CREATE INDEX IF NOT EXISTS idx_emails_to_addr_nocase
+        ON emails(to_addr COLLATE NOCASE, received_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_emails_account_folder_order_cursor
         ON emails(account_id, source_folder, COALESCE(internal_date, received_at) DESC, id DESC)`,
     // 与上面的 order_cursor 家族同形：source 单列索引无法提供 ORDER BY 有序性，

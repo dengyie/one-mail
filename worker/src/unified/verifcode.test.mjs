@@ -75,25 +75,25 @@ test("buildVerifAddrClause constructs parameterized and escaped clauses", () => 
 
   // @domain
   assert.deepEqual(buildVerifAddrClause("@dengyie.tech"), {
-    clause: " AND to_addr LIKE ? ESCAPE '\\'",
+    clause: " AND to_addr COLLATE NOCASE LIKE ? ESCAPE '\\'",
     params: ["%@dengyie.tech"],
   });
 
   // Naked domain
   assert.deepEqual(buildVerifAddrClause("dengyie.tech"), {
-    clause: " AND (to_addr = ? OR to_addr LIKE ? ESCAPE '\\')",
+    clause: " AND (to_addr COLLATE NOCASE = ? OR to_addr COLLATE NOCASE LIKE ? ESCAPE '\\')",
     params: ["dengyie.tech", "%@dengyie.tech"],
   });
 
   // Wildcard with special LIKE characters
   assert.deepEqual(buildVerifAddrClause("user_sub%*@dengyie.tech"), {
-    clause: " AND to_addr LIKE ? ESCAPE '\\'",
+    clause: " AND to_addr COLLATE NOCASE LIKE ? ESCAPE '\\'",
     params: ["user\\_sub\\%%@dengyie.tech"],
   });
 
   // Exact address
   assert.deepEqual(buildVerifAddrClause("Admin@dengyie.tech"), {
-    clause: " AND to_addr = ?",
+    clause: " AND to_addr COLLATE NOCASE = ?",
     params: ["admin@dengyie.tech"],
   });
 });

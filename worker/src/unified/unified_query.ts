@@ -1,3 +1,5 @@
+import { TO_ADDR_NOCASE } from "./addr_case.ts";
+
 export interface EmailFilter { where: string; params: (string | number)[]; }
 
 export function buildEmailFilters(q: Record<string, string | undefined>): EmailFilter {
@@ -9,10 +11,17 @@ export function buildEmailFilters(q: Record<string, string | undefined>): EmailF
         if (parts.length === 1) { clauses.push(`${col} = ?`); params.push(parts[0]); }
         else if (parts.length > 1) { clauses.push(`${col} IN (${parts.map(() => "?").join(",")})`); params.push(...parts); }
     };
+    // to_addr 是地址语义：大小写不敏感比较，多值形态同样适用。
+    // source/account_id 是稳定标识（slug / UUID），绝不可折叠大小写。
+    const toAddrClause = (val: string) => {
+        const parts = val.split(",").map((s) => s.trim()).filter(Boolean);
+        if (parts.length === 1) { clauses.push(`${TO_ADDR_NOCASE} = ?`); params.push(parts[0]); }
+        else if (parts.length > 1) { clauses.push(`${TO_ADDR_NOCASE} IN (${parts.map(() => "?").join(",")})`); params.push(...parts); }
+    };
     if (q.source)      inClause("source", q.source);
     if (q.account_id)  inClause("account_id", q.account_id);
-    // to_addr：用户登录后的收件人地址归属过滤（用户 JWT 通道注入），同 inClause 多值模式
-    if (q.to_addr)     inClause("to_addr", q.to_addr);
+    // to_addr：用户登录后的收件人地址归属过滤（用户 JWT 通道注入），同多值模式
+    if (q.to_addr)     toAddrClause(q.to_addr);
     // domain：域名邮箱全域视图（cf_routing 本站邮件，收件地址以 @domain 结尾）。
     // 全域 catch-all 仅限管理员（外层 resolveScopedEmailFilter 强制校验 isAdmin/role=admin，非管理员直接 0=1 拒绝）。
     // 域名值限定合法字符集，杜绝 %/_ 等 LIKE 通配符造成全表匹配。
@@ -22,7 +31,7 @@ export function buildEmailFilters(q: Record<string, string | undefined>): EmailF
             return { where: "1=0", params: [] };
         }
         clauses.push("source = 'cf_routing'");
-        clauses.push("to_addr LIKE ?");
+        clauses.push(`${TO_ADDR_NOCASE} LIKE ?`);
         params.push(`%@${d}`);
     }
     if (q.unread === "1") { clauses.push("is_read = 0"); }

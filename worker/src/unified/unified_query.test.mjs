@@ -63,19 +63,19 @@ test("buildEmailFilters comma-separated source becomes IN clause (M4 multi-white
 
 test("buildEmailFilters scopes user mail by bound recipient addresses", () => {
   const f = buildEmailFilters({ to_addr: "alice@example.com,bob@example.com", unread: "1" });
-  assert.equal(f.where, "1=1 AND to_addr IN (?,?) AND is_read = 0");
+  assert.equal(f.where, "1=1 AND to_addr COLLATE NOCASE IN (?,?) AND is_read = 0");
   assert.deepEqual(f.params, ["alice@example.com", "bob@example.com"]);
 });
 
 test("buildEmailFilters domain filter pins cf_routing and suffix-matches to_addr", () => {
   const f = buildEmailFilters({ domain: "Mangoqwq.com" });
-  assert.equal(f.where, "1=1 AND source = 'cf_routing' AND to_addr LIKE ?");
+  assert.equal(f.where, "1=1 AND source = 'cf_routing' AND to_addr COLLATE NOCASE LIKE ?");
   assert.deepEqual(f.params, ["%@mangoqwq.com"]);
 });
 
 test("buildEmailFilters domain filter combines with other clauses", () => {
   const f = buildEmailFilters({ domain: "mangoqwq.com", unread: "1" });
-  assert.equal(f.where, "1=1 AND source = 'cf_routing' AND to_addr LIKE ? AND is_read = 0");
+  assert.equal(f.where, "1=1 AND source = 'cf_routing' AND to_addr COLLATE NOCASE LIKE ? AND is_read = 0");
   assert.deepEqual(f.params, ["%@mangoqwq.com"]);
 });
 

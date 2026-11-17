@@ -100,7 +100,7 @@ const deleteAddress = async (c: Context<HonoCustomType>) => {
         // the address so a later owner cannot inherit the previous owner's
         // history; the user-facing delete paths do the same (see common.ts).
         c.env.DB.prepare(
-            `DELETE FROM emails WHERE to_addr IN`
+            `DELETE FROM emails WHERE to_addr COLLATE NOCASE IN`
             + ` (select name from address where id = ?) `
         ).bind(id),
         c.env.DB.prepare(

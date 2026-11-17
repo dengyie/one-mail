@@ -25,7 +25,7 @@ const USER_OWNERSHIP_WHERE = `(
     )
     OR (
         emails.source = 'cf_routing'
-        AND emails.to_addr IN (
+        AND emails.to_addr COLLATE NOCASE IN (
             SELECT a.name FROM users_address ua
             JOIN address a ON a.id = ua.address_id
             WHERE ua.user_id = ?
@@ -72,7 +72,7 @@ export const resolveScopedEmailFilter = async (
         }
         const base = buildEmailFilters(q);
         return {
-            where: `(${base.where}) AND emails.to_addr = ?`,
+            where: `(${base.where}) AND emails.to_addr COLLATE NOCASE = ?`,
             params: [...base.params, addressAuth.address.toLowerCase()],
         };
     }
@@ -113,7 +113,7 @@ export const checkRowAccess = async (
                         SELECT 1 FROM users_address ua
                         JOIN address a ON a.id = ua.address_id
                         WHERE ua.user_id = ?
-                          AND a.name = ?
+                          AND a.name COLLATE NOCASE = ?
                           AND (a.source_meta IS NULL OR a.source_meta != 'external')
                     )
                 )

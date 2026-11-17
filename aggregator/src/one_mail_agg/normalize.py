@@ -153,7 +153,14 @@ def normalize_message(raw_bytes: bytes, account: AccountConfig, folder: str,
     # account_id is the authorization/tenant boundary. to_addr remains the
     # connected mailbox address for compatibility and display, but it is never
     # used to authorize an external mailbox message.
-    to_addr = account.username
+    #
+    # to_addr is stored lowercase: the mailbox address is an address semantic,
+    # not an identifier, and the Worker compares it case-insensitively
+    # (COLLATE NOCASE). Keeping the original case here made exact-address
+    # lookups miss rows that were plainly present (mixed-case usernames such as
+    # KevinWalters5892@outlook.com). account.username itself is untouched:
+    # it is the IMAP/POP3/SMTP login name and must stay byte-exact.
+    to_addr = account.username.strip().lower()
     legacy_uid = imap_uid_override or make_imap_uid(
         account.id, account.host, folder, uidvalidity, uid)
     if provider is not None:

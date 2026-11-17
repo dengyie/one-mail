@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS address (
 
 CREATE INDEX IF NOT EXISTS idx_address_name ON address(name);
 
+CREATE INDEX IF NOT EXISTS idx_address_name_nocase
+    ON address(name COLLATE NOCASE);
+
 CREATE INDEX IF NOT EXISTS idx_address_created_at ON address(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_address_updated_at ON address(updated_at);
@@ -226,6 +229,8 @@ CREATE INDEX IF NOT EXISTS idx_emails_source ON emails(source);
 CREATE INDEX IF NOT EXISTS idx_emails_source_received ON emails(source, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_account ON emails(account_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_addr ON emails(to_addr, received_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_to_addr_nocase
+    ON emails(to_addr COLLATE NOCASE, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_order_received ON emails(COALESCE(internal_date, received_at) DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_read_received ON emails(is_read, received_at DESC);

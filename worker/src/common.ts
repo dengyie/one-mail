@@ -641,7 +641,7 @@ const batchDeleteAddressWithData = async (
     // Unified inbox rows use to_addr for ownership checks. Remove them with the
     // address so a later owner cannot inherit the previous owner's history.
     await c.env.DB.prepare(
-        `DELETE FROM emails WHERE to_addr IN ( ` +
+        `DELETE FROM emails WHERE to_addr COLLATE NOCASE IN ( ` +
         `SELECT name FROM address WHERE ${addressQueryCondition})`
     ).run();
     await c.env.DB.prepare(
@@ -701,7 +701,7 @@ export const deleteAddressWithData = async (
         `DELETE FROM raw_mails WHERE address = ? `
     ).bind(address).run();
     const { success: unifiedMailSuccess } = await c.env.DB.prepare(
-        `DELETE FROM emails WHERE to_addr = ? `
+        `DELETE FROM emails WHERE to_addr COLLATE NOCASE = ? `
     ).bind(address).run();
     const { success: sendAccess } = await c.env.DB.prepare(
         `DELETE FROM address_sender WHERE address = ? `

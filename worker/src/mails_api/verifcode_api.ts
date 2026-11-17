@@ -29,6 +29,8 @@ export const fetchAddressVerifCodes = async (
 
     // 1. 优先走优化投影的 emails 表（利用索引 idx_emails_to_addr，截断前 3000 字符）
     // 扫描深度：lim * 5，下限 50，上限 100，确保在普通邮件干扰下仍能扫出验证码
+    // to_addr 用 COLLATE NOCASE 比较：入库保留原始大小写（KevinWalters5892@outlook.com），
+    // 绑定参数再 lower() 也匹配不到——二进制全等永远落空。
     const fetchLimit = Math.min(Math.max(lim * 5, 50), 100);
     const { results } = await c.env.DB.prepare(
         `SELECT subject,
@@ -39,7 +41,7 @@ export const fetchAddressVerifCodes = async (
                      THEN substr(html_body, 1, 3000)
                      ELSE '' END AS html_body,
                 from_addr, to_addr, received_at, source FROM emails
-         WHERE to_addr = ? AND received_at >= ?
+         WHERE to_addr COLLATE NOCASE = ? AND received_at >= ?
          ORDER BY received_at DESC LIMIT ?`
     ).bind(address.toLowerCase(), since, fetchLimit).all();
 

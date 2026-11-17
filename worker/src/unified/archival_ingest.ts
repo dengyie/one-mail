@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { normalizeToAddr } from "./addr_case.ts";
 
 export const ARCHIVE_EMAIL_COLUMNS = [
     "id", "source", "account_id", "from_addr", "to_addr", "subject", "text_body", "html_body",
@@ -41,6 +42,10 @@ export function archivalValues(row: unknown, columns: readonly string[]): (strin
         }
         if (column === "source" && value === "cf_routing") throw new IngestValidationError("native email cannot be archived to a shard");
         if (column === "folder_type" && !folderTypes.has(value as string)) throw new IngestValidationError("invalid archive folder type");
+        // Archive replay must produce the same canonical row shape as a live
+        // ingest, otherwise a shard keeps the mixed-case to_addr that made
+        // exact-address lookups miss rows that were plainly present.
+        if (column === "to_addr") return normalizeToAddr(value as string);
         return value as string | number | null;
     });
 }
