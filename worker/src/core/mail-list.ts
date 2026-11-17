@@ -1,5 +1,6 @@
 import { Context } from "hono";
 import type { RawMailRow } from "../models";
+import { normalizeRawMailAddress } from "../unified/addr_case.ts";
 
 /**
  * raw_mails 表列表/计数/单行读取唯一实现（架构重构 P6，灭 T4）。
@@ -13,15 +14,18 @@ export const listRawMails = async (
   address: string,
   opts?: { limit?: number; offset?: number },
 ): Promise<RawMailRow[]> => {
+  // raw_mails 契约：绑定前归一成小写规范形（存储侧同契约），热路径保持
+  // 字节精确 `=` 以命中 idx_raw_mails_address，不做全表扫描的 NOCASE。
+  const addr = normalizeRawMailAddress(address);
   if (opts?.limit) {
     const rows = await c.env.DB.prepare(
       `SELECT * FROM raw_mails WHERE address = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
-    ).bind(address, opts.limit, opts.offset ?? 0).all<RawMailRow>();
+    ).bind(addr, opts.limit, opts.offset ?? 0).all<RawMailRow>();
     return rows.results;
   }
   const rows = await c.env.DB.prepare(
     `SELECT * FROM raw_mails WHERE address = ? ORDER BY id DESC`,
-  ).bind(address).all<RawMailRow>();
+  ).bind(addr).all<RawMailRow>();
   return rows.results;
 };
 
@@ -31,7 +35,7 @@ export const countRawMails = async (
 ): Promise<number> => {
   const row = await c.env.DB.prepare(
     `SELECT COUNT(*) AS c FROM raw_mails WHERE address = ?`,
-  ).bind(address).first<{ c: number }>();
+  ).bind(normalizeRawMailAddress(address)).first<{ c: number }>();
   return row?.c ?? 0;
 };
 
@@ -44,5 +48,5 @@ export const getRawMail = async (
 ): Promise<RawMailRow | null> => {
   return c.env.DB.prepare(
     `SELECT * FROM raw_mails WHERE id = ? AND address = ?`,
-  ).bind(id, address).first<RawMailRow>();
+  ).bind(id, normalizeRawMailAddress(address)).first<RawMailRow>();
 };

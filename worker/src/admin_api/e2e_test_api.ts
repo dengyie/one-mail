@@ -1,5 +1,6 @@
 import { Context } from 'hono'
 import { getBooleanValue } from '../utils'
+import { normalizeRawMailAddress } from '../unified/addr_case.ts'
 
 // Direct DB insert — bypasses the email() handler.
 const seedMail = async (c: Context<HonoCustomType>) => {
@@ -17,10 +18,13 @@ const seedMail = async (c: Context<HonoCustomType>) => {
         return c.text("message_id too long", 400);
     }
     const msgId = message_id || `<e2e-${Date.now()}@test>`;
+    // 与生产写侧同契约：raw_mails.address 落库规范小写（离线 e2e 的
+    // 「写入即归一」断言依赖此处）。
+    const addr = normalizeRawMailAddress(address);
     const { success } = await c.env.DB.prepare(
         `INSERT INTO raw_mails (message_id, source, address, raw, created_at)`
         + ` VALUES (?, ?, ?, ?, datetime('now'))`
-    ).bind(msgId, source || address, address, raw).run();
+    ).bind(msgId, source || addr, addr, raw).run();
     return c.json({ success });
 };
 

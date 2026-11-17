@@ -26,3 +26,16 @@ export const TO_ADDR_NOCASE = "to_addr COLLATE NOCASE";
  * 标识（slug / UUID），绝不可折叠大小写。
  */
 export const normalizeToAddr = (value: string): string => value.trim().toLowerCase();
+
+/**
+ * raw_mails.address 的规范形态（与 normalizeToAddr 同一契约，独立命名是为了
+ * grep 可见性）。
+ *
+ * raw_mails 是最大的表且只有二进制索引 idx_raw_mails_address——**不建 NOCASE
+ * 索引**（2026-11-16 PR #180 审计决策）。因此这一侧采取与 to_addr 相同的
+ * 单边契约：**写侧统一小写、读侧绑定前归一**（热路径列表/去重保持字节精确
+ * 全等、吃现有索引）；只有低频的 DELETE / 清理路径才允许 COLLATE NOCASE
+ * 容错（防残留/防误删，代价是放弃索引，见 common.ts / address_api.ts）。
+ * 历史混合大小写行由部署后的受控 UPDATE 订正（快照 + changes 断言）。
+ */
+export const normalizeRawMailAddress = (value: string): string => value.trim().toLowerCase();

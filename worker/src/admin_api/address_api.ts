@@ -93,7 +93,7 @@ const deleteAddress = async (c: Context<HonoCustomType>) => {
     // resolve and a failed statement rolls back the whole deletion
     const results = await c.env.DB.batch([
         c.env.DB.prepare(
-            `DELETE FROM raw_mails WHERE address IN`
+            `DELETE FROM raw_mails WHERE address COLLATE NOCASE IN`
             + ` (select name from address where id = ?) `
         ).bind(id),
         // Unified inbox rows use to_addr for ownership checks. Remove them with
@@ -133,7 +133,7 @@ const clearInbox = async (c: Context<HonoCustomType>) => {
     const msgs = i18n.getMessagesbyContext(c);
     const { id } = c.req.param();
     const { success: mailSuccess } = await c.env.DB.prepare(
-        `DELETE FROM raw_mails WHERE address IN`
+        `DELETE FROM raw_mails WHERE address COLLATE NOCASE IN`
         + ` (select name from address where id = ?) `
     ).bind(id).run();
     if (!mailSuccess) {

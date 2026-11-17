@@ -18,6 +18,7 @@ import { signAddressJwt } from './core/auth';
 import { sendWebhook } from './webhook/sender';
 export { sendWebhook, isValidWebhookHeaders, WEBHOOK_TIMEOUT_MS } from './webhook/sender';
 import i18n from './i18n';
+import { normalizeRawMailAddress } from "./unified/addr_case.ts";
 
 const DEFAULT_NAME_REGEX = /[^a-z0-9]/g;
 // Admin-specified names must land verbatim: the receive path matches addresses
@@ -595,7 +596,7 @@ export const cleanup = async (
             await c.env.DB.prepare(`
                 DELETE FROM raw_mails WHERE id IN (
                     SELECT id FROM raw_mails
-                    WHERE address NOT IN (SELECT name FROM address)
+                    WHERE address COLLATE NOCASE NOT IN (SELECT name FROM address)
                       AND created_at < datetime('now', ?)
                     ORDER BY created_at, id
                     LIMIT ?
@@ -618,7 +619,7 @@ export const cleanup = async (
                 c,
                 `id IN (
                     SELECT id FROM address
-                    WHERE name NOT IN (SELECT DISTINCT address FROM raw_mails WHERE address IS NOT NULL)
+                    WHERE name COLLATE NOCASE NOT IN (SELECT DISTINCT address FROM raw_mails WHERE address IS NOT NULL)
                       AND created_at < datetime('now', '-${cleanDays} day')
                     ORDER BY created_at, id
                     LIMIT ${cleanupBatchSize})`
@@ -634,8 +635,11 @@ const batchDeleteAddressWithData = async (
     c: Context<HonoCustomType>,
     addressQueryCondition: string,
 ): Promise<boolean> => {
+    // raw_mails 用 COLLATE NOCASE（与下方 emails 的 to_addr 处理对齐）：删除
+    // 是低频管理操作且「残留 = 隐私问题」，宁可放弃索引也不能漏删历史
+    // 混合大小写行（raw_mails 只有二进制索引，见 addr_case.ts 契约）。
     await c.env.DB.prepare(
-        `DELETE FROM raw_mails WHERE address IN ( ` +
+        `DELETE FROM raw_mails WHERE address COLLATE NOCASE IN ( ` +
         `SELECT name FROM address WHERE ${addressQueryCondition})`
     ).run();
     // Unified inbox rows use to_addr for ownership checks. Remove them with the
@@ -949,7 +953,7 @@ export async function triggerWebhook(
     }
     const mailId = await c.env.DB.prepare(
         `SELECT id FROM raw_mails where address = ? and message_id = ?`
-    ).bind(address, message_id).first<string>("id");
+    ).bind(normalizeRawMailAddress(address), message_id).first<string>("id");
 
     const parsedEmail = await commonParseMail(parsedEmailContext);
     const usableAiExtract = aiExtract?.type !== "none" && aiExtract?.result
