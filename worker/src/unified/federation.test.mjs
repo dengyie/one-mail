@@ -121,12 +121,12 @@ test("readonly source and account scope reaches list and every extra endpoint", 
         await federation.federatedListEmails(context(readonly), map, { rest: {}, limit: 1, withCount: false });
         for (const endpoint of [federation.federatedCount, federation.federatedStats, federation.federatedVerifCodes, federation.federatedMeta, federation.federatedFolders]) await endpoint(context(readonly), map);
     });
-    const list = JSON.parse(calls[0].init.body);
+    const business = calls.filter(call => !String(call.url).includes("/shard/quota")); // P4 quota 探针不算业务端点
+    const list = JSON.parse(business[0].init.body);
     assert.equal(list.source, "imap_gmail");
     assert.deepEqual(list.account_ids, ["mine"]);
-    for (const call of calls.slice(1)) {
-        const query = new URL(call.url).searchParams;
-        assert.equal(query.get("source"), "imap_gmail");
+    for (const call of business.slice(1)) {
+        const query = new URL(call.url).searchParams; assert.equal(query.get("source"), "imap_gmail");
         assert.deepEqual(JSON.parse(decodeURIComponent(call.init.headers["x-one-mail-shard-scope"])), { account_ids: ["mine"], sources: ["imap_gmail"] });
     }
 });

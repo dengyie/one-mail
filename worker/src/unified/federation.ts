@@ -1,4 +1,6 @@
 import type { Context } from "hono";
+import { planListShards, persistListSnapshots, serveStalePages } from "./shard_breaker.ts";
+import { remoteListPages } from "./shard_list_pages.ts";
 import {
     createShardResponseBudget, fanOutShardRequests, fetchShardJson,
     fetchShardStream,
@@ -92,7 +94,7 @@ const listOwnedAccountIds = async (c: Context<HonoCustomType>): Promise<string[]
     return accounts ? uniqueStrings(accounts.split(",")) : null;
 };
 
-type ScopedTarget = { shard: ShardEndpoint; scope: FederationScope };
+export type ScopedTarget = { shard: ShardEndpoint; scope: FederationScope };
 
 /** Group once by active owner; idle shards and stale copies are never queried. */
 const scopedTargets = (
@@ -125,9 +127,6 @@ const requestLimits = (c: Context<HonoCustomType>, maxBodyBytes: number): ShardF
     maxBodyBytes,
 });
 
-type RemoteList = { results?: UnifiedListRow[]; count?: number | null; has_more?: boolean; next_cursor?: string | null };
-const MAX_REMOTE_LIST_CALLS = 24;
-
 const localList = async (
     c: Context<HonoCustomType>,
     map: ShardMap,
@@ -157,71 +156,6 @@ const localList = async (
     });
 };
 
-const validRemotePage = (data: RemoteList, limit: number): data is RemoteList & { results: UnifiedListRow[] } => {
-    if (!Array.isArray(data.results) || data.results.length > limit) return false;
-    const ids = new Set<string>();
-    for (let index = 0; index < data.results.length; index++) {
-        const row = data.results[index];
-        if (!row || typeof row.id !== "string" || !row.id || !Number.isSafeInteger(row.received_at) || ids.has(row.id)) return false;
-        if (index && compareEmailOrder(data.results[index - 1], row) > 0) return false;
-        ids.add(row.id);
-    }
-    return data.count == null || (Number.isSafeInteger(data.count) && data.count >= 0);
-};
-
-/** Fetch only continuations that can affect the global boundary. Every wire page
- * has <=100 rows; an offset of 500 does not request 600 rows from every owner. */
-const remoteListPages = async (
-    targets: ScopedTarget[], input: FederatedListInput, local: MergeEmailRow[],
-    needed: number, limits: ShardFetchOptions,
-): Promise<{ pages: MergeEmailRow[][]; counts: (number | null)[]; degraded: string[]; unavailable: string[] }> => {
-    const states = targets.map(target => ({ ...target, rows: [] as UnifiedListRow[], cursor: input.offset === undefined ? input.cursor : undefined,
-        count: null as number | null, more: true, failed: false }));
-    let pending = states;
-    let calls = 0;
-    const pageSize = Math.min(100, needed);
-    while (pending.length) {
-        // At 12 owners, reserve 12 initial COUNTs plus primary auth/query work
-        // below the 50-query interaction budget; continuations never recount.
-        if (calls + pending.length > MAX_REMOTE_LIST_CALLS) { for (const state of pending) state.failed = true; break; }
-        calls += pending.length;
-        const requests: ShardRequest[] = pending.map(state => ({
-            shard: state.shard, path: "/shard/emails", init: {
-                method: "POST", scope: state.scope,
-                body: {
-                    account_ids: state.scope.account_ids, source: input.rest.source,
-                    unread: input.rest.unread, starred: input.rest.starred, q: input.rest.q,
-                    since: input.rest.since, until: input.rest.until, to_addr: input.rest.to_addr,
-                    limit: pageSize, cursor: state.cursor,
-                    with_count: input.withCount && state.rows.length === 0 ? 1 : 0,
-                },
-            },
-        }));
-        const results = await fanOutShardRequests<RemoteList>(requests, limits);
-        for (let index = 0; index < results.length; index++) {
-            const result = results[index];
-            const state = pending[index];
-            if (!result.ok || !validRemotePage(result.data, pageSize)) { state.failed = true; continue; }
-            const rows = result.data.results;
-            const previous = state.rows.at(-1);
-            if (previous && rows.length && compareEmailOrder(previous, rows[0]) >= 0) { state.failed = true; continue; }
-            if (state.rows.length === 0) state.count = result.data.count ?? null;
-            state.rows.push(...rows);
-            state.more = result.data.has_more === true && rows.length === pageSize;
-            const last = rows.at(-1);
-            state.cursor = state.more && last ? encodeEmailCursor(last.received_at, last.id) : undefined;
-        }
-        const merged = mergeSortedEmailPages([local, ...states.map(state => state.rows)], needed);
-        const boundary = merged.length === needed ? merged.at(-1) : undefined;
-        pending = states.filter(state => !state.failed && state.more
-            && (!boundary || compareEmailOrder(state.rows[state.rows.length - 1], boundary) < 0));
-    }
-    return {
-        pages: states.map(state => state.rows), counts: states.map(state => state.count),
-        degraded: states.filter(state => state.failed).map(state => state.shard.id),
-        unavailable: states.filter(state => state.failed).flatMap(state => state.scope.account_ids ?? []),
-    };
-};
 
 /** Remote-map list. Caller must have already confirmed hasRemoteShards(map). */
 export const federatedListEmails = async (
@@ -257,13 +191,24 @@ export const federatedListEmails = async (
     const counts: (number | null)[] = [local.count];
 
     let unavailable: string[] = [];
+    const staleShards: string[] = [];
     if (!skipRemoteForFilter(input.rest)) {
         const owned = await listOwnedAccountIds(c);
-        const remote = await remoteListPages(scopedTargets(map, input.rest, owned), input, local.results, fetchLimit, limits);
+        const pageSize = Math.min(100, fetchLimit);
+        const plan = await planListShards(c.env, scopedTargets(map, input.rest, owned), input.rest, pageSize);
+        const remote = await remoteListPages(plan.live, input, local.results, fetchLimit, limits, plan.countDisabled);
         pages.push(...remote.pages);
         counts.push(...remote.counts);
         degraded.push(...remote.degraded);
         unavailable = remote.unavailable;
+        const paging = { cursor: input.cursor ?? null, offset: input.offset ?? null };
+        await persistListSnapshots(c.env, plan.live, remote.pages, remote.degraded, input.rest, pageSize, Date.now(), paging);
+        const stale = await serveStalePages(c.env, plan.stale, input.rest, pageSize, paging);
+        pages.push(...stale.pages as MergeEmailRow[][]);
+        counts.push(...stale.counts);
+        staleShards.push(...stale.staleIds);
+        degraded.push(...stale.degradedIds);
+        unavailable.push(...stale.unavailableAccounts);
     }
 
     const keep = input.offset !== undefined ? input.limit : input.limit + 1;
@@ -279,7 +224,8 @@ export const federatedListEmails = async (
     // A partial merge is not a complete snapshot. Never publish a total derived
     // from only the healthy owners, and never let a cursor cross an unavailable
     // owner boundary: the caller must retry this exact page after recovery.
-    const incomplete = degraded.length > 0;
+    // stale（延迟可见）与 degraded 同构成不完整视图，但快照行仍对用户可见。
+    const incomplete = degraded.length > 0 || staleShards.length > 0;
     // 没要总数就一律 null。翻了页（cursor / offset>0）即使要总数也不会重算，
     // 同样返回 null 而不是 0：0 会被读成「邮箱是空的」，而事实是「没算」。
     // 与单库 listEmails 的语义保持一致。
@@ -298,6 +244,7 @@ export const federatedListEmails = async (
         body.has_more = incomplete ? true : hasMore;
     }
     if (incomplete) body.degraded = degraded;
+    if (staleShards.length) body.stale = staleShards;
     return c.json(body);
 };
 
@@ -521,13 +468,27 @@ const fanOutExtra = async <T>(
     path: string,
     rest: Record<string, string | undefined>,
     limits: ShardFetchOptions,
+    options: { breaker?: boolean } = {},
 ): Promise<{ results: FanOutOk<T>[]; degraded: string[] }> => {
     const degraded: string[] = [];
     const results: FanOutOk<T>[] = [];
     rest = scopedRest(c, rest);
     if (skipRemoteForFilter(rest)) return { results, degraded };
     const owned = await listOwnedAccountIds(c);
-    const remote = await fanOutShardRequests<T>(scopedTargets(map, rest, owned).map(target => ({
+    let targets = scopedTargets(map, rest, owned);
+    // P4 熔断（/shard/count 等 count 类端点）：degraded/stale 分片不参与扇出，
+    // 不再烧濒死分片的配额。注意 80-90% 档的分片此前会贡献真实 count，跳过
+    // 后总数偏低——这正是规范「80% 跳 count」的预期取舍，响应以 degraded
+    // 标注「可能不完整」；≥90% 与不可达分片此前本就按失败计 0，数值不变。
+    if (options.breaker && targets.length) {
+        const plan = await planListShards(c.env, targets, rest, 0);
+        const skipIds = new Set<string>([...plan.countDisabled, ...plan.stale.map(target => target.shard.id)]);
+        if (skipIds.size) {
+            degraded.push(...targets.filter(target => skipIds.has(target.shard.id)).map(target => target.shard.id));
+            targets = targets.filter(target => !skipIds.has(target.shard.id));
+        }
+    }
+    const remote = await fanOutShardRequests<T>(targets.map(target => ({
         shard: target.shard, path: `${path}${queryStringForShard(rest, null)}`, init: { scope: target.scope },
     })), limits);
     for (const result of remote) {
@@ -586,7 +547,8 @@ export const federatedCount = async (
     const scoped = await localScopedWhere(c, map, rest);
     const localCount = await c.env.DB.prepare(`SELECT count(*) as count FROM emails WHERE ${scoped.where}`)
         .bind(...scoped.params).first("count");
-    const { results, degraded } = await fanOutExtra<{ count?: number }>(c, map, "/shard/count", rest, limits);
+    // P4：count 是全表扫描级端点，degraded/stale 分片跳过（数值不变，省配额）。
+    const { results, degraded } = await fanOutExtra<{ count?: number }>(c, map, "/shard/count", rest, limits, { breaker: true });
     const count = mergeCounts([
         Number(localCount || 0),
         ...results.map((result) => result.data.count ?? 0),
