@@ -304,6 +304,10 @@ async function deletionCost(db) {
     requireThat(!triggers.length, 'Email triggers prevent a bounded delete budget');
     const tables = await rows(db, "SELECT name FROM sqlite_master WHERE type = 'table'");
     for (const table of tables) {
+        // D1 internal tables (prefixed _cf_) reject PRAGMA table introspection with
+        // SQLITE_AUTH (HTTP 400); they are maintained by Cloudflare and can never
+        // declare a foreign key referencing user tables.
+        if (table.name.startsWith("_cf_")) continue;
         const fks = await rows(db, `PRAGMA foreign_key_list(${quoted(table.name.replaceAll('"', '""'))})`);
         requireThat(!fks.some(fk => fk.table === 'emails'), 'Foreign-key dependents prevent a bounded delete budget');
     }
