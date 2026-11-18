@@ -43,7 +43,7 @@ def quota_response(body=None, status=503):
     return response
 
 
-@pytest.mark.parametrize("code", ["D1_DAILY_READ_LIMIT", "D1_DAILY_WRITE_LIMIT"])
+@pytest.mark.parametrize("code", ["D1_DAILY_READ_LIMIT", "D1_DAILY_WRITE_LIMIT", "D1_HOURLY_READ_BUDGET"])
 def test_quota_response_preserves_reset_and_http_cause(code):
     response = quota_response({"code": code, "retry_at": "2026-10-09T00:00:00.000Z"})
     error = database_quota_error(response, NOW)
@@ -51,6 +51,15 @@ def test_quota_response_preserves_reset_and_http_cause(code):
     assert error.retry_at == RESET
     assert isinstance(error.__cause__, requests.HTTPError)
     assert error.__cause__.response is response
+
+
+def test_hourly_budget_retry_within_retention_window_is_honored():
+    retry_at = datetime.fromtimestamp(NOW + 1_800, tz=timezone.utc)
+    response = quota_response({"code": "D1_HOURLY_READ_BUDGET", "retry_at": retry_at.isoformat().replace("+00:00", "Z")})
+    error = database_quota_error(response, NOW)
+    assert error is not None
+    assert error.code == "D1_HOURLY_READ_BUDGET"
+    assert error.retry_at == NOW + 1_800
 
 
 @pytest.mark.parametrize("body", [
