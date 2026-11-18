@@ -12,8 +12,34 @@
  * Isolate eviction can lose pending deltas and the local throttle/cache.
  */
 
-export const D1_ROWS_READ_LIMIT = 5_000_000;
-export const D1_ROWS_WRITTEN_LIMIT = 100_000;
+import {
+    checkedSum,
+    coordinatorFor,
+    flagQuotaIssue,
+    isSafeCounter,
+    quotaIssues,
+    QuotaTelemetryError,
+    resolveShardId,
+    D1_ROWS_READ_HOURLY_LIMIT,
+    D1_ROWS_READ_LIMIT,
+    D1_ROWS_WRITTEN_LIMIT,
+    utcHourKeyOf,
+} from "./d1_quota_limits.ts";
+import {
+    acquireHourlyReadAllowance,
+    peekHourlyGateState,
+    recordHourlyUsage,
+    resetHourlyGateForTests,
+    setHourlyGateClock,
+} from "./d1_quota_hourly_gate.ts";
+
+export {
+    D1_ROWS_READ_LIMIT,
+    D1_ROWS_WRITTEN_LIMIT,
+    resolveShardId,
+    QuotaTelemetryError,
+};
+export { D1HourlyReadBudgetError, peekHourlyGateState as peekHourlyGateForTests } from "./d1_quota_hourly_gate.ts";
 export const D1_QUOTA_FLUSH_INTERVAL_MS = 300_000;
 export const D1_QUOTA_ATTEMPT_INTERVAL_MS = 30_000;
 export const D1_QUOTA_KV_PREFIX = "one-mail:d1quota:";
@@ -43,6 +69,11 @@ export type D1QuotaView = {
     rows_written_limit: number;
     rows_read_pct: number;
     rows_written_pct: number;
+    hour_key: string;
+    rows_read_hour: number;
+    rows_read_hour_limit: number;
+    rows_read_hour_pct: number;
+    rows_read_hour_reserved: number;
     pending_unflushed: QuotaDelta;
     flushed_at: number | null;
     flush_count: number;
@@ -63,7 +94,7 @@ let lastSuccessfulWriteAt: number | null = null;
 let flushInFlight: Promise<D1QuotaSnapshot> | null = null;
 const coordinatorDeltaByDate = new Map<string, { id: string; delta: QuotaDelta }>();
 let clock: QuotaClock = defaultClock;
-const accountingIssues = new Set<string>();
+const accountingIssues = quotaIssues;
 const missingSnapshots = new Set<string>();
 
 type QuotaCoordinatorNamespace = {
@@ -74,43 +105,6 @@ type QuotaCoordinatorBindings = {
     D1_QUOTA_COORDINATOR?: QuotaCoordinatorNamespace;
 };
 
-const coordinatorFor = (env: Bindings): QuotaCoordinatorNamespace | undefined =>
-    (env as unknown as QuotaCoordinatorBindings).D1_QUOTA_COORDINATOR;
-
-export class QuotaTelemetryError extends Error {
-    readonly operation: "get" | "put" | "parse" | "coordinator";
-    readonly shard_id: string;
-    readonly utc_date: string;
-    readonly key: string;
-    readonly status?: number;
-
-    constructor(
-        operation: "get" | "put" | "parse" | "coordinator",
-        shard_id: string,
-        utc_date: string,
-        key: string,
-        cause: unknown,
-        status?: number,
-    ) {
-        super(`D1 quota telemetry ${operation} failed for ${shard_id}/${utc_date} (${key})`, { cause });
-        this.name = "QuotaTelemetryError";
-        this.operation = operation;
-        this.shard_id = shard_id;
-        this.utc_date = utc_date;
-        this.key = key;
-        this.status = status;
-    }
-}
-
-const isSafeCounter = (value: unknown): value is number =>
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-
-const checkedSum = (left: number, right: number): number => {
-    if (!isSafeCounter(left) || !isSafeCounter(right) || !Number.isSafeInteger(left + right)) {
-        throw new RangeError("D1 quota counter is invalid or exceeds safe integer range");
-    }
-    return left + right;
-};
 
 const metaCounter = (value: unknown): number => {
     if (isSafeCounter(value)) return value;
@@ -158,6 +152,8 @@ export const resetD1QuotaStateForTests = (nextClock: QuotaClock = defaultClock):
     coordinatorDeltaByDate.clear();
     accountingIssues.clear();
     missingSnapshots.clear();
+    setHourlyGateClock(nextClock);
+    resetHourlyGateForTests(nextClock);
     clock = nextClock;
 };
 
@@ -181,6 +177,7 @@ export const recordD1Quota = (delta: QuotaDelta): void => {
         // instead of turning a committed business write into an apparent failure.
         accountingIssues.add("COUNTER_OVERFLOW");
     }
+    recordHourlyUsage(delta.rows_read);
 };
 
 const emptySnapshot = (shardId: string, utcDate: string): D1QuotaSnapshot => ({
@@ -214,11 +211,6 @@ const parseSnapshot = (raw: string | null, shardId: string, utcDate: string): D1
     }
 };
 
-export const resolveShardId = (env: { SHARD_ID?: string }): string => {
-    const id = typeof env.SHARD_ID === "string" ? env.SHARD_ID.trim() : "";
-    return id || "primary";
-};
-
 /**
  * Human-readable D1 database name for the local database, as shown on the admin
  * quota/maintenance cards. The Worker cannot introspect its own D1 binding's
@@ -237,17 +229,18 @@ export const isShardMode = (env: { SHARD_MODE?: string | boolean | number }): bo
 
 const originals = new WeakMap<object, D1PreparedStatement>();
 
-const wrapStatement = (stmt: D1PreparedStatement): D1PreparedStatement => {
+const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedStatement => {
     const wrapped = new Proxy(stmt, {
         get(target, prop, receiver) {
             if (prop === "bind") {
-                return (...args: unknown[]) => wrapStatement(target.bind(...(args as [])));
+                return (...args: unknown[]) => wrapStatement(target.bind(...(args as [])), env);
             }
             if (prop === "first") {
                 // first() does not return meta. all() is the same prepared SQL and
                 // does. Callers of first() in this Worker are COUNT(*) or unique
                 // lookups (0–1 rows); do not use first() on unbounded SELECT *.
                 return async <T = unknown>(colName?: string): Promise<T | null> => {
+                    if (env) await acquireHourlyReadAllowance(env);
                     const result = await target.all<Record<string, unknown>>();
                     recordD1Quota(resultDelta(result));
                     const row = result.results?.[0] ?? null;
@@ -265,6 +258,7 @@ const wrapStatement = (stmt: D1PreparedStatement): D1PreparedStatement => {
             }
             if (prop === "all") {
                 return async <T = Record<string, unknown>>(...args: unknown[]) => {
+                    if (env) await acquireHourlyReadAllowance(env);
                     const result = await (target.all as (...a: unknown[]) => Promise<D1Result<T>>).apply(target, args);
                     recordD1Quota(resultDelta(result));
                     return result;
@@ -272,6 +266,7 @@ const wrapStatement = (stmt: D1PreparedStatement): D1PreparedStatement => {
             }
             if (prop === "run") {
                 return async (...args: unknown[]) => {
+                    if (env) await acquireHourlyReadAllowance(env);
                     const result = await (target.run as (...a: unknown[]) => Promise<D1Result>).apply(target, args);
                     recordD1Quota(resultDelta(result));
                     return result;
@@ -288,13 +283,14 @@ const wrapStatement = (stmt: D1PreparedStatement): D1PreparedStatement => {
 const unwrapStatement = (statement: D1PreparedStatement): D1PreparedStatement =>
     originals.get(statement) ?? statement;
 
-export const wrapD1 = (db: D1Database): D1Database => new Proxy(db, {
+export const wrapD1 = (db: D1Database, env?: Bindings): D1Database => new Proxy(db, {
     get(target, prop, receiver) {
         if (prop === "prepare") {
-            return (query: string) => wrapStatement(target.prepare(query));
+            return (query: string) => wrapStatement(target.prepare(query), env);
         }
         if (prop === "batch") {
             return async <T = unknown>(statements: D1PreparedStatement[]) => {
+                if (env) await acquireHourlyReadAllowance(env);
                 const results = await target.batch<T>(statements.map(unwrapStatement));
                 for (const result of results) recordD1Quota(resultDelta(result));
                 return results;
@@ -307,7 +303,7 @@ export const wrapD1 = (db: D1Database): D1Database => new Proxy(db, {
 
 export const attachD1Quota = (env: Bindings): Bindings => {
     if (!env.DB) return env;
-    return { ...env, DB: wrapD1(env.DB) };
+    return { ...env, DB: wrapD1(env.DB, env) };
 };
 
 export const maybeFlushD1Quota = (
@@ -539,6 +535,9 @@ export const viewD1Quota = async (env: Bindings): Promise<D1QuotaView> => {
     if (missingSnapshots.has(utcDate)) issues.add("MISSING_SNAPSHOT");
     const stale = stored.flushed_at > 0 && (clock.now() - stored.flushed_at > 900_000 || stored.flushed_at > clock.now());
     if (stale) issues.add("STALE_SNAPSHOT");
+    const hourBucket = peekHourlyGateState() ?? {
+        hourKey: utcHourKeyOf(clock.now()), reserved: 0, used: 0, exhausted: false,
+    };
     return {
         shard_id: shardId,
         utc_date: utcDate,
@@ -548,6 +547,11 @@ export const viewD1Quota = async (env: Bindings): Promise<D1QuotaView> => {
         rows_written_limit: D1_ROWS_WRITTEN_LIMIT,
         rows_read_pct: percentOf(rows_read, D1_ROWS_READ_LIMIT),
         rows_written_pct: percentOf(rows_written, D1_ROWS_WRITTEN_LIMIT),
+        hour_key: hourBucket.hourKey,
+        rows_read_hour: hourBucket.used,
+        rows_read_hour_limit: D1_ROWS_READ_HOURLY_LIMIT,
+        rows_read_hour_pct: percentOf(hourBucket.used, D1_ROWS_READ_HOURLY_LIMIT),
+        rows_read_hour_reserved: Math.max(0, hourBucket.reserved - hourBucket.used),
         pending_unflushed: { ...pending },
         flushed_at: stored.flushed_at > 0 ? stored.flushed_at : null,
         flush_count: stored.flush_count,
