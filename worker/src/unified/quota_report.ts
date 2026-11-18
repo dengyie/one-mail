@@ -20,6 +20,7 @@ import type { Context } from "hono";
 import {
     D1_ROWS_READ_LIMIT, D1_ROWS_WRITTEN_LIMIT, resolveDatabaseName, utcDateOf, viewD1Quota, type D1QuotaView,
 } from "../core/d1_quota.ts";
+import { D1_ROWS_READ_HOURLY_LIMIT, utcHourKeyOf } from "../core/d1_quota_limits.ts";
 import {
     createShardResponseBudget, fanOutShards, SHARD_LIST_MAX_BYTES, type ShardFetchOptions,
 } from "./shard_client.ts";
@@ -98,6 +99,11 @@ const unavailableReport = (
     rows_written_limit: D1_ROWS_WRITTEN_LIMIT,
     rows_read_pct: 0,
     rows_written_pct: 0,
+    hour_key: utcHourKeyOf(Date.now()),
+    rows_read_hour: 0,
+    rows_read_hour_limit: D1_ROWS_READ_HOURLY_LIMIT,
+    rows_read_hour_pct: 0,
+    rows_read_hour_reserved: 0,
     pending_unflushed: { rows_read: 0, rows_written: 0 },
     flushed_at: null,
     flush_count: 0,

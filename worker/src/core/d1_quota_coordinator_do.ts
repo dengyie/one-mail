@@ -16,7 +16,14 @@ const KV_LAST_ATTEMPT_KEY = "meta:kv_last_attempt_at";
 const D1_QUOTA_KV_PREFIX = "one-mail:d1quota:";
 const STATE_PREFIX = "state:";
 const DELTA_PREFIX = "delta:";
+const HOUR_PREFIX = "hour:";
 const SNAPSHOT_TTL_SECONDS = 3 * 24 * 60 * 60;
+
+// Hourly read-budget ledger for the fail-closed gate (see d1_quota.ts). The DO
+// serializes reservations across isolates so the aggregate stays inside the
+// per-hour allowance; keep in sync with d1_quota_limits.ts.
+import { D1_ROWS_READ_HOURLY_LIMIT, isHourKey, utcHourKeyOf } from "./d1_quota_limits.ts";
+const HOURLY_LIMIT = D1_ROWS_READ_HOURLY_LIMIT;
 
 type CoordinatorState = {
     v: 1;
@@ -30,10 +37,11 @@ type CoordinatorState = {
 };
 
 type DeltaRequest = {
-    action?: "delta";
+    action?: "delta" | "reserve";
     shard_id?: string;
     utc_date?: string;
     delta_id?: string;
+    hour_key?: string;
     rows_read?: number;
     rows_written?: number;
     now?: number;
@@ -146,6 +154,16 @@ export class D1QuotaCoordinatorDurableObject implements DurableObject {
             if (expired.size) await this.state.storage.delete([...expired.keys()]);
             more ||= expired.size === CLEANUP_BATCH_SIZE;
         }
+        // Hour buckets live for one hour; drop everything from earlier hours.
+        const currentHour = utcHourKeyOf(now);
+        for (let i = 0; i < 8; i++) {
+            const expiredHours = await this.state.storage.list({ prefix: HOUR_PREFIX, limit: CLEANUP_BATCH_SIZE });
+            if (!expiredHours.size) break;
+            const stale = [...expiredHours.keys()].filter((k) => k.slice(HOUR_PREFIX.length) !== currentHour);
+            if (!stale.length) break;
+            await this.state.storage.delete(stale);
+            more = stale.length === CLEANUP_BATCH_SIZE;
+        }
         await this.state.storage.setAlarm(more ? now + 1_000 : (Math.floor(now / DAY_MS) + 1) * DAY_MS + 1_000);
     }
 
@@ -167,6 +185,35 @@ export class D1QuotaCoordinatorDurableObject implements DurableObject {
         if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
 
         const body = await request.json<DeltaRequest>().catch(() => null);
+
+        // Reservation path: authoritative cross-isolate hourly read budget. The
+        // hour bucket is stored transactionally; granted is clamped to the
+        // remaining allowance so aggregate reservations can never overspend.
+        if (body?.action === "reserve") {
+            const shardId = typeof body.shard_id === "string" ? body.shard_id : "";
+            if (!shardId || !isHourKey(body.hour_key) || body.hour_key !== utcHourKeyOf(now)
+                || !isSafeCounter(body.rows_read) || body.rows_read <= 0
+                || (!isSafeCounter(body.now) || body.now <= 0 || body.now > 8_640_000_000_000_000)) {
+                return Response.json({ ok: false, error: "invalid reserve request" }, { status: 400 });
+            }
+            const hourStateKey = `${HOUR_PREFIX}${body.hour_key}`;
+            try {
+                const granted = await this.state.storage.transaction<number>(async (txn) => {
+                    const used = (await txn.get<number>(hourStateKey)) ?? 0;
+                    if (!isSafeCounter(used)) throw new Error("invalid persisted hour ledger");
+                    const remaining = Math.max(0, HOURLY_LIMIT - used);
+                    const allowance = Math.min(body.rows_read!, remaining);
+                    if (allowance > 0) await txn.put(hourStateKey, used + allowance);
+                    return allowance;
+                });
+                const spent = await this.state.storage.get<number>(hourStateKey) ?? 0;
+                return Response.json({ ok: true, granted, remaining: Math.max(0, HOURLY_LIMIT - spent) });
+            } catch (cause) {
+                console.error("quota reserve failed", { error: cause });
+                return Response.json({ ok: false, error: "quota reserve failed" }, { status: 503 });
+            }
+        }
+
         if (!body || body.action !== "delta" || !validUtcDate(body.utc_date)
             || !validId(body.delta_id) || typeof body.shard_id !== "string" || !body.shard_id
             || !isSafeCounter(body.rows_read) || !isSafeCounter(body.rows_written)
