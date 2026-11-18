@@ -233,6 +233,8 @@ CREATE INDEX IF NOT EXISTS idx_emails_to_addr_nocase
     ON emails(to_addr COLLATE NOCASE, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_received ON emails(received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_order_received ON emails(COALESCE(internal_date, received_at) DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_account_sortkey
+    ON emails(account_id, COALESCE(internal_date, received_at) DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_read_received ON emails(is_read, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_star_received ON emails(is_starred, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_to_order_received ON emails(to_addr, COALESCE(internal_date, received_at) DESC);
