@@ -17,7 +17,7 @@ test("cursorPredicate implements descending keyset tie-break", () => {
   const predicate = cursorPredicate({ v: 1, sortKey: 42, id: "m-2" });
   assert.equal(
     predicate.sql,
-    "(COALESCE(internal_date, received_at) < ? OR (COALESCE(internal_date, received_at) = ? AND id < ?))",
+    "(COALESCE(internal_date, received_at) <= ? AND (COALESCE(internal_date, received_at) < ? OR id < ?))",
   );
   assert.deepEqual(predicate.params, [42, 42, "m-2"]);
 });

@@ -61,6 +61,9 @@ export const decodeEmailCursor = (value: string): EmailCursor => {
 };
 
 export const cursorPredicate = (cursor: EmailCursor): { sql: string; params: (string | number)[] } => ({
-    sql: `(COALESCE(internal_date, received_at) < ? OR (COALESCE(internal_date, received_at) = ? AND id < ?))`,
+    // Equivalent to (expr < ? OR (expr = ? AND id < ?)) but AND-shaped so SQLite
+    // can push `expr <= ?` into the idx_emails_account_sortkey range seek
+    // instead of filtering a full index scan on every cursor page.
+    sql: `(COALESCE(internal_date, received_at) <= ? AND (COALESCE(internal_date, received_at) < ? OR id < ?))`,
     params: [cursor.sortKey, cursor.sortKey, cursor.id],
 });
