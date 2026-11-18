@@ -3,11 +3,18 @@ import asyncio
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 import json
+import os
 import sqlite3
 
 import pytest
 
 from one_mail_agg import fleet_metrics as metrics
+
+# record_history() refuses world-readable parent directories, a POSIX
+# permission-bit contract Windows NTFS cannot represent (st_mode is always
+# 0o777 there), so every test exercising the private history directory is
+# POSIX-only. Matches the skipif convention in test_d1_backup.py/test_token_store.py.
+posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits only")
 
 
 NOW = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
@@ -147,6 +154,7 @@ def test_explicit_empty_aggregate_is_zero_but_missing_field_is_unknown():
         metrics._analytics(value, ACCOUNT_ID, "d1AnalyticsAdaptiveGroups", ("rowsRead",))
 
 
+@posix_only
 def test_partial_size_failure_preserves_other_database_and_denies_allocation(history):
     transport = FakeTransport()
     transport.failures[DB_B] = metrics.MetricsError("REQUEST_TIMEOUT")
@@ -185,6 +193,7 @@ def test_concurrency_is_bounded_and_calling_task_cancellation_drains_children():
     assert transport.cancelled == 4
 
 
+@posix_only
 def test_three_distinct_contiguous_buckets_required_and_duplicates_do_not_count(history):
     first = record(history, sample())
     assert first.consecutive_valid_samples == 1 and not first.allocation_eligible
@@ -198,6 +207,7 @@ def test_three_distinct_contiguous_buckets_required_and_duplicates_do_not_count(
     assert gap.consecutive_valid_samples == 1 and not gap.allocation_eligible
 
 
+@posix_only
 def test_partial_sample_breaks_consecutive_chain(history):
     record(history, sample())
     partial = replace(sample(NOW + timedelta(minutes=5)), confidence="partial", issues=("d1:REQUEST_TIMEOUT",), rows_read=None)
@@ -206,6 +216,7 @@ def test_partial_sample_breaks_consecutive_chain(history):
     assert result.consecutive_valid_samples == 1 and not result.allocation_eligible
 
 
+@posix_only
 def test_regression_stays_invalid_until_highwater_recovered(history):
     record(history, sample(reads=1000))
     regressed = record(history, sample(NOW + timedelta(minutes=5), reads=100))
@@ -216,6 +227,7 @@ def test_regression_stays_invalid_until_highwater_recovered(history):
     assert recovered.confidence == "authoritative" and recovered.consecutive_valid_samples == 1
 
 
+@posix_only
 def test_regression_inside_same_bucket_does_not_erase_highwater(history):
     record(history, sample(reads=1000))
     record(history, sample(NOW + timedelta(seconds=30), reads=100))
@@ -223,6 +235,7 @@ def test_regression_inside_same_bucket_does_not_erase_highwater(history):
     assert "COUNTER_REGRESSION" in result.issues
 
 
+@posix_only
 def test_utc_midnight_resets_counters_and_streak(history):
     before = datetime(2026, 10, 8, 23, 55, tzinfo=timezone.utc)
     record(history, sample(before, reads=100000))
@@ -233,11 +246,13 @@ def test_utc_midnight_resets_counters_and_streak(history):
 
 
 @pytest.mark.parametrize("delta", [timedelta(minutes=16), timedelta(seconds=-1)])
+@posix_only
 def test_expired_or_future_samples_are_stale(history, delta):
     result = record(history, sample(), NOW + delta)
     assert result.confidence == "stale" and not result.allocation_eligible
 
 
+@posix_only
 def test_sample_completed_across_midnight_is_stale(history):
     started = datetime(2026, 10, 8, 23, 59, 59, tzinfo=timezone.utc)
     result = record(history, sample(started), started + timedelta(seconds=2))
@@ -257,6 +272,7 @@ def test_timezone_conversion_and_naive_time_rejection():
         asyncio.run(metrics.collect(metrics.CollectorConfig((ACCOUNT,)), transport, NOW.replace(tzinfo=None)))
 
 
+@posix_only
 def test_history_prunes_old_days_and_remains_private(history):
     for age in range(10, -1, -1):
         moment = NOW - timedelta(days=age)
@@ -268,6 +284,7 @@ def test_history_prunes_old_days_and_remains_private(history):
     assert history.stat().st_mode & 0o777 == 0o600
 
 
+@posix_only
 def test_history_refuses_shared_directory_and_symlinks(history, tmp_path):
     history.parent.chmod(0o755)
     with pytest.raises(metrics.MetricsError, match="PRIVATE_HISTORY_DIRECTORY_REQUIRED"):
@@ -281,6 +298,7 @@ def test_history_refuses_shared_directory_and_symlinks(history, tmp_path):
     assert target.read_text() == "unrelated"
 
 
+@posix_only
 def test_delayed_same_bucket_sample_cannot_replace_newer_report(history):
     record(history, sample(NOW + timedelta(seconds=30), reads=100))
     with pytest.raises(metrics.MetricsError, match="OUT_OF_ORDER_SAMPLE"):
@@ -359,6 +377,7 @@ def test_transport_does_not_open_socket_without_credentials(monkeypatch):
         asyncio.run(metrics.CloudflareTransport({}).request(ACCOUNT, "/client/v4/graphql", {}, 1))
 
 
+@posix_only
 def test_historical_reconciliation_reads_complete_day_but_cannot_allocate(history):
     yesterday = NOW.date() - timedelta(days=1)
     transport = FakeTransport()
@@ -382,6 +401,7 @@ def test_out_of_retention_or_future_collection_is_rejected_before_io():
     assert not transport.calls
 
 
+@posix_only
 def test_historical_reconciliation_reuses_final_bucket(history):
     yesterday = NOW.date() - timedelta(days=1)
     first = replace(sample(), utc_date=yesterday.isoformat())
@@ -392,6 +412,7 @@ def test_historical_reconciliation_reuses_final_bucket(history):
         assert connection.execute("SELECT count(*) FROM fleet_samples").fetchone()[0] == 1
 
 
+@posix_only
 def test_history_is_atomic_if_later_account_fails_validation(history):
     broken = replace(sample(), account_key="other", rows_read=-1)
     with pytest.raises(metrics.MetricsError, match="INVALID_COUNTER"):
@@ -401,6 +422,7 @@ def test_history_is_atomic_if_later_account_fails_validation(history):
         assert connection.execute("SELECT count(*) FROM fleet_samples").fetchone()[0] == 1
 
 
+@posix_only
 def test_history_open_error_has_stable_code_and_original_cause(history, monkeypatch):
     def unavailable(*args, **kwargs):
         raise sqlite3.OperationalError("filesystem unavailable")
@@ -410,6 +432,7 @@ def test_history_open_error_has_stable_code_and_original_cause(history, monkeypa
     assert isinstance(error.value.__cause__, sqlite3.OperationalError)
 
 
+@posix_only
 def test_missing_counters_never_become_authoritative_in_history(history):
     result = record(history, replace(sample(), rows_read=None))
     assert result.confidence == "partial" and "MISSING_METRICS" in result.issues
