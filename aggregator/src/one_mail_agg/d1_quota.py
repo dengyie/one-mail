@@ -22,7 +22,9 @@ def database_quota_error(response: requests.Response, now: float) -> DatabaseQuo
     if not isinstance(body, dict):
         return None
     code = body.get("code")
-    if not isinstance(code, str) or code not in {"D1_DAILY_READ_LIMIT", "D1_DAILY_WRITE_LIMIT"}:
+    if not isinstance(code, str) or code not in {
+        "D1_DAILY_READ_LIMIT", "D1_DAILY_WRITE_LIMIT", "D1_HOURLY_READ_BUDGET",
+    }:
         return None
     value = body.get("retry_at")
     if not isinstance(value, str):

@@ -15,7 +15,6 @@
 import {
     checkedSum,
     coordinatorFor,
-    flagQuotaIssue,
     isSafeCounter,
     quotaIssues,
     QuotaTelemetryError,
@@ -39,7 +38,7 @@ export {
     resolveShardId,
     QuotaTelemetryError,
 };
-export { D1HourlyReadBudgetError, peekHourlyGateState as peekHourlyGateForTests } from "./d1_quota_hourly_gate.ts";
+export { D1HourlyReadBudgetError } from "./d1_quota_hourly_gate.ts";
 export const D1_QUOTA_FLUSH_INTERVAL_MS = 300_000;
 export const D1_QUOTA_ATTEMPT_INTERVAL_MS = 30_000;
 export const D1_QUOTA_KV_PREFIX = "one-mail:d1quota:";

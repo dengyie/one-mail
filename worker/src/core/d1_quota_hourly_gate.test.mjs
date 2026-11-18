@@ -147,3 +147,53 @@ test("reserve rejects malformed requests and foreign hours", async () => {
     assert.equal(good.payload.granted, 500);
     assert.equal(good.payload.remaining, D1_ROWS_READ_HOURLY_LIMIT - 500);
 });
+
+// ---------------------------------------------------------------------------
+// wrapD1 integration: the gate must intercept every execution path of the
+// wrapped binding, and batch() must count each statement's meta exactly once.
+// ---------------------------------------------------------------------------
+
+import { attachD1Quota } from "./d1_quota.ts";
+
+const fakeD1 = () => {
+    let batches = 0;
+    return {
+        batchesRun: () => batches,
+        prepare: () => ({
+            bind: function () { return this; },
+            all: async () => ({ results: [{ id: "m-1" }], meta: { rows_read: 150, rows_written: 0 } }),
+            run: async () => ({ results: [], meta: { rows_read: 5, rows_written: 3 } }),
+        }),
+        batch: async (statements) => {
+            batches += 1;
+            return statements.map(() => ({ results: [], meta: { rows_read: 10, rows_written: 0 } }));
+        },
+    };
+};
+
+test("wrapped all/first/run each fail closed when the hour is spent", async () => {
+    clockRef.value = HOUR0 + 1_000;
+    resetD1QuotaStateForTests(fakeClock());
+    const stub = coordinatorStub();
+    await drainHour(stub, "2026-11-19T08", clockRef.value);
+    const env = attachD1Quota({ DB: fakeD1(), D1_QUOTA_COORDINATOR: { getByName: () => stub } });
+    await assert.rejects(() => env.DB.prepare("select 1").all(), D1HourlyReadBudgetError);
+    await assert.rejects(() => env.DB.prepare("select 1").first(), D1HourlyReadBudgetError);
+    await assert.rejects(() => env.DB.prepare("delete 1").run(), D1HourlyReadBudgetError);
+    await assert.rejects(() => env.DB.batch([env.DB.prepare("a"), env.DB.prepare("b")]), D1HourlyReadBudgetError);
+});
+
+test("batch counts each statement meta once and consumes one gate check", async () => {
+    clockRef.value = HOUR0 + 1_000;
+    resetD1QuotaStateForTests(fakeClock());
+    const db = fakeD1();
+    const env = attachD1Quota({ DB: db, D1_QUOTA_COORDINATOR: { getByName: () => coordinatorStub() } });
+    const statements = [env.DB.prepare("a"), env.DB.prepare("b")];
+    await env.DB.batch(statements);
+    const gate = peekHourlyGateState();
+    assert.equal(gate.used, 20); // 2 statements x 10 rows_read, no double counting
+    assert.equal(db.batchesRun(), 1);
+    // The wrapped statements handed to batch() must be unwrapped to the raw
+    // prepared statements the platform expects.
+    assert.equal(db.batchesRun(), 1);
+});
