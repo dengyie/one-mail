@@ -13,6 +13,7 @@ from .mutation_jobs import process_mutation_jobs
 from .outbound_jobs import process_outbound_jobs, OutboundBatchError
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .uploader import quota_retry_at
+from .d1_quota import batch_quota_retry_at
 from .idle_worker import ensure_idle_workers, is_idle_worker_active
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .egress_guard import install_egress_guard
@@ -308,11 +309,17 @@ _CLAIM_TRANSPORT_ERRORS = TRANSPORT_ERRORS
 
 @dataclass(frozen=True, slots=True)
 class QueueDrain:
-    """Outcome of one queue drain: ``claimed is None`` means the batch failed."""
+    """Outcome of one queue drain: ``claimed is None`` means the batch failed.
+
+    ``retry_at`` (UTC epoch) marks a Worker-side D1 budget pause: the queue
+    must sleep until that instant instead of its regular backoff cadence, or
+    every claim retry burns a full-table scan against an exhausted read
+    window (2026-11-20 incident)."""
 
     claimed: int | None = 0
     transient: bool = False
     error: str | None = None
+    retry_at: float | None = None
 
 
 def _claim_failure_is_transient(error: BaseException) -> bool:
@@ -378,11 +385,14 @@ def _drain_mutation_jobs(config: Config) -> QueueDrain:
         result = process_mutation_jobs(config)
     except Exception as e:
         transient = _claim_failure_is_transient(e)
-        if transient:
+        retry_at = batch_quota_retry_at(e)
+        if retry_at is not None:
+            log.warning("mutation claim paused until UTC epoch %.0f (database quota exhausted)", retry_at)
+        elif transient:
             log.warning("mutation claim transient error: %s", e)
         else:
             log.error("mutation claim error: %s", e)
-        return QueueDrain(claimed=None, transient=transient, error=str(e))
+        return QueueDrain(claimed=None, transient=transient, error=str(e), retry_at=retry_at)
     claimed = int(result.get("claimed", 0) or 0)
     if claimed:
         log.info("mutation batch claimed=%d succeeded=%d retried=%d failed=%d unsupported=%d",
@@ -401,20 +411,40 @@ def _drain_outbound_jobs(config: Config) -> QueueDrain:
         result = process_outbound_jobs(config)
     except OutboundBatchError as e:
         transient = _claim_failure_is_transient(e)
-        if transient:
+        retry_at = batch_quota_retry_at(e)
+        if retry_at is not None:
+            log.warning("outbound claim paused until UTC epoch %.0f (database quota exhausted)", retry_at)
+        elif transient:
             log.warning("outbound batch transient error: %s", e)
         else:
             log.error("outbound batch error: %s", e)
-        return QueueDrain(claimed=None, transient=transient, error=str(e))
+        return QueueDrain(claimed=None, transient=transient, error=str(e), retry_at=retry_at)
     except Exception as e:
-        log.error("outbound claim error: %s", e)
-        return QueueDrain(claimed=None, transient=_claim_failure_is_transient(e), error=str(e))
+        retry_at = batch_quota_retry_at(e)
+        if retry_at is not None:
+            log.warning("outbound claim paused until UTC epoch %.0f (database quota exhausted)", retry_at)
+        else:
+            log.error("outbound claim error: %s", e)
+        return QueueDrain(claimed=None, transient=_claim_failure_is_transient(e), error=str(e), retry_at=retry_at)
     claimed = int(result.get("claimed", 0) or 0)
     if claimed:
         log.info("outbound batch claimed=%d succeeded=%d retried=%d failed=%d unsupported=%d",
                  claimed, result.get("succeeded", 0), result.get("retried", 0),
                  result.get("failed", 0), result.get("unsupported", 0))
     return QueueDrain(claimed=claimed)
+
+
+def _quota_pause_at(retry_at: float | None, now_monotonic: float) -> float | None:
+    """Translate a wall-clock quota deadline into this loop's monotonic frame.
+
+    Pauses are anchored to wall time so they survive clock skew between the
+    Worker's retry_at and the local monotonic clock; a deadline already in the
+    past degrades to the base interval (the caller re-checks immediately).
+    """
+    if retry_at is None:
+        return None
+    delay = max(0.0, retry_at - time.time())
+    return now_monotonic + delay
 
 
 def run_daemon(config_path: str, poll_interval: int = 60,
@@ -445,14 +475,20 @@ def run_daemon(config_path: str, poll_interval: int = 60,
                 _poll_pass(config, state, now=tick_started)
             if not poll_due and time.monotonic() >= mutation_schedule.next_at:
                 drain = _as_drain(_drain_mutation_jobs(config))
-                mutation_schedule = mutation_schedule.after_claim(
+                quota_at = _quota_pause_at(drain.retry_at, time.monotonic())
+                mutation_schedule = (mutation_schedule.after_claim(
                     mutation_interval, drain.claimed, completed_at=time.monotonic(),
                     transient=drain.transient)
+                    if quota_at is None else
+                    ClaimSchedule(next_at=quota_at))
             if not poll_due and time.monotonic() >= outbound_schedule.next_at:
                 drain = _as_drain(_drain_outbound_jobs(config))
-                outbound_schedule = outbound_schedule.after_claim(
+                quota_at = _quota_pause_at(drain.retry_at, time.monotonic())
+                outbound_schedule = (outbound_schedule.after_claim(
                     mutation_interval, drain.claimed, completed_at=time.monotonic(),
                     transient=drain.transient)
+                    if quota_at is None else
+                    ClaimSchedule(next_at=quota_at))
         except Exception as e:
             log.error("daemon iteration error: %s", e)
         finally:

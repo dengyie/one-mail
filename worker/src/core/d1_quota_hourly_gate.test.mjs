@@ -198,12 +198,17 @@ import { attachD1Quota } from "./d1_quota.ts";
 
 const fakeD1 = () => {
     let batches = 0;
+    let runs = 0;
     return {
         batchesRun: () => batches,
+        runsExecuted: () => runs,
         prepare: () => ({
             bind: function () { return this; },
             all: async () => ({ results: [{ id: "m-1" }], meta: { rows_read: 150, rows_written: 0 } }),
-            run: async () => ({ results: [], meta: { rows_read: 5, rows_written: 3 } }),
+            run: async () => {
+                runs += 1;
+                return { results: [], meta: { rows_read: 5, rows_written: 3 } };
+            },
         }),
         batch: async (statements) => {
             batches += 1;
@@ -212,16 +217,36 @@ const fakeD1 = () => {
     };
 };
 
-test("wrapped all/first/run each fail closed when the hour is spent", async () => {
+test("wrapped all/first fail closed when the hour is spent; write statements stay exempt", async () => {
+    clockRef.value = HOUR0 + 1_000;
+    resetD1QuotaStateForTests(fakeClock());
+    const stub = coordinatorStub();
+    await drainHour(stub, "2026-11-19T08", clockRef.value);
+    const db = fakeD1();
+    const env = attachD1Quota({ DB: db, D1_QUOTA_COORDINATOR: { getByName: () => stub } });
+    await assert.rejects(() => env.DB.prepare("select 1").all(), D1HourlyReadBudgetError);
+    await assert.rejects(() => env.DB.prepare("select 1").first(), D1HourlyReadBudgetError);
+    await assert.rejects(() => env.DB.batch([env.DB.prepare("a"), env.DB.prepare("b")]), D1HourlyReadBudgetError);
+    // Writes are exempt from the hourly read gate (design intent #187, restored
+    // after the 2026-11-19 incident): they must reach D1 even in a spent hour —
+    // losing an inbound verification mail beats burning a read reservation.
+    await env.DB.prepare("insert into emails (id) values (?)").bind("m-2").run();
+    await env.DB.prepare("delete 1").run();
+    await env.DB.batch([env.DB.prepare("insert into t values (1)"), env.DB.prepare("update t set a = 1")]);
+    assert.equal(db.batchesRun(), 1);
+    assert.equal(db.runsExecuted(), 2);
+});
+
+test("write accounting is unchanged: rows_read/rows_written still recorded", async () => {
     clockRef.value = HOUR0 + 1_000;
     resetD1QuotaStateForTests(fakeClock());
     const stub = coordinatorStub();
     await drainHour(stub, "2026-11-19T08", clockRef.value);
     const env = attachD1Quota({ DB: fakeD1(), D1_QUOTA_COORDINATOR: { getByName: () => stub } });
-    await assert.rejects(() => env.DB.prepare("select 1").all(), D1HourlyReadBudgetError);
-    await assert.rejects(() => env.DB.prepare("select 1").first(), D1HourlyReadBudgetError);
-    await assert.rejects(() => env.DB.prepare("delete 1").run(), D1HourlyReadBudgetError);
-    await assert.rejects(() => env.DB.batch([env.DB.prepare("a"), env.DB.prepare("b")]), D1HourlyReadBudgetError);
+    await env.DB.prepare("insert into emails (id) values ('m-3')").run();
+    // fakeD1 run() reports rows_read: 5 — the daily/hourly ledger still sees it.
+    const gate = peekHourlyGateState();
+    assert.equal(gate.used, 5);
 });
 
 test("batch counts each statement meta once and consumes one gate check", async () => {
