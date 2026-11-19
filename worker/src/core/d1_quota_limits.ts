@@ -15,7 +15,11 @@ export const D1_ROWS_READ_HOURLY_LIMIT = Math.floor(D1_ROWS_READ_LIMIT / 24);
 
 // Rows pre-reserved per coordinator round trip. Reservation slop bounds the
 // worst-case overshoot per isolate while keeping the gate in-memory fast.
-export const D1_HOURLY_RESERVE_CHUNK = 20_000;
+// Small by design: the coordinator also accepts negative reservations, so the
+// gate releases unused slop after a query's real meta.rows_read is known —
+// a chunk that is too big turns every admission into a phantom burn (2026-11-19:
+// transport-failure retries alone drained whole hourly buckets).
+export const D1_HOURLY_RESERVE_CHUNK = 1_000;
 
 /** UTC hour bucket key, e.g. `2026-11-19T08`. */
 export const utcHourKeyOf = (ms: number): string => new Date(ms).toISOString().slice(0, 13);

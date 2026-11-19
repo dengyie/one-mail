@@ -69,16 +69,42 @@ const rollHourlyIfNeeded = (): HourlyReservation => {
     return hourly;
 };
 
-/** Charge executed rows against the current hour (called from recordD1Quota). */
-export const recordHourlyUsage = (rowsRead: number): void => {
-    if (rowsRead <= 0) return;
+/**
+ * Charge executed rows against the current hour (called from recordD1Quota).
+ * The local reservation slop the query did not actually consume is released
+ * back to the coordinator, so transport-failure retries and tiny lookups
+ * cannot phantom-drain the hourly ledger (2026-11-19 incident).
+ */
+export const recordHourlyUsage = async (env: Bindings | undefined, rowsRead: number): Promise<void> => {
+    if (rowsRead === 0) return;
     const bucket = rollHourlyIfNeeded();
+    if (rowsRead > 0) {
+        try {
+            bucket.used = checkedSum(bucket.used, rowsRead);
+        } catch (cause) {
+            if (!(cause instanceof RangeError)) throw cause;
+            flagQuotaIssue("COUNTER_OVERFLOW");
+            bucket.used = D1_ROWS_READ_HOURLY_LIMIT;
+        }
+    }
+    if (!env) return;
+    // Release the unconsumed slop: negative reservation, clamped to what this
+    // isolate still holds above its real usage. This runs after positive
+    // charges too — that is the whole point (2026-11-19 incident): a query that
+    // used 150 of its 1,000 reservation must put 850 back, or every admission
+    // phantom-burns the chunk. A negative rowsRead (defensive: no caller
+    // produces one today) releases that amount directly.
+    const held = bucket.reserved - bucket.used;
+    if (held <= 0) return;
+    const slop = Math.min(held, rowsRead < 0 ? -rowsRead : D1_ROWS_READ_HOURLY_LIMIT);
     try {
-        bucket.used = checkedSum(bucket.used, rowsRead);
+        await coordinatorReserve(env, bucket.hourKey, -slop);
+        bucket.reserved -= slop;
     } catch (cause) {
-        if (!(cause instanceof RangeError)) throw cause;
-        flagQuotaIssue("COUNTER_OVERFLOW");
-        bucket.used = D1_ROWS_READ_HOURLY_LIMIT;
+        if (!(cause instanceof QuotaTelemetryError)) throw cause;
+        // Release failures only cost future capacity, never correctness: the
+        // local reservation still gates admissions. Surface and move on.
+        flagQuotaIssue("COORDINATOR_UNAVAILABLE");
     }
 };
 
@@ -113,15 +139,23 @@ const coordinatorReserve = async (
         throw new QuotaTelemetryError("coordinator", shardId, hourKey, "reserve",
             new Error(`coordinator returned HTTP ${response.status}`));
     }
+    let payload: { granted?: unknown; remaining?: unknown } | null;
     try {
-        const payload = await response.json() as { granted?: unknown; remaining?: unknown } | null;
-        if (!payload || !isSafeCounter(payload.granted) || !isSafeCounter(payload.remaining)) {
-            throw new TypeError("invalid reserve acknowledgement");
-        }
-        return { granted: payload.granted, remaining: payload.remaining };
+        payload = await response.json() as { granted?: unknown; remaining?: unknown } | null;
     } catch (cause) {
         throw new QuotaTelemetryError("parse", shardId, hourKey, "reserve", cause);
     }
+    // granted may be negative: a release (negative reservation) is echoed
+    // back as the released amount. remaining is always a plain counter.
+    if (!payload
+        || typeof payload.granted !== "number"
+        || !Number.isSafeInteger(payload.granted)
+        || Math.abs(payload.granted) > D1_ROWS_READ_HOURLY_LIMIT
+        || !isSafeCounter(payload.remaining)) {
+        throw new QuotaTelemetryError("parse", shardId, hourKey, "reserve",
+            new TypeError("invalid reserve acknowledgement"));
+    }
+    return { granted: payload.granted, remaining: payload.remaining };
 };
 
 /**
