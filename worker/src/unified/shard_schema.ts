@@ -78,8 +78,16 @@ export const initializeShardSchema = async (db: D1Database): Promise<void> => {
         await db.exec(toExecScript(SHARD_INIT_SQL));
         await ensureAttachmentGcStorageKeySchema(db);
         // The legacy table may still use r2_key. Create dependent indexes and
-        // triggers only after the locator column has been repaired.
-        await db.exec(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, storage_key); DROP TRIGGER IF EXISTS trg_emails_attachment_gc_after_delete; DROP TRIGGER IF EXISTS ${ATTACHMENT_DELETE_GC_TRIGGER_NAME}; ${ATTACHMENT_DELETE_GC_TRIGGER_SQL}`);
+        // triggers only after the locator column has been repaired. The trigger
+        // SQL is multiline: db.exec() would split it at every newline, so these
+        // must go through prepared statements in one batch (see
+        // ensureProviderIdentitySchema for the same pattern).
+        await db.batch([
+            db.prepare(`CREATE INDEX IF NOT EXISTS idx_attachment_gc_updated ON attachment_gc(updated_at, storage_key)`),
+            db.prepare(`DROP TRIGGER IF EXISTS trg_emails_attachment_gc_after_delete`),
+            db.prepare(`DROP TRIGGER IF EXISTS ${ATTACHMENT_DELETE_GC_TRIGGER_NAME}`),
+            db.prepare(ATTACHMENT_DELETE_GC_TRIGGER_SQL),
+        ]);
         await ensureProviderIdentitySchema(db);
     } catch (cause) {
         throw new Error("Shard schema initialization failed", { cause });

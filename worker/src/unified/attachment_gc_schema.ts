@@ -17,7 +17,13 @@ export async function ensureAttachmentGcStorageKeySchema(db: D1Database, tableEx
         await db.prepare("ALTER TABLE attachment_gc RENAME COLUMN r2_key TO storage_key").run();
     } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
-        if (!/no such table:\s*attachment_gc|no such column:.*r2_key/i.test(message)) throw cause;
+        // "no such column: storage_key" happens when the delete trigger already
+        // references the new name while the table still has r2_key (trigger
+        // creation does not validate column references in D1). That state is
+        // exactly what this rename repairs, so it must be retried, not
+        // rethrown — otherwise initialize can never converge (2026-11-20
+        // shard1 incident: every /shard/schema/initialize 500'd on this path).
+        if (!/no such table:\s*attachment_gc|no such column:?\s*"?(r2_key|storage_key)"?/i.test(message)) throw cause;
     }
 }
 
