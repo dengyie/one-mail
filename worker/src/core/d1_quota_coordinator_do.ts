@@ -46,7 +46,6 @@ type DeltaRequest = {
     rows_written?: number;
     now?: number;
 };
-
 type CoordinatorClock = { now(): number };
 
 type CoordinatorEnvironment = {
@@ -191,8 +190,13 @@ export class D1QuotaCoordinatorDurableObject implements DurableObject {
         // remaining allowance so aggregate reservations can never overspend.
         if (body?.action === "reserve") {
             const shardId = typeof body.shard_id === "string" ? body.shard_id : "";
+            // rows_read may be negative: the gate releases unused reservation
+            // slop once a query's real meta.rows_read is known (release-only,
+            // the ledger never goes below zero so accounting cannot be gamed).
+            const rowsRequested = typeof body.rows_read === "number" ? body.rows_read : NaN;
             if (!shardId || !isHourKey(body.hour_key) || body.hour_key !== utcHourKeyOf(now)
-                || !isSafeCounter(body.rows_read) || body.rows_read <= 0
+                || !Number.isSafeInteger(rowsRequested) || rowsRequested === 0
+                || rowsRequested > HOURLY_LIMIT
                 || (!isSafeCounter(body.now) || body.now <= 0 || body.now > 8_640_000_000_000_000)) {
                 return Response.json({ ok: false, error: "invalid reserve request" }, { status: 400 });
             }
@@ -201,8 +205,13 @@ export class D1QuotaCoordinatorDurableObject implements DurableObject {
                 const granted = await this.state.storage.transaction<number>(async (txn) => {
                     const used = (await txn.get<number>(hourStateKey)) ?? 0;
                     if (!isSafeCounter(used)) throw new Error("invalid persisted hour ledger");
+                    if (rowsRequested < 0) {
+                        const released = Math.min(-rowsRequested, used);
+                        if (released > 0) await txn.put(hourStateKey, used - released);
+                        return -released;
+                    }
                     const remaining = Math.max(0, HOURLY_LIMIT - used);
-                    const allowance = Math.min(body.rows_read!, remaining);
+                    const allowance = Math.min(rowsRequested, remaining);
                     if (allowance > 0) await txn.put(hourStateKey, used + allowance);
                     return allowance;
                 });

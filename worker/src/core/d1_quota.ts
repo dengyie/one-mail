@@ -160,7 +160,7 @@ export const peekD1QuotaPendingForTests = (
     utcDate = utcDateOf(clock.now()),
 ): QuotaDelta => ({ ...(pendingByDate.get(utcDate) ?? { rows_read: 0, rows_written: 0 }) });
 
-export const recordD1Quota = (delta: QuotaDelta): void => {
+export const recordD1Quota = async (delta: QuotaDelta, env?: Bindings): Promise<void> => {
     if (delta.rows_read === 0 && delta.rows_written === 0) return;
     const utcDate = utcDateOf(clock.now());
     let pending = pendingByDate.get(utcDate);
@@ -176,7 +176,7 @@ export const recordD1Quota = (delta: QuotaDelta): void => {
         // instead of turning a committed business write into an apparent failure.
         accountingIssues.add("COUNTER_OVERFLOW");
     }
-    recordHourlyUsage(delta.rows_read);
+    await recordHourlyUsage(env, delta.rows_read);
 };
 
 const emptySnapshot = (shardId: string, utcDate: string): D1QuotaSnapshot => ({
@@ -241,7 +241,7 @@ const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedSta
                 return async <T = unknown>(colName?: string): Promise<T | null> => {
                     if (env) await acquireHourlyReadAllowance(env);
                     const result = await target.all<Record<string, unknown>>();
-                    recordD1Quota(resultDelta(result));
+                    await recordD1Quota(resultDelta(result), env);
                     const row = result.results?.[0] ?? null;
                     if (row == null) return null;
                     if (colName !== undefined) {
@@ -259,7 +259,7 @@ const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedSta
                 return async <T = Record<string, unknown>>(...args: unknown[]) => {
                     if (env) await acquireHourlyReadAllowance(env);
                     const result = await (target.all as (...a: unknown[]) => Promise<D1Result<T>>).apply(target, args);
-                    recordD1Quota(resultDelta(result));
+                    await recordD1Quota(resultDelta(result), env);
                     return result;
                 };
             }
@@ -267,7 +267,7 @@ const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedSta
                 return async (...args: unknown[]) => {
                     if (env) await acquireHourlyReadAllowance(env);
                     const result = await (target.run as (...a: unknown[]) => Promise<D1Result>).apply(target, args);
-                    recordD1Quota(resultDelta(result));
+                    await recordD1Quota(resultDelta(result), env);
                     return result;
                 };
             }
@@ -291,7 +291,7 @@ export const wrapD1 = (db: D1Database, env?: Bindings): D1Database => new Proxy(
             return async <T = unknown>(statements: D1PreparedStatement[]) => {
                 if (env) await acquireHourlyReadAllowance(env);
                 const results = await target.batch<T>(statements.map(unwrapStatement));
-                for (const result of results) recordD1Quota(resultDelta(result));
+                for (const result of results) await recordD1Quota(resultDelta(result), env);
                 return results;
             };
         }

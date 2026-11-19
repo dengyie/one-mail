@@ -148,6 +148,47 @@ test("reserve rejects malformed requests and foreign hours", async () => {
     assert.equal(good.payload.remaining, D1_ROWS_READ_HOURLY_LIMIT - 500);
 });
 
+test("negative reserve releases unused slop and never goes below zero", async () => {
+    clockRef.value = HOUR0 + 1_000;
+    resetD1QuotaStateForTests(fakeClock());
+    const stub = coordinatorStub();
+    const call = async (rows) => reserveViaDo(stub, {
+        action: "reserve", shard_id: "primary", hour_key: "2026-11-19T08", rows_read: rows, now: clockRef.value,
+    });
+    const grant = await call(3_000);
+    assert.equal(grant.payload.granted, 3_000);
+    // Release more than the ledger holds: clamped, remaining stays at the cap.
+    const over = await call(-10_000);
+    assert.equal(over.status, 200);
+    assert.equal(over.payload.granted, -3_000);
+    assert.equal(over.payload.remaining, D1_ROWS_READ_HOURLY_LIMIT);
+    // Release against a partially drained ledger releases only what is held.
+    await call(5_000);
+    const partial = await call(-2_000);
+    assert.equal(partial.payload.granted, -2_000);
+    assert.equal(partial.payload.remaining, D1_ROWS_READ_HOURLY_LIMIT - 3_000);
+});
+
+test("a real query releases its unused reservation slop back to the hour", async () => {
+    clockRef.value = HOUR0 + 1_000;
+    resetD1QuotaStateForTests(fakeClock());
+    const stub = coordinatorStub();
+    const db = attachD1Quota({
+        DB: fakeD1(), // all() reports meta.rows_read: 150
+        D1_QUOTA_COORDINATOR: { getByName: () => stub },
+    });
+    await db.DB.prepare("select 1").all();
+    // Probe the coordinator ledger with an oversized request: granted is
+    // capped by what the hour still holds. After the release the ledger is
+    // 150 (the query's real usage); without the release it would still hold
+    // the phantom 1,000 chunk.
+    const { payload } = await reserveViaDo(stub, {
+        action: "reserve", shard_id: "primary", hour_key: "2026-11-19T08",
+        rows_read: D1_ROWS_READ_HOURLY_LIMIT, now: clockRef.value,
+    });
+    assert.equal(payload.granted, D1_ROWS_READ_HOURLY_LIMIT - 150);
+});
+
 // ---------------------------------------------------------------------------
 // wrapD1 integration: the gate must intercept every execution path of the
 // wrapped binding, and batch() must count each statement's meta exactly once.
