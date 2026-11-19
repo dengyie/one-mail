@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import uuid
 from urllib.parse import quote
 
@@ -17,6 +18,7 @@ import requests
 from imapclient.exceptions import IMAPClientAbortError, IMAPClientError
 
 from .config import AccountConfig, Config, WorkerDestination
+from .d1_quota import database_quota_error
 from .graph_source import (
     GRAPH_IMMUTABLE_PREFER,
     graph_access_token,
@@ -81,6 +83,18 @@ def claim_mutation_jobs(config: Config, *, limit: int = CLAIM_LIMIT) -> tuple[st
     return _claim_destination_jobs(config, limit=limit)
 
 
+def _raise_quota_error(response) -> None:
+    """Surface a Worker-side D1 budget 503 as a pause, not a transport retry.
+
+    A claim is a full-scan read: hammering an exhausted read window burns the
+    remaining scan budget on every retry (#188's phantom-burn scenario). The
+    caller's queue loop pauses until retry_at instead (2026-11-20 incident).
+    """
+    quota = database_quota_error(response, time.time())
+    if quota is not None:
+        raise quota from quota.__cause__
+
+
 def _claim_destination_jobs(
     destination: Config | WorkerDestination, *, limit: int,
 ) -> tuple[str, list[dict]]:
@@ -88,6 +102,7 @@ def _claim_destination_jobs(
     response = _claim_response_with_retry(destination, "/mutations/v2/claim", lease_token, limit)
     if response.status_code == 404:
         response = _claim_response_with_retry(destination, "/mutations/claim", lease_token, limit)
+    _raise_quota_error(response)
     response.raise_for_status()
     payload = response.json()
     jobs = payload.get("jobs", []) if isinstance(payload, dict) else []

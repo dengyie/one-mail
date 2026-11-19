@@ -43,3 +43,20 @@ def database_quota_error(response: requests.Response, now: float) -> DatabaseQuo
     error = DatabaseQuotaExceeded(code, max(now + 1, retry_at))
     error.__cause__ = requests.HTTPError(f"HTTP 503 ({code})", response=response)
     return error
+
+
+def batch_quota_retry_at(error: Exception) -> float | None:
+    """Extract the quota pause deadline from a batch error's failure causes.
+
+    MutationBatchError/OutboundBatchError pair context strings with the claim
+    exceptions; a claim failing on a Worker D1 budget 503 carries its
+    DatabaseQuotaExceeded there. Callers pause the queue loop until that epoch
+    instead of paying a full-table claim scan every backoff tick.
+    """
+    if isinstance(error, DatabaseQuotaExceeded):
+        return error.retry_at
+    failures = getattr(error, "failures", None)
+    if not failures:
+        return None
+    deadlines = [cause.retry_at for _, cause in failures if isinstance(cause, DatabaseQuotaExceeded)]
+    return max(deadlines) if deadlines else None

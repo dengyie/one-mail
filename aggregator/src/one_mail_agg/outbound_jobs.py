@@ -12,6 +12,7 @@ unresolvable outcome stays unknown so the lease is retried with backoff.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from urllib.parse import quote
 
@@ -19,6 +20,7 @@ import requests
 from imapclient.exceptions import IMAPClientAbortError, IMAPClientError
 
 from .config import AccountConfig, Config, WorkerDestination
+from .d1_quota import database_quota_error
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .oauth_sender import send_oauth_with_reconcile
 from .remote_accounts import fetch_user_accounts
@@ -64,10 +66,23 @@ def _claim_response_with_retry(config: Config | WorkerDestination, lease_token: 
     return call_with_transport_retry(lambda: _claim_response(destination, lease_token, limit))
 
 
+def _raise_quota_error(response) -> None:
+    """Surface a Worker-side D1 budget 503 as a pause, not a transport retry.
+
+    A claim is a full-scan read: hammering an exhausted read window burns the
+    remaining scan budget on every retry (#188's phantom-burn scenario). The
+    caller's queue loop pauses until retry_at instead (2026-11-20 incident).
+    """
+    quota = database_quota_error(response, time.time())
+    if quota is not None:
+        raise quota from quota.__cause__
+
+
 def claim_outbound_jobs(config: Config, *, limit: int = OUTBOUND_CLAIM_LIMIT) -> tuple[str, list[dict]]:
     """Claim a bounded batch of pending outbound jobs for one worker."""
     lease_token = str(uuid.uuid4())
     response = _claim_response_with_retry(config, lease_token, limit)
+    _raise_quota_error(response)
     response.raise_for_status()
     payload = response.json()
     jobs = payload.get("jobs", []) if isinstance(payload, dict) else []

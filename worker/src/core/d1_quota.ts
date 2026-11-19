@@ -227,19 +227,32 @@ export const isShardMode = (env: { SHARD_MODE?: string | boolean | number }): bo
 };
 
 const originals = new WeakMap<object, D1PreparedStatement>();
+const queryTexts = new WeakMap<object, string>();
 
-const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedStatement => {
+// The hourly gate is a *read* budget (D1_HOURLY_READ_BUDGET design, #187):
+// billing only fails closed on SELECT scans. Write statements must never be
+// blocked — the 2026-11-19 incident lost verification mail because CF Email
+// Routing's INSERT hit an exhausted read window — and D1 has no read/write
+// API distinction, so we classify by the SQL's first token. Writes skip the
+// gate but keep full daily accounting (recordD1Quota is unchanged).
+const READ_BUDGET_SKIP_RE = /^\s*(INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|PRAGMA|REPLACE|VACUUM|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|REINDEX|ANALYZE|WITH)\b/i;
+export const isReadBudgetStatement = (query: string): boolean =>
+    !READ_BUDGET_SKIP_RE.test(query);
+
+const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings, query?: string): D1PreparedStatement => {
+    const gated = query === undefined || isReadBudgetStatement(query);
+    if (query !== undefined) queryTexts.set(stmt, query);
     const wrapped = new Proxy(stmt, {
         get(target, prop, receiver) {
             if (prop === "bind") {
-                return (...args: unknown[]) => wrapStatement(target.bind(...(args as [])), env);
+                return (...args: unknown[]) => wrapStatement(target.bind(...(args as [])), env, query);
             }
             if (prop === "first") {
                 // first() does not return meta. all() is the same prepared SQL and
                 // does. Callers of first() in this Worker are COUNT(*) or unique
                 // lookups (0–1 rows); do not use first() on unbounded SELECT *.
                 return async <T = unknown>(colName?: string): Promise<T | null> => {
-                    if (env) await acquireHourlyReadAllowance(env);
+                    if (env && gated) await acquireHourlyReadAllowance(env);
                     const result = await target.all<Record<string, unknown>>();
                     await recordD1Quota(resultDelta(result), env);
                     const row = result.results?.[0] ?? null;
@@ -257,7 +270,7 @@ const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedSta
             }
             if (prop === "all") {
                 return async <T = Record<string, unknown>>(...args: unknown[]) => {
-                    if (env) await acquireHourlyReadAllowance(env);
+                    if (env && gated) await acquireHourlyReadAllowance(env);
                     const result = await (target.all as (...a: unknown[]) => Promise<D1Result<T>>).apply(target, args);
                     await recordD1Quota(resultDelta(result), env);
                     return result;
@@ -265,7 +278,7 @@ const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedSta
             }
             if (prop === "run") {
                 return async (...args: unknown[]) => {
-                    if (env) await acquireHourlyReadAllowance(env);
+                    if (env && gated) await acquireHourlyReadAllowance(env);
                     const result = await (target.run as (...a: unknown[]) => Promise<D1Result>).apply(target, args);
                     await recordD1Quota(resultDelta(result), env);
                     return result;
@@ -276,20 +289,30 @@ const wrapStatement = (stmt: D1PreparedStatement, env?: Bindings): D1PreparedSta
         },
     });
     originals.set(wrapped, stmt);
+    if (query !== undefined) queryTexts.set(wrapped, query);
     return wrapped;
 };
 
 const unwrapStatement = (statement: D1PreparedStatement): D1PreparedStatement =>
     originals.get(statement) ?? statement;
 
+// batch() mixes statements of both kinds: gate the whole batch as a read only
+// when at least one member is a read (fails closed together, never blocks a
+// pure-write batch). Unknown statements (never wrapped here) count as reads —
+// the gate is fail-closed by design.
+const isReadBatchStatement = (statement: D1PreparedStatement): boolean => {
+    const text = queryTexts.get(statement);
+    return text === undefined || isReadBudgetStatement(text);
+};
+
 export const wrapD1 = (db: D1Database, env?: Bindings): D1Database => new Proxy(db, {
     get(target, prop, receiver) {
         if (prop === "prepare") {
-            return (query: string) => wrapStatement(target.prepare(query), env);
+            return (query: string) => wrapStatement(target.prepare(query), env, query);
         }
         if (prop === "batch") {
             return async <T = unknown>(statements: D1PreparedStatement[]) => {
-                if (env) await acquireHourlyReadAllowance(env);
+                if (env && statements.some(isReadBatchStatement)) await acquireHourlyReadAllowance(env);
                 const results = await target.batch<T>(statements.map(unwrapStatement));
                 for (const result of results) await recordD1Quota(resultDelta(result), env);
                 return results;
