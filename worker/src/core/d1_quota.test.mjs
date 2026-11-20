@@ -20,12 +20,12 @@ import {
     viewD1Quota,
     wrapD1,
 } from "./d1_quota.ts";
+import { D1_ROWS_READ_HOURLY_LIMIT } from "./d1_quota_limits.ts";
 
 const makeClock = (ms) => ({
     now: () => ms,
     advance: (delta) => { ms += delta; },
 });
-
 const makeKv = (store = new Map()) => ({
     store,
     gets: [],
@@ -698,7 +698,7 @@ test("missing KV keeps dated pending and reports unavailable aggregation", async
         shard_id: "primary", utc_date: "2026-10-05",
         rows_read: 7, rows_written: 1,
         rows_read_limit: 5_000_000, rows_written_limit: 100_000,
-        rows_read_pct: 0, rows_written_pct: 0, hour_key: "2026-10-05T00", rows_read_hour: 7, rows_read_hour_limit: 208_333, rows_read_hour_pct: 0, rows_read_hour_reserved: 0,
+        rows_read_pct: 0, rows_written_pct: 0, hour_key: "2026-10-05T00", rows_read_hour: 7, rows_read_hour_limit: D1_ROWS_READ_HOURLY_LIMIT, rows_read_hour_pct: 0, rows_read_hour_reserved: 0,
         pending_unflushed: { rows_read: 7, rows_written: 1 },
         flushed_at: null, flush_count: 0,
         aggregation_mode: "unavailable",
