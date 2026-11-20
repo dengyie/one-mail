@@ -7,11 +7,16 @@
 export const D1_ROWS_READ_LIMIT = 5_000_000;
 export const D1_ROWS_WRITTEN_LIMIT = 100_000;
 
-// Free-tier daily limits split evenly across UTC hours. The hourly gate fails
-// closed (error with a retry epoch) once a database's queries would push the
-// running hour past this allowance, instead of discovering the platform's
-// account-wide 7500 rejection mid-burn (failed queries still pay their scan).
-export const D1_ROWS_READ_HOURLY_LIMIT = Math.floor(D1_ROWS_READ_LIMIT / 24);
+// Free-tier daily limits: the hourly gate allows 20% of the daily read budget
+// per UTC hour. A flat 1/24 split (2026-11-19 design, #187) proved too tight in
+// production: legitimate burst hours (batch initial syncs, fan-out list pages)
+// tripped the gate while later hours sat at zero, and the fail-closed 503 then
+// collided with ingest/claim callers (2026-11-20 incident chain). 20% keeps the
+// gate's purpose — bounding a runaway scan before the account-wide 7500 — while
+// tolerating uneven hourly demand; five fully-gated hours still cap under 100%.
+// The gate fails closed (error with a retry epoch) once a database's queries
+// would push the running hour past this allowance.
+export const D1_ROWS_READ_HOURLY_LIMIT = Math.floor(D1_ROWS_READ_LIMIT * 0.2);
 
 // Rows pre-reserved per coordinator round trip. Reservation slop bounds the
 // worst-case overshoot per isolate while keeping the gate in-memory fast.
