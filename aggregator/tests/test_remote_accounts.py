@@ -142,13 +142,23 @@ def test_report_sync_status_success_post_error():
 
 
 def test_report_sync_status_failure_post_error_string():
-    """失败 sync → POST 带 error 字符串。"""
+    """失败 sync → POST 带 error 字符串，并按文本自动分类 error_kind。"""
     with patch("one_mail_agg.remote_accounts.requests.post") as post:
         post.return_value = _resp(200, {})
         report_sync_status("https://w.example", "tok", "uma-1", "IMAP login failed: -ERR")
     post.assert_called_once()
     args, kwargs = post.call_args
-    assert kwargs["json"] == {"error": "IMAP login failed: -ERR"}
+    assert kwargs["json"] == {"error": "IMAP login failed: -ERR", "error_kind": "auth"}
+
+
+def test_report_sync_status_explicit_error_kind_passed_through():
+    """显式传入 error_kind 时原样透传，不做文本分类。"""
+    with patch("one_mail_agg.remote_accounts.requests.post") as post:
+        post.return_value = _resp(200, {})
+        report_sync_status("https://w.example", "tok", "uma-1", "boom",
+                           error_kind="quota")
+    args, kwargs = post.call_args
+    assert kwargs["json"] == {"error": "boom", "error_kind": "quota"}
 
 
 def test_report_sync_status_404_silent():

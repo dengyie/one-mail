@@ -6,6 +6,7 @@ import address_sender_api from './address_sender_api'
 import sendbox_api from './sendbox_api'
 import statistics_api from './statistics_api'
 import account_settings_api from './account_settings_api'
+import account_health_api from './account_health_api'
 import audit_api from './audit_api'
 import backup_api from './backup_api'
 import deployment_api from './deployment_api'
@@ -63,6 +64,10 @@ api.post('/admin/backups/verify', backup_api.verify)
 
 // read-only deployment self-check (reports states, never secrets)
 api.get('/admin/deployment_check', deployment_api.check)
+
+// aggregator account health snapshot + daemon heartbeat (status page data source)
+api.post('/admin/account_health', account_health_api.upsert)
+api.get('/admin/account_health', account_health_api.list)
 
 // account settings
 api.get('/admin/account_settings', account_settings_api.get)

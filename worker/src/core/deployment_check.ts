@@ -87,11 +87,40 @@ export async function collectDeploymentChecks(env: Bindings): Promise<Deployment
         ? { name: "ai", state: "ready" }
         : { name: "ai", state: "manual", detail: "AI binding absent; extraction disabled" });
 
-    checks.push({
-        name: "aggregator",
-        state: "manual",
-        detail: "external VPS process; confirm via report_sync_status",
-    });
+    // Aggregator liveness now has a durable signal: the daemon heartbeat table
+    // written by POST /admin/account_health every <=15min. Before that existed
+    // the check could only say "manual"; treat a >10min-old heartbeat as a
+    // warning so a silent aggregator outage shows up in /admin/deployment_check.
+    const AGGREGATOR_HEARTBEAT_STALE_MS = 10 * 60 * 1000;
+    if (!env.DB) {
+        checks.push({ name: "aggregator", state: "manual", detail: "DB binding absent; heartbeat unavailable" });
+    } else {
+        try {
+            const { results } = await env.DB.prepare(
+                `SELECT updated_at, accounts_count FROM aggregator_daemon_heartbeat WHERE id = 1`,
+            ).all<{ updated_at: number; accounts_count: number }>();
+            const heartbeat = results?.[0];
+            if (!heartbeat || !Number.isFinite(heartbeat.updated_at)) {
+                checks.push({ name: "aggregator", state: "manual", detail: "no heartbeat yet (aggregator not deployed?)" });
+            } else {
+                const age = Date.now() - heartbeat.updated_at;
+                checks.push(age > AGGREGATOR_HEARTBEAT_STALE_MS
+                    ? {
+                        name: "aggregator",
+                        state: "warning",
+                        detail: `heartbeat stale (${Math.round(age / 60000)}min old); aggregator may be down`,
+                    }
+                    : {
+                        name: "aggregator",
+                        state: "ready",
+                        detail: `heartbeat ${Math.round(age / 1000)}s ago; ${heartbeat.accounts_count} accounts`,
+                    });
+            }
+        } catch (error) {
+            console.error("deployment check: aggregator heartbeat query failed", error);
+            checks.push({ name: "aggregator", state: "warning", detail: "heartbeat query failed; see Worker logs" });
+        }
+    }
 
     const status = checks.some((check) => check.state === "missing")
         ? "missing"

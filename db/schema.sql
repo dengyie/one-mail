@@ -526,3 +526,32 @@ CREATE TABLE IF NOT EXISTS gmail_reroute_idempotency (
     job_id TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+
+-- Aggregator account health snapshot (mirrors
+-- db/2026-11-24-aggregator-account-health.sql). Covers static config.json
+-- accounts (qq-main/mail163-main) that the user_mail_accounts status
+-- write-back cannot reach, plus a daemon heartbeat for stale detection.
+CREATE TABLE IF NOT EXISTS aggregator_account_health (
+    account_id TEXT PRIMARY KEY,
+    label TEXT,
+    source TEXT,
+    username TEXT,
+    user_managed INTEGER NOT NULL DEFAULT 0,
+    last_sync_at INTEGER,
+    last_error TEXT,
+    error_kind TEXT,
+    fail_count INTEGER NOT NULL DEFAULT 0,
+    skip_until INTEGER,
+    idle_alive INTEGER,
+    poll_interval_seconds INTEGER,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aggregator_daemon_heartbeat (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    started_at INTEGER,
+    accounts_count INTEGER,
+    socks5_egress TEXT,
+    aggregator_version TEXT,
+    updated_at INTEGER NOT NULL
+);

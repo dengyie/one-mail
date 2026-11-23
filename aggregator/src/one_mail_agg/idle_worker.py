@@ -234,6 +234,9 @@ class ImapIdleWorker(threading.Thread):
 
         while not self.is_stopped():
             if self.state.should_skip_account(self.account.id):
+                _, skip_until_ts = self.state.get_fail_state(self.account.id)
+                log.info("IDLE worker exit for %s: circuit-breaker open until ts=%.0f",
+                         self.account.id, skip_until_ts)
                 break
             client = None
             try:
@@ -273,6 +276,9 @@ class ImapIdleWorker(threading.Thread):
 
                 while not self.is_stopped():
                     if self.state.should_skip_account(self.account.id):
+                        _, skip_until_ts = self.state.get_fail_state(self.account.id)
+                        log.info("IDLE worker exit for %s (inner loop): circuit-breaker open until ts=%.0f",
+                                 self.account.id, skip_until_ts)
                         break
 
                     if has_idle:
@@ -442,6 +448,10 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
 
         for aid, worker in list(_active_idle_workers.items()):
             if aid not in current_ids or worker.is_stopped() or not worker.is_alive():
+                reason = ("removed from config" if aid not in current_ids
+                          else "already stopped" if worker.is_stopped()
+                          else "thread not alive")
+                log.info("stopping stale IDLE worker for account %s: %s", aid, reason)
                 worker.stop()
                 _active_idle_workers.pop(aid, None)
                 _active_idle_folders.pop(aid, None)
@@ -455,6 +465,9 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
             if state.should_skip_account(acc.id):
                 active = _active_idle_workers.get(acc.id)
                 if active is not None:
+                    _, skip_until_ts = state.get_fail_state(acc.id)
+                    log.info("pausing IDLE worker for account %s: circuit-breaker open until ts=%.0f",
+                             acc.id, skip_until_ts)
                     active.stop()
                 _active_idle_folders.pop(acc.id, None)
                 continue

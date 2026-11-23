@@ -132,6 +132,10 @@ export const MESSAGE_REGISTRY = {
     "zh": "待确认投递",
     "en": "Unconfirmed delivery"
   },
+  "adminHealth": {
+    "zh": "邮箱健康",
+    "en": "Mailbox health"
+  },
   "adminAttachments": {
     "zh": "附件管理",
     "en": "Attachments"
@@ -1732,6 +1736,14 @@ export const MESSAGE_REGISTRY = {
       "en": "Outbound requests the provider did not confirm as delivered. Marking delivered keeps the quota; marking failed refunds it.",
       "zh": "服务商未确认送达的出站请求。标记已送达会保留额度,标记失败会退回额度。"
     },
+    "healthTitle": {
+      "en": "Mailbox Health",
+      "zh": "邮箱健康状态"
+    },
+    "healthSubtitle": {
+      "en": "Availability of every mailbox the aggregator syncs, plus the daemon heartbeat. Data refreshes every 15 seconds.",
+      "zh": "聚合器所有邮箱的可用状态与守护进程心跳,数据每 15 秒刷新。"
+    },
     "attachmentsTitle": {
       "en": "Unified Inbox Attachments",
       "zh": "统一收件箱附件管理"
@@ -3034,6 +3046,53 @@ export const MESSAGE_REGISTRY = {
       "en": "Shard {id} maintenance failed: {reason}",
       "zh": "分片 {id} 维护失败：{reason}"
     }
+  },
+  "views.admin.AccountHealth": {
+    "sectionTitle": { "en": "Mailbox availability", "zh": "邮箱可用状态" },
+    "sectionHint": {
+      "en": "Sync health of every mailbox the aggregator fetches (static + user accounts), reported by the daemon.",
+      "zh": "聚合器采集的全部邮箱（静态 + 用户账号）同步健康，由守护进程自动上报。"
+    },
+    "refresh": { "en": "Refresh", "zh": "刷新" },
+    "loading": { "en": "Loading mailbox health…", "zh": "正在加载邮箱健康状态…" },
+    "invalidReport": { "en": "Health report response is invalid. Please refresh.", "zh": "健康报告响应无效，请刷新重试。" },
+    "unknown": { "en": "Unknown", "zh": "未知" },
+    "never": { "en": "Never", "zh": "从未" },
+    "secondsAgo": { "en": "{count}s ago", "zh": "{count} 秒前" },
+    "minutesAgo": { "en": "{count}min ago", "zh": "{count} 分钟前" },
+    "hoursAgo": { "en": "{count}h ago", "zh": "{count} 小时前" },
+    "daysAgo": { "en": "{count}d ago", "zh": "{count} 天前" },
+    "daemonStatus": { "en": "Daemon", "zh": "聚合器进程" },
+    "daemonAlive": { "en": "Alive", "zh": "运行中" },
+    "daemonDown": { "en": "Unreachable", "zh": "失联" },
+    "daemonStale": { "en": "Aggregator unreachable: no heartbeat for over 30 minutes. All statuses below may be outdated.", "zh": "聚合器失联：超过 30 分钟无心跳，以下状态可能已过期。" },
+    "noHeartbeat": { "en": "No heartbeat has ever been received (aggregator not deployed or version too old).", "zh": "从未收到过心跳（聚合器未部署或版本过旧）。" },
+    "lastHeartbeat": { "en": "Last heartbeat: {time} ({age})", "zh": "最后心跳：{time}（{age}）" },
+    "heartbeatAge": { "en": "Heartbeat {age}", "zh": "心跳 {age}" },
+    "socks5Egress": { "en": "SOCKS5 egress", "zh": "SOCKS5 出口" },
+    "accountTotals": { "en": "Accounts", "zh": "账号统计" },
+    "totalsBreakdown": { "en": "{total} total · {ok} ok · {warn} warn · {err} error", "zh": "共 {total} · 正常 {ok} · 告警 {warn} · 异常 {err}" },
+    "aggregatorVersion": { "en": "Aggregator version", "zh": "聚合器版本" },
+    "noAccounts": { "en": "No account health reported yet. The aggregator will report on its next poll cycle.", "zh": "尚无账号健康数据，聚合器会在下一轮轮询时上报。" },
+    "userManaged": { "en": "user", "zh": "用户账号" },
+    "sourceLabel": { "en": "source: {source}", "zh": "来源：{source}" },
+    "pollEvery": { "en": "poll every {seconds}s", "zh": "轮询间隔 {seconds}s" },
+    "lastSync": { "en": "last sync: {time}", "zh": "最近同步：{time}" },
+    "breakerOpen": { "en": "Paused by circuit breaker until {until} ({fails} consecutive failures)", "zh": "熔断暂停至 {until}（连续失败 {fails} 次）" },
+    "failCount": { "en": "{count} recent failures", "zh": "近期失败 {count} 次" },
+    "levelOk": { "en": "OK", "zh": "正常" },
+    "levelWarning": { "en": "Warning", "zh": "告警" },
+    "levelError": { "en": "Error", "zh": "异常" },
+    "levelStale": { "en": "Stale", "zh": "数据过期" },
+    "kindAuth": { "en": "Auth failed", "zh": "认证失败" },
+    "kindConn": { "en": "Connection", "zh": "连接错误" },
+    "kindProxy": { "en": "Tunnel/proxy", "zh": "隧道/代理" },
+    "kindQuota": { "en": "D1 quota", "zh": "D1 配额" },
+    "kindRatelimit": { "en": "Rate limited", "zh": "频率限制" },
+    "kindPersist": { "en": "Token persist", "zh": "凭据落盘" },
+    "kindPolicy": { "en": "Network policy", "zh": "网络策略" },
+    "kindFolder": { "en": "Folder error", "zh": "文件夹错误" },
+    "kindUnknown": { "en": "Unknown error", "zh": "未知错误" }
   },
   "views.admin.IpBlacklistSettings": {
     "asn_blacklist": {
