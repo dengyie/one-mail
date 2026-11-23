@@ -121,7 +121,7 @@ jobs:
               if bucket.get("binding") != "ATTACHMENTS":
                   without_attachment_r2.extend(lines[index:end])
               index = end
-          text = "".join(without_attachment_r2)
+          text = re.sub(r'(?ms)^routes\s*=\s*\[[^\]]*\]\s*\n?', '', "".join(without_attachment_r2)).replace("workers_dev = true", "workers_dev = false")  # external custom domains: strip routes to avoid wrangler 100117 after successful script upload
           path.write_text(text, encoding="utf-8")
           PY
 
