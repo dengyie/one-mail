@@ -552,15 +552,11 @@ jobs:
           # the deploy -- it silently degrades to "nothing recorded" and "backup
           # skipped", which is exactly the outage that must not be invisible.
           # CREATE ... IF NOT EXISTS only; idempotent and safe to replay.
-          pnpm exec wrangler d1 execute DB \
-            --remote \
-            --yes \
-            --file ../db/2026-11-07-audit-log.sql
-          pnpm exec wrangler d1 execute DB \
-            --remote \
-            --yes \
-            --file ../db/2026-11-07-backup-runs.sql
+          pnpm exec wrangler d1 execute DB --remote --yes --file ../db/2026-11-07-audit-log.sql
+          pnpm exec wrangler d1 execute DB --remote --yes --file ../db/2026-11-07-backup-runs.sql
           echo "Remote D1 audit_logs and backup_runs schema is current"
+          # /admin/health status page + deployment_check aggregator liveness probe.
+          pnpm exec wrangler d1 execute DB --remote --yes --file ../db/2026-11-24-aggregator-account-health.sql
 
       - name: Deploy Backend for ${{ github.ref_name }}
         shell: bash
