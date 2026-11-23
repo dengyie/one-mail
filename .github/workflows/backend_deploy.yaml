@@ -121,8 +121,8 @@ jobs:
               if bucket.get("binding") != "ATTACHMENTS":
                   without_attachment_r2.extend(lines[index:end])
               index = end
-          text = re.sub(r'(?ms)^routes\s*=\s*\[[^\]]*\]\s*\n?', '', "".join(without_attachment_r2)).replace("workers_dev = true", "workers_dev = false")  # external custom domains: strip routes to avoid wrangler 100117 after successful script upload
-          path.write_text(text, encoding="utf-8")
+          text = re.sub(r'(?ms)^routes\s*=\s*\[[^\]]*\]\s*\n?', '', "".join(without_attachment_r2)).replace("workers_dev = true", "workers_dev = false")  # external custom domains: strip routes (100117); then backfill any [[migrations]] tag missing from BACKEND_TOML — a missing tag makes wrangler replay from scratch and fail 10074 on existing DOs
+          text = text.rstrip() + "\n\n" + "".join(s for s in re.findall(r'(?ms)^\[\[migrations\]\]\n.*?(?=^\[|\Z)', Path("worker/wrangler.toml.template").read_text(encoding="utf-8")) if not set(re.findall(r'(?m)^tag\s*=\s*"([^"]+)"', s)) & set(re.findall(r'(?m)^tag\s*=\s*"([^"]+)"', text))); path.write_text(text, encoding="utf-8")
           PY
 
       # Read-only pre-flight: prove the generated config points at the account,
