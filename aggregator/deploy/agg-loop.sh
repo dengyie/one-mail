@@ -23,6 +23,10 @@ export http_proxy="${http_proxy:-http://127.0.0.1:7897}"
 export https_proxy="${https_proxy:-http://127.0.0.1:7897}"
 export NO_PROXY="${NO_PROXY:-127.0.0.1,localhost}"
 export no_proxy="${no_proxy:-127.0.0.1,localhost}"
+# Overseas IMAP/SMTP egress (Gmail/Outlook) rides the same Mihomo SOCKS5 port.
+# GCP 直连 22 被墙后 1080 隧道死透，7897 是唯一可用出口（2026-11-24 事故沉淀：
+# 此行必须留在仓库里——部署会覆盖服务器上的本文件，丢失即海外账号全熔断）。
+export ONE_MAIL_SOCKS5_PROXY="${ONE_MAIL_SOCKS5_PROXY:-127.0.0.1:7897}"
 
 echo "[$(TS)] one-mail-agg daemon start: IMAP IDLE realtime + 60s fallback poll + 5s mutation drain" >> "$LOG"
 exec "$PY" -m one_mail_agg.main "$CONFIG" --daemon >> "$LOG" 2>&1
