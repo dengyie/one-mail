@@ -286,6 +286,8 @@ def _daemon_harness(tmp_path, monkeypatch, *, clock, poll_interval, mutation_int
     monkeypatch.setattr(main_mod, "fetch_user_accounts", lambda *a: [])
     monkeypatch.setattr(main_mod.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(main_mod.time, "sleep", clock.sleep)
+    # 健康上报是真实 HTTP POST，与 daemon 时序测试无关，patch 掉避免拖慢节拍
+    monkeypatch.setattr(main_mod, "report_account_health_with_state", lambda *a, **k: False)
 
     polls = []
     drains = []
@@ -409,6 +411,8 @@ def test_run_daemon_skips_empty_mutation_claims_until_backoff_ends(tmp_path, mon
     monkeypatch.setattr(main_mod, "fetch_user_accounts", lambda *a: [])
     monkeypatch.setattr(main_mod.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(main_mod.time, "sleep", clock.sleep)
+    # 健康上报是真实 HTTP POST，与 daemon 时序测试无关，patch 掉避免拖慢节拍
+    monkeypatch.setattr(main_mod, "report_account_health_with_state", lambda *a, **k: False)
     monkeypatch.setattr(main_mod, "ensure_idle_workers",
                         lambda cfg, st, accs: polls.append(clock.now))
     monkeypatch.setattr(main_mod, "_drain_mutation_jobs", _drain)

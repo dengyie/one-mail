@@ -19,6 +19,7 @@ from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .egress_guard import install_egress_guard
 from .transport_retry import TRANSPORT_ERRORS
 from .proxy_client import OVERSEAS_IMAP_HOSTS, is_overseas_imap_host
+from .health_report import report_account_health_with_state
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("one-mail-agg")
@@ -290,6 +291,14 @@ def _poll_pass(config, state, now: float | None = None) -> None:
             _ACCOUNT_LAST_POLL[account.id] = now_ts
             if is_user and retry_at is None:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e), state=state)
+
+    # 4. 每轮轮询末尾上报账号健康快照 + daemon 心跳（变化驱动 + 15min 心跳节流，
+    #    失败仅 warning——状态页挂了不能影响收信）。
+    try:
+        if report_account_health_with_state(config, state, accounts, user_account_ids):
+            log.info("account health snapshot reported (%d accounts)", len(accounts))
+    except Exception as health_error:
+        log.warning("account health report failed: %s", health_error)
 
 
 _QUEUE_IDLE_BACKOFF_SECONDS = 60

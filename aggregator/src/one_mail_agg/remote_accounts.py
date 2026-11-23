@@ -151,21 +151,32 @@ def fetch_user_accounts(worker_base_url: str, admin_token: str, *,
 
 
 def report_sync_status(worker_base_url: str, admin_token: str,
-                        account_id: str, error: str | None, *, state: SyncState | None = None) -> None:
+                        account_id: str, error: str | None, *, state: SyncState | None = None,
+                        error_kind: str | None = None) -> None:
     """回写单个用户邮箱的 sync 状态到 Worker（/admin/unified/mail_accounts/:id/status）。
 
     成功时 error=None（清空 last_error、刷新 last_sync_at）；失败时写 error 字符串。
-    只对 user_mail_accounts 的账号有意义（admin config.json 账号没有对应行，404 无害）。
+    error_kind 是 classify_error() 的稳定错误类别（状态页据此显示中文标签），
+    缺省时从 error 文本自动分类。只对 user_mail_accounts 的账号有意义
+    （admin config.json 账号没有对应行，404 无害——它们的健康状态走
+    /admin/account_health 快照，见 health_report.py）。
     失败时仅记日志，绝不阻塞 sync 主流程——状态回写挂了不应影响邮件归集。
     """
     url = f"{worker_base_url}/admin/unified/mail_accounts/{account_id}/status"
     headers = {"x-admin-auth": admin_token}
+    if error_kind is None and error:
+        from .health_report import classify_error
+        error_kind = classify_error(error)
+    body: dict = {}
+    if error:
+        body["error"] = error
+        if error_kind:
+            body["error_kind"] = error_kind
     try:
         # 一次停顿就整条丢掉这轮状态回写（Worker 上 last_sync_at 落后一个轮询周期），
         # 而重发同一份状态是幂等的，所以交给传输层重试吸收。
         r = call_with_transport_retry(
-            lambda: requests.post(url, json={"error": error} if error else {},
-                                  headers=headers, timeout=10))
+            lambda: requests.post(url, json=body, headers=headers, timeout=10))
         now = time.time()
         quota = database_quota_error(r, now)
         if quota is not None and state is not None:
