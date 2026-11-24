@@ -35,14 +35,16 @@ describe('external mailbox provider form contract', () => {
     })
 
     it('adds Agent Mail (agent.qq.com) as a REST OAuth preset with pasted refresh_token', () => {
+        const provider = readFileSync(fileURLToPath(new URL('../agently_provider.js', import.meta.url)), 'utf8')
         expect(view).toContain("value: 'agent', source: 'agently'")
-        expect(view).toContain("host: 'api.agent.qq.com'")
-        expect(view).toContain("const AGENTLY_CLIENT_ID = 'cli_002e8cd1a3bd2eb8'")
-        expect(view).toContain("const isAgently = computed(() => form.value.provider === 'agent')")
+        // host / client_id / RT 校验都在 provider 模块（视图行数预算冻结 583）
+        expect(provider).toContain("export const AGENTLY_MAIL_HOST = 'api.agent.qq.com'")
+        expect(provider).toContain("export const AGENTLY_CLIENT_ID = 'cli_002e8cd1a3bd2eb8'")
         // RT 与签发客户端绑定：前端必须固定注入 CLI 同款 client_id，不能让用户自填
-        expect(view).toContain("JSON.stringify({ provider: 'agently', client_id: AGENTLY_CLIENT_ID, refresh_token: agentlyRt })")
-        expect(view).toContain("/@agent\\.qq\\.com$/i.test(f.username.trim())")
-        expect(view).toContain("t('agentMailIntro')")
+        expect(provider).toContain("{ provider: 'agently', client_id: AGENTLY_CLIENT_ID, refresh_token: refreshToken }")
+        expect(view).toContain('buildAgentlyOauth(agentlyRt)')
+        expect(view).toContain('/@agent\\.qq\\.com$/i.test(f.username.trim())')
+        expect(view).toContain("t('agentMailIntro') || AGENTLY_INTRO_FALLBACK")
     })
 
     it('keeps the Outlook OAuth guidance in the source-locale copy', () => {
