@@ -10,6 +10,7 @@ import { useGlobalState } from '../../store'
 import { api } from '../../api'
 import { getRouterPathWithLang } from '../../utils'
 import { getProviderContextHint } from './onboarding_hints.js'
+import { AGENTLY_INTRO_FALLBACK, AGENTLY_MAIL_HOST, buildAgentlyOauth, isAgentlyProvider, parseAgentlyRefreshToken } from './agently_provider.js'
 
 const { userJwt, userSettings, adminAuth } = useGlobalState()
 const router = useRouter()
@@ -40,6 +41,8 @@ const sourceOptions = computed(() => ([
     { label: 'iCloud Mail', value: 'icloud', source: 'imap_custom', host: 'imap.mail.me.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
     { label: 'Yahoo Mail', value: 'yahoo', source: 'imap_custom', host: 'imap.mail.yahoo.com', port: 993, pop3Host: 'pop.mail.yahoo.com', pop3Port: 995, protocol: 'imap' },
     { label: t('custom'), value: 'custom', source: 'imap_custom', host: '', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
+    // Agent 邮箱（agent.qq.com）：纯 REST + OAuth，凭据 = refresh_token，见 agently_provider.js。
+    { label: t('agentMail') || 'Agent 邮箱 (agent.qq.com)', value: 'agent', source: 'agently', host: AGENTLY_MAIL_HOST, port: 443, pop3Host: '', pop3Port: 995, protocol: 'imap' },
 ]))
 const protocolOptions = computed(() => ([
     { label: t('auto') || '自动', value: 'auto' },
@@ -84,6 +87,7 @@ function emptyForm() {
 const showImap = computed(() => true)
 const showPop3 = computed(() => form.value.protocol !== 'imap')
 const isOutlook = computed(() => form.value.provider === 'outlook')
+const isAgently = computed(() => isAgentlyProvider(form.value.provider))
 
 const validPort = (value) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535
 const OUTLOOK_OAUTH_PROVIDERS = new Set(['msa', 'hotmail', 'outlook_personal', 'outlook'])
@@ -107,6 +111,8 @@ const parseOutlookOauth = (raw) => {
     if (provider === 'outlook' && !String(value.client_secret || '').trim()) return null
     return { text: JSON.stringify({ ...value, provider }), provider }
 }
+
+// Agent 邮箱接入凭据 = 用户粘贴的 refresh_token（校验与 oauth 构造见 agently_provider.js）。
 
 const onSourceChange = (v) => {
     const opt = sourceOptions.value.find(o => o.value === v)
@@ -233,9 +239,22 @@ const submit = async () => {
         return
     }
 
+    // Agent 邮箱：username 必须是 @agent.qq.com 地址，凭据 = refresh_token。
+    // Agent 邮箱：username 必须是 @agent.qq.com 地址，凭据 = refresh_token（见 agently_provider.js）。
+    const agentlyRt = isAgently.value ? parseAgentlyRefreshToken(f.oauth_json) : null
+    if (isAgently.value && !/@agent\.qq\.com$/i.test(f.username.trim())) {
+        message.error(t('agentMailUsernameHint') || 'Agent 邮箱地址须为 xxx@agent.qq.com')
+        return
+    }
+    if (isAgently.value && !agentlyRt) {
+        message.error(t('agentMailRtRequired') || '请粘贴 agently-cli auth login 获得的 refresh_token')
+        return
+    }
+
     const imapValid = effectiveHost && validPort(effectivePort)
     const pop3Valid = f.protocol !== 'pop3' || (effectivePop3Host && validPort(effectivePop3Port))
-    const effectiveCred = outlookOauth ? OAUTH_CRED_PLACEHOLDER : f.cred
+    const oauthPayload = outlookOauth?.text || (agentlyRt ? buildAgentlyOauth(agentlyRt) : null)
+    const effectiveCred = oauthPayload ? OAUTH_CRED_PLACEHOLDER : f.cred
     if (!f.username || !effectiveCred || !imapValid || !pop3Valid) {
         message.error(t('invalidServerConfig'))
         return
@@ -255,7 +274,7 @@ const submit = async () => {
             label: f.label, source: f.source, host: effectiveHost, port: Number(effectivePort), use_ssl: f.use_ssl,
             pop3_host: effectivePop3Host || null, pop3_port: effectivePop3Port ? Number(effectivePop3Port) : null,
             pop3_ssl: f.pop3_ssl, pop3_use_stls: f.pop3_use_stls, username: f.username, cred: effectiveCred,
-            protocol: f.protocol, folders, oauth: outlookOauth?.text,
+            protocol: f.protocol, folders, oauth: oauthPayload,
             smtp_host: f.smtp_host ? f.smtp_host.trim() : null,
             smtp_port: f.smtp_port ? Number(f.smtp_port) : null,
             smtp_ssl: f.smtp_ssl ?? true,
@@ -389,33 +408,15 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
         <n-modal v-model:show="showModal" preset="card" :title="t('modalTitle') || '添加外部邮箱归集 (IMAP/POP3)'" class="rounded-3xl max-w-lg">
             <!-- 接入模式切换 -->
             <div class="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mb-4">
-                <button
-                    type="button"
-                    class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-all"
-                    :class="connectMode === 'smart' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'"
-                    @click="setConnectMode('smart')"
-                >
-                    ⚡ {{ t('smartConnectMode') }}
-                </button>
-                <button
-                    type="button"
-                    class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-all"
-                    :class="connectMode === 'manual' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'"
-                    @click="setConnectMode('manual')"
-                >
-                    ⚙️ {{ t('manualMode') }}
-                </button>
+                <button type="button" class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-all" :class="connectMode === 'smart' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'" @click="setConnectMode('smart')">⚡ {{ t('smartConnectMode') }}</button>
+                <button type="button" class="flex-1 py-1.5 text-xs font-medium rounded-lg transition-all" :class="connectMode === 'manual' ? 'bg-white dark:bg-slate-700 text-primary shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'" @click="setConnectMode('manual')">⚙️ {{ t('manualMode') }}</button>
             </div>
 
             <!-- 模式一：极简两字段智能一键接入 -->
             <div v-if="connectMode === 'smart'" class="space-y-3">
                 <n-form :model="smartForm" label-placement="top" class="space-y-3">
                     <n-form-item :label="t('emailUsername') || '邮箱地址'">
-                        <n-input
-                            v-model:value="smartForm.email"
-                            :placeholder="t('emailPlaceholder')"
-                            class="rounded-xl"
-                        />
+                        <n-input v-model:value="smartForm.email" :placeholder="t('emailPlaceholder')" class="rounded-xl" />
                     </n-form-item>
 
                     <!-- 实时服务商上下文智能避坑提示 -->
@@ -433,13 +434,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                     </div>
 
                     <n-form-item :label="t('credential') || '密码 / 专用授权码 / 认证令牌'">
-                        <n-input
-                            v-model:value="smartForm.cred"
-                            type="password"
-                            show-password-on="click"
-                            :placeholder="t('credentialPlaceholder')"
-                            class="rounded-xl"
-                        />
+                        <n-input v-model:value="smartForm.cred" type="password" show-password-on="click" :placeholder="t('credentialPlaceholder')" class="rounded-xl" />
                     </n-form-item>
 
                     <div class="grid grid-cols-2 gap-3">
@@ -452,13 +447,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                     </div>
 
                     <div class="flex items-center justify-between pt-3">
-                        <button
-                            type="button"
-                            class="text-xs text-slate-500 hover:text-primary transition-colors underline underline-offset-2"
-                            @click="setConnectMode('manual')"
-                        >
-                            {{ t('switchToManual') }}
-                        </button>
+                        <button type="button" class="text-xs text-slate-500 hover:text-primary transition-colors underline underline-offset-2" @click="setConnectMode('manual')">{{ t('switchToManual') }}</button>
                         <div class="flex gap-2">
                             <n-button @click="showModal = false" class="rounded-xl">{{ t('cancelAction') || '取消' }}</n-button>
                             <n-button type="primary" :loading="submitting" @click="handleSmartConnect" class="rounded-xl px-5 font-medium">
@@ -476,7 +465,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                         <n-select v-model:value="form.provider" :options="sourceOptions" @update:value="onSourceChange" class="rounded-xl" />
                     </n-form-item>
                     <n-form-item :label="t('protocol') || '协议'">
-                        <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook" @update:value="onProtocolChange" class="rounded-xl" />
+                        <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook || isAgently" @update:value="onProtocolChange" class="rounded-xl" />
                     </n-form-item>
                     <n-form-item :label="t('customLabel') || '自定义标签（选填）'">
                         <n-input v-model:value="form.label" :placeholder="t('labelPlaceholderManual')" class="rounded-xl" />
@@ -485,17 +474,15 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                         <n-input v-model:value="form.username" placeholder="user@example.com" class="rounded-xl" />
                     </n-form-item>
                     <template v-if="isOutlook">
-                        <n-alert type="info" :show-icon="false" class="rounded-xl">
-                            {{ t('outlookOauthIntro') }}
-                        </n-alert>
+                        <n-alert type="info" :show-icon="false" class="rounded-xl">{{ t('outlookOauthIntro') }}</n-alert>
                         <n-form-item :label="t('oauthJsonLabel')">
-                            <n-input
-                                v-model:value="form.oauth_json"
-                                type="password"
-                                show-password-on="click"
-                                placeholder='{"provider":"msa","client_id":"...","refresh_token":"..."}'
-                                class="rounded-xl"
-                            />
+                            <n-input v-model:value="form.oauth_json" type="password" show-password-on="click" placeholder='{"provider":"msa","client_id":"...","refresh_token":"..."}' class="rounded-xl" />
+                        </n-form-item>
+                    </template>
+                    <template v-else-if="isAgently">
+                        <n-alert type="info" :show-icon="false" class="rounded-xl">{{ t('agentMailIntro') || AGENTLY_INTRO_FALLBACK }}</n-alert>
+                        <n-form-item :label="t('agentMailRtLabel') || 'OAuth refresh_token'">
+                            <n-input v-model:value="form.oauth_json" type="password" show-password-on="click" placeholder="粘贴 agently-cli 授权获得的 refresh_token" class="rounded-xl" />
                         </n-form-item>
                     </template>
                     <n-form-item v-else :label="t('credential') || '授权码 / 应用专用密码'">

@@ -29,9 +29,22 @@ describe('external mailbox provider form contract', () => {
         expect(view).toContain("host: 'outlook.office365.com'")
         expect(view).toContain("pop3Host: '', pop3Port: 995, protocol: 'imap'")
         expect(view).toContain("const isOutlook = computed(() => form.value.provider === 'outlook')")
-        expect(view).toContain(':disabled="isOutlook"')
+        expect(view).toContain(':disabled="isOutlook || isAgently"')
         expect(view).toContain('v-model:value="form.oauth_json"')
         expect(view).toContain("t('outlookOauthIntro')")
+    })
+
+    it('adds Agent Mail (agent.qq.com) as a REST OAuth preset with pasted refresh_token', () => {
+        const provider = readFileSync(fileURLToPath(new URL('../agently_provider.js', import.meta.url)), 'utf8')
+        expect(view).toContain("value: 'agent', source: 'agently'")
+        // host / client_id / RT 校验都在 provider 模块（视图行数预算冻结 583）
+        expect(provider).toContain("export const AGENTLY_MAIL_HOST = 'api.agent.qq.com'")
+        expect(provider).toContain("export const AGENTLY_CLIENT_ID = 'cli_002e8cd1a3bd2eb8'")
+        // RT 与签发客户端绑定：前端必须固定注入 CLI 同款 client_id，不能让用户自填
+        expect(provider).toContain("{ provider: 'agently', client_id: AGENTLY_CLIENT_ID, refresh_token: refreshToken }")
+        expect(view).toContain('buildAgentlyOauth(agentlyRt)')
+        expect(view).toContain('/@agent\\.qq\\.com$/i.test(f.username.trim())')
+        expect(view).toContain("t('agentMailIntro') || AGENTLY_INTRO_FALLBACK")
     })
 
     it('keeps the Outlook OAuth guidance in the source-locale copy', () => {
@@ -52,9 +65,10 @@ describe('external mailbox provider form contract', () => {
 
     it('submits OAuth through the existing mail-account API without using Basic Auth', () => {
         expect(view).toContain("const OAUTH_CRED_PLACEHOLDER = '__oauth_managed__'")
-        expect(view).toContain('const effectiveCred = outlookOauth ? OAUTH_CRED_PLACEHOLDER : f.cred')
+        expect(view).toContain('const oauthPayload = outlookOauth?.text')
+        expect(view).toContain('const effectiveCred = oauthPayload ? OAUTH_CRED_PLACEHOLDER : f.cred')
         expect(view).toContain('cred: effectiveCred')
-        expect(view).toContain('oauth: outlookOauth?.text')
+        expect(view).toContain('oauth: oauthPayload')
     })
 
     it('adds iCloud as an IMAP-only standard provider preset', () => {

@@ -232,3 +232,22 @@ def test_fetch_user_accounts_retry_is_bounded_and_keeps_strict_mode_strict():
         with pytest.raises(requests.ReadTimeout):
             fetch_user_accounts("https://w.example", "tok", raise_on_error=True)
         assert get.call_count == 2
+
+
+def test_agently_user_account_keeps_oauth_and_user_managed_flag():
+    """UI 接入的 Agent 邮箱（agently）走 user_mail_accounts 通道：Worker 返回的
+    oauth 对象必须原样进入 AccountConfig（sync_agently 依赖 oauth.refresh_token /
+    client_id 兑换），且 user_managed=True 使 RT 轮换回写 Worker 而非本地 config。"""
+    body = {"accounts": [
+        {"id": "uma-ag-1", "source": "agently", "host": "api.agent.qq.com",
+         "port": 443, "username": "u@agent.qq.com", "password": "",
+         "protocol": "imap", "folders": ["INBOX"],
+         "oauth": {"provider": "agently", "client_id": "cli_002e8cd1a3bd2eb8",
+                   "refresh_token": "RT-UI"}},
+    ]}
+    with patch("one_mail_agg.remote_accounts.requests.get", return_value=_resp(200, body)):
+        (acct,) = fetch_user_accounts("https://w.example", "tok")
+    assert acct.oauth == {"provider": "agently", "client_id": "cli_002e8cd1a3bd2eb8",
+                          "refresh_token": "RT-UI"}
+    assert acct.user_managed is True
+    assert acct.host == "api.agent.qq.com" and acct.port == 443
