@@ -982,3 +982,50 @@ def test_folders_change_does_not_spawn_duplicate_while_stale_worker_alive(tmp_pa
     assert started == ["test-qq", "test-qq"]
 
 
+
+
+def test_idle_connection_failure_visible_in_state(tmp_path, monkeypatch):
+    """IDLE 连接失败要落到 SyncState（健康页可见），但不计熔断 fail_count。"""
+    monkeypatch.setattr(idle_mod.time, "monotonic", lambda: 100.0)
+
+    class _StopEvent:
+        def is_set(self): return False
+        def set(self): pass
+        def wait(self, seconds): return False
+
+    class _Client:
+        def has_capability(self, name): return True
+        def select_folder(self, *a, **k): return {b"UIDVALIDITY": 1}
+        def idle(self): pass
+        def idle_check(self, timeout=None): raise OSError("still unstable")
+        def logout(self): pass
+
+    acc = _qq_account()
+    state = SyncState(str(tmp_path / "state.json"))
+    worker = ImapIdleWorker(
+        _config(tmp_path), acc, state,
+        client_factory=lambda _a: _Client(),
+    )
+    worker._stop_event = _StopEvent()
+    worker.do_sync = lambda _c, **_kw: {"synced": 0, "dropped": 0}
+    worker.run()
+
+    err = state.get_error_state(acc.id)
+    assert err["last_error"] == "still unstable"
+    assert err["error_kind"] in ("conn", "unknown")  # OSError 文本无连接关键词 → unknown 亦可
+    # 熔断语义归 daemon 主循环：IDLE 重连路径不得累计 fail_count
+    assert state.get_fail_state(acc.id) == (0, 0)
+
+
+def test_is_idle_worker_degraded_during_cooldown(tmp_path, monkeypatch):
+    """冷却中的 worker 不能视为实时托管：degraded=True 让主循环接管兜底轮询。"""
+    acc = _qq_account()
+    assert idle_mod.is_idle_worker_degraded(acc.id) is False
+
+    monkeypatch.setattr(idle_mod.time, "monotonic", lambda: 100.0)
+    idle_mod._mark_idle_cooldown(acc, seconds=idle_mod._IDLE_RETRY_COOLDOWN_SECONDS)
+    assert idle_mod.is_idle_worker_degraded(acc.id) is True
+
+    # 冷却过期后恢复实时托管资格
+    monkeypatch.setattr(idle_mod.time, "monotonic", lambda: 100.0 + idle_mod._IDLE_RETRY_COOLDOWN_SECONDS + 1)
+    assert idle_mod.is_idle_worker_degraded(acc.id) is False

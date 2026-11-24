@@ -126,11 +126,41 @@ def test_success_clears_fail_and_backoff(tmp_path):
     assert not s.should_skip_account("acc", now=1002.0)
 
 
-def test_success_noop_does_not_rewrite(tmp_path):
-    """从未失败的账号 record_success 是不写作（返回 None，无副作用）。"""
+def test_success_noop_still_stamps_last_sync(tmp_path):
+    """从未失败的账号 record_success 也要落 last_sync_at——健康页「最近同步」依赖它。"""
     s = SyncState(str(tmp_path / "st.json"))
-    s.record_success("acc")                 # 无 per_account 条目
-    assert "per_account" not in s._data or s._data["per_account"] == {}
+    assert s.get_error_state("acc")["last_sync_at"] is None
+    s.record_success("acc", now=2000.0)
+    assert s.get_error_state("acc")["last_sync_at"] == 2000.0
+    assert "acc" in s._data["per_account"]
+    # 重载后仍可读（确实持久化，而非仅内存）
+    s2 = SyncState(str(tmp_path / "st.json"))
+    assert s2.get_error_state("acc")["last_sync_at"] == 2000.0
+
+
+def test_failure_error_recorded_and_cleared_on_success(tmp_path):
+    """失败写 last_error/error_kind，成功后两者都清除且保留 last_sync_at。"""
+    s = SyncState(str(tmp_path / "st.json"))
+    s.record_failure("acc", error="Connection refused to socks5", error_kind="proxy", now=1000.0)
+    err = s.get_error_state("acc")
+    assert err["last_error"] == "Connection refused to socks5"
+    assert err["error_kind"] == "proxy"
+    assert err["last_sync_at"] is None
+    s.record_success("acc", now=2000.0)
+    err = s.get_error_state("acc")
+    assert err["last_error"] is None
+    assert err["error_kind"] == ""
+    assert err["last_sync_at"] == 2000.0
+    assert s.get_fail_state("acc") == (0, 0)
+
+
+def test_record_error_visibility_without_breaker(tmp_path):
+    """record_error 只盖错误戳不计 fail_count（IDLE 重连语义不能被熔断短路）。"""
+    s = SyncState(str(tmp_path / "st.json"))
+    s.record_error("acc", error="still unstable", error_kind="conn")
+    assert s.get_fail_state("acc") == (0, 0)
+    assert s.get_error_state("acc")["last_error"] == "still unstable"
+    assert s.get_error_state("acc")["error_kind"] == "conn"
 
 
 def test_fail_state_roundtrip_persists(tmp_path):

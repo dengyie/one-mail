@@ -90,7 +90,7 @@ def build_account_health_snapshot(config: Config, state: SyncState,
     数据源全部来自既有状态积木：SyncState（fail_count/skip_until/fallback）、
     idle_worker 注册表（IDLE 存活/冷却）、main._ACCOUNT_LAST_POLL（轮询计划）。
     """
-    from .idle_worker import is_idle_worker_active, _idle_unsupported
+    from .idle_worker import is_idle_worker_active
     from .main import _ACCOUNT_LAST_POLL, get_account_poll_interval
     from .proxy_client import get_socks5_proxy
 
@@ -98,6 +98,7 @@ def build_account_health_snapshot(config: Config, state: SyncState,
     items = []
     for account in accounts:
         fail_count, skip_until_ts = state.get_fail_state(account.id)
+        err_state = state.get_error_state(account.id)
         idle_alive = is_idle_worker_active(account.id)
         item = {
             "account_id": account.id,
@@ -105,13 +106,13 @@ def build_account_health_snapshot(config: Config, state: SyncState,
             "source": account.source,
             "username": account.username,
             "user_managed": account.id in user_account_ids,
-            "error_kind": "",
-            "last_error": None,
+            "error_kind": err_state["error_kind"],
+            "last_error": err_state["last_error"],
             "fail_count": fail_count,
             "skip_until": int(skip_until_ts * 1000) if skip_until_ts > now else 0,
             "idle_alive": bool(idle_alive),
             "poll_interval_seconds": get_account_poll_interval(account, state),
-            "last_sync_at": None,
+            "last_sync_at": int(err_state["last_sync_at"] * 1000) if err_state["last_sync_at"] else None,
         }
         items.append(item)
 
