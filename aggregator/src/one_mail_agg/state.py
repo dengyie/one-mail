@@ -163,7 +163,14 @@ class SyncState:
 
     def record_failure(self, account_id: str, max_fail: int = FAILBACK_MAX_FAILS,
                        backoff_sec: int = FAILBACK_BACKOFF_SEC,
-                       now: float | None = None) -> float:
+                       now: float | None = None,
+                       error: str | None = None,
+                       error_kind: str = "") -> float:
+        """记录一次失败。error/error_kind 可选，供健康快照上报显示故障原因。
+
+        缺省不覆盖既有错误文本（很多调用点只有裸异常没有分类），避免把更早的
+        根因信息冲掉；传了则截断到 500 字符（与 DB 列约束对齐）。
+        """
         now = float(now) if now is not None else time.time()
         with self._lock:
             pa = dict(self._data["per_account"].get(account_id) or {})
@@ -173,13 +180,18 @@ class SyncState:
                 skip_until = now + backoff_sec
             pa["fail_count"] = n
             pa["skip_until"] = skip_until
+            if error is not None:
+                pa["last_error"] = error[:500]
+                pa["error_kind"] = error_kind[:30]
             self._data["per_account"][account_id] = pa
             self._save_locked()
             return float(skip_until)
 
     def record_rate_limit_backoff(self, account_id: str,
                                   backoff_sec: float = 1800,
-                                  now: float | None = None) -> float:
+                                  now: float | None = None,
+                                  error: str | None = None,
+                                  error_kind: str = "ratelimit") -> float:
         """针对服务端显式频控/流量超限错误（如网易 163 登录太频繁、POP 流量超限等），立即进入长退避。"""
         now = float(now) if now is not None else time.time()
         with self._lock:
@@ -188,24 +200,54 @@ class SyncState:
             skip_until = max(float(pa.get("skip_until", 0) or 0), now + backoff_sec)
             pa["fail_count"] = n
             pa["skip_until"] = skip_until
+            if error is not None:
+                pa["last_error"] = error[:500]
+                pa["error_kind"] = (error_kind or "ratelimit")[:30]
             self._data["per_account"][account_id] = pa
             self._save_locked()
             return float(skip_until)
 
-    def record_success(self, account_id: str) -> None:
+    def record_error(self, account_id: str, error: str, error_kind: str = "") -> None:
+        """只盖错误戳、不计熔断：给 IDLE 连接类失败做健康页可见性用。
+
+        IDLE worker 的重连有自己的指数退避 + 5 次阈值轻量冷却语义（主循环在
+        冷却期接管兜底轮询并施加真正的 record_failure 熔断），这里若直接
+        record_failure 会让 3 次瞬时抖动就触发 900s 熔断，短路整套设计。
+        """
         with self._lock:
-            if account_id not in self._data["per_account"]:
-                return
             pa = dict(self._data["per_account"].get(account_id) or {})
-            if not pa.get("fail_count") and not pa.get("skip_until"):
-                return
+            pa["last_error"] = error[:500]
+            pa["error_kind"] = error_kind[:30]
+            self._data["per_account"][account_id] = pa
+            self._save_locked()
+
+    def record_success(self, account_id: str, now: float | None = None) -> None:
+        """记录一次成功同步：清熔断与错误状态，盖 last_sync_at 时间戳。
+
+        last_error 必须随成功清除，否则恢复后的账号在健康页永远红色；
+        last_sync_at 则保留为「最近成功同步」的唯一数据源——即使账号从未
+        失败过也要落条目，否则全绿账号永远显示「从未同步」。
+        """
+        now = float(now) if now is not None else time.time()
+        with self._lock:
+            pa = dict(self._data["per_account"].get(account_id) or {})
             pa.pop("fail_count", None)
             pa.pop("skip_until", None)
-            if not pa:
-                self._data["per_account"].pop(account_id, None)
-            else:
-                self._data["per_account"][account_id] = pa
+            pa.pop("last_error", None)
+            pa.pop("error_kind", None)
+            pa["last_sync_at"] = now
+            self._data["per_account"][account_id] = pa
             self._save_locked()
+
+    def get_error_state(self, account_id: str) -> dict:
+        """健康快照用：返回该账号的错误/成功时间戳（无记录时全空）。"""
+        with self._lock:
+            pa = self._data["per_account"].get(account_id) or {}
+            return {
+                "last_error": pa.get("last_error") or None,
+                "error_kind": pa.get("error_kind") or "",
+                "last_sync_at": float(pa["last_sync_at"]) if pa.get("last_sync_at") else None,
+            }
 
     def should_skip_account(self, account_id: str, now: float | None = None) -> bool:
         now = float(now) if now is not None else time.time()

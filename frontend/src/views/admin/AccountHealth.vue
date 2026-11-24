@@ -99,6 +99,13 @@ const levelOf = (account: AccountHealth): 'ok' | 'warning' | 'error' | 'stale' =
     return 'ok'
 }
 
+// i18n 键名是 PascalCase（levelOk/levelWarning/...）；写成纯函数避免模板里
+// 对对象误调 charAt 一类的字符串方法（首版曾因模板内联表达式整页崩溃）。
+const levelLabelKey = (account: AccountHealth): string => {
+    const level = levelOf(account)
+    return 'level' + level.charAt(0).toUpperCase() + level.slice(1)
+}
+
 const tagTypeOf = (level: string) => (
     level === 'ok' ? 'success' : level === 'warning' ? 'warning' : level === 'error' ? 'error' : 'default'
 )
@@ -227,7 +234,7 @@ const okCount = computed(() => (report.value?.accounts ?? []).filter((a) => leve
                             {{ account.label || account.account_id }}
                         </p>
                         <n-tag :type="tagTypeOf(levelOf(account))" size="small" :bordered="false">
-                            {{ t('level' + levelOf(account.charAt(0).toUpperCase() + levelOf(account).slice(1))) }}
+                            {{ t(levelLabelKey(account)) }}
                         </n-tag>
                     </div>
                     <p class="text-xs text-slate-500 dark:text-slate-400 break-all">

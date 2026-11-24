@@ -72,9 +72,8 @@ def test_classify_error_exception_table():
 def test_snapshot_covers_all_accounts_and_daemon(tmp_path, monkeypatch):
     monkeypatch.setenv("ONE_MAIL_SOCKS5_PROXY", "127.0.0.1:7897")
     state = _state(tmp_path)
-    # 熔断在第 3 次连续失败才开启退避窗口（FAILBACK_MAX_FAILS=3）
-    for _ in range(3):
-        state.record_failure("qq-main", now=time.time())
+    state.record_failure("qq-main", error="AUTHENTICATIONFAILED", error_kind="auth",
+                         now=time.time())
 
     accounts = [_account(), _account("uma-1", user_managed=True)]
     payload = build_account_health_snapshot(_config(), state, accounts, {"uma-1"})
@@ -89,16 +88,35 @@ def test_snapshot_covers_all_accounts_and_daemon(tmp_path, monkeypatch):
     assert static["label"] is None
     assert static["source"] == "qq"
     assert static["username"] == "u@example.com"
-    assert static["fail_count"] == 3
-    assert static["skip_until"] > 0  # epoch ms
+    assert static["fail_count"] == 1
+    assert static["last_error"] == "AUTHENTICATIONFAILED"
+    assert static["error_kind"] == "auth"
+    assert static["skip_until"] == 0  # 未达熔断阈值，无退避窗口
     assert static["idle_alive"] is False
     assert static["poll_interval_seconds"] > 0
-    assert static["last_error"] is None
+    assert static["last_sync_at"] is None
 
     assert user["user_managed"] is True
     assert user["label"] == "uma-1"
     assert user["fail_count"] == 0
     assert user["skip_until"] == 0
+    assert user["last_sync_at"] is None
+
+
+def test_snapshot_reports_success_timestamp_and_error_from_state(tmp_path, monkeypatch):
+    """快照的 last_sync_at/last_error 必须来自 SyncState 真实数据，不再恒空。"""
+    monkeypatch.setenv("ONE_MAIL_SOCKS5_PROXY", "127.0.0.1:7897")
+    state = _state(tmp_path)
+    state.record_success("qq-main", now=1750000000.0)
+    state.record_error("uma-1", error="tunnel down", error_kind="proxy")
+
+    accounts = [_account(), _account("uma-1", user_managed=True)]
+    payload = build_account_health_snapshot(_config(), state, accounts, {"uma-1"})
+    static, user = payload["accounts"]
+    assert static["last_sync_at"] == int(1750000000.0 * 1000)
+    assert static["last_error"] is None
+    user_err = (user["last_error"], user["error_kind"])
+    assert user_err == ("tunnel down", "proxy")
 
 
 # ------------------------------------------------------------- report

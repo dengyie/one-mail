@@ -11,6 +11,7 @@ from .sync import sync_imap, sync_warning, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .remote_accounts import report_sync_status
 from .uploader import quota_retry_at
+from .health_report import classify_error
 from .proxy_client import OVERSEAS_IMAP_HOSTS, get_socks5_proxy, is_overseas_imap_host, probe_socks5_proxy
 
 log = logging.getLogger("one-mail-agg")
@@ -68,6 +69,18 @@ def _mark_idle_cooldown(acc: AccountConfig, seconds: int = _IDLE_RETRY_COOLDOWN_
             _idle_fingerprint(acc),
             time.monotonic() + max(0, seconds),
         )
+
+
+def is_idle_worker_degraded(account_id: str) -> bool:
+    """IDLE worker 仍在重试冷却中（连接反复失败），不能视为实时托管。
+
+    daemon 主循环据此在 IDLE 失联期间接管兜底轮询，让 SyncState 能收到
+    真实失败与 last_sync_at——否则冷却期间 worker 线程仍存活，主循环会因
+    is_idle_worker_active=True 一直跳过，静态账号在健康页永远显示正常。
+    """
+    with _lock:
+        entry = _idle_retry_after.get(account_id)
+        return bool(entry and entry[1] > time.monotonic())
 
 
 def _reconnect_backoff(consecutive_errors: int) -> int:
@@ -359,6 +372,7 @@ class ImapIdleWorker(threading.Thread):
 
             except Exception as e:
                 self._report_status(e)
+                kind = classify_error(e)
                 consecutive_errors += 1
                 backoff = _reconnect_backoff(consecutive_errors)
                 if client is not None:
@@ -381,10 +395,17 @@ class ImapIdleWorker(threading.Thread):
                 if retry_at is not None:
                     now = time.time()
                     self.state.record_rate_limit_backoff(
-                        self.account.id, backoff_sec=max(1, retry_at - now), now=now)
+                        self.account.id, backoff_sec=max(1, retry_at - now), now=now,
+                        error=str(e), error_kind=kind)
                     log.warning("Account %s database quota exhausted; sync paused until UTC epoch %.0f",
                                 self.account.id, retry_at)
                     return
+
+                # 连接类失败只需可见性（last_error 上健康页），不套用主循环的
+                # record_failure 熔断计数——worker 自有 5 次阈值轻量冷却语义，
+                # 冷却期间 daemon 主循环会接管兜底轮询并施加真正的熔断。
+                # 若在这里 record_failure，3 次瞬时抖动就会触发 900s 熔断。
+                self.state.record_error(self.account.id, error=str(e), error_kind=kind)
 
                 if consecutive_errors >= _IDLE_FAILURE_THRESHOLD:
                     _mark_idle_cooldown(self.account)

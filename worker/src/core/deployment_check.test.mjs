@@ -87,3 +87,31 @@ test("report never contains a token value", async () => {
     });
     assert.ok(!JSON.stringify(report).includes("super-secret-token"));
 });
+function heartbeatDb(updatedAt) {
+    return {
+        prepare: (sql) => ({
+            all: async () => sql.includes("aggregator_daemon_heartbeat")
+                ? { results: [{ updated_at: updatedAt, accounts_count: 6 }] }
+                : { results: [
+                    { name: "emails" }, { name: "scheduled_locks" },
+                    { name: "audit_logs" }, { name: "backup_runs" },
+                ] },
+        }),
+    };
+}
+
+test("aggregator heartbeat at 20min stays ready (interval is 15min)", async () => {
+    // 心跳周期 15min；10min 阈值曾让健康 daemon 每次检查都误报 warning。
+    const report = await collectDeploymentChecks({
+        DB: heartbeatDb(Date.now() - 20 * 60 * 1000), KV: {},
+    });
+    assert.equal(summary(report).aggregator, "ready");
+});
+
+test("aggregator heartbeat older than 30min is warning", async () => {
+    const report = await collectDeploymentChecks({
+        DB: heartbeatDb(Date.now() - 31 * 60 * 1000), KV: {},
+    });
+    assert.equal(summary(report).aggregator, "warning");
+    assert.match(report.checks.find((c) => c.name === "aggregator").detail, /heartbeat stale/);
+});

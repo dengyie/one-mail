@@ -14,12 +14,12 @@ from .outbound_jobs import process_outbound_jobs, OutboundBatchError
 from .remote_accounts import fetch_user_accounts, report_sync_status
 from .uploader import quota_retry_at
 from .d1_quota import batch_quota_retry_at
-from .idle_worker import ensure_idle_workers, is_idle_worker_active
+from .idle_worker import ensure_idle_workers, is_idle_worker_active, is_idle_worker_degraded
 from .network_guard import assert_public_user_account, UnsafeMailTargetError
 from .egress_guard import install_egress_guard
 from .transport_retry import TRANSPORT_ERRORS
 from .proxy_client import OVERSEAS_IMAP_HOSTS, is_overseas_imap_host
-from .health_report import report_account_health_with_state
+from .health_report import report_account_health_with_state, classify_error
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("one-mail-agg")
@@ -189,7 +189,8 @@ def run_once(config_path: str) -> dict:
                 if isinstance(account.oauth, dict) else "<malformed:not-dict>") or "<missing>"
             results[account.id] = {"error": f"provider unsupported: {provider}"}
             log.error("sync %s failed: provider unsupported: %s", account.id, provider)
-            state.record_failure(account.id)
+            state.record_failure(account.id, error=f"provider unsupported: {provider}",
+                                 error_kind=classify_error(f"provider unsupported: {provider}"))
             if is_user:
                 report_sync_status(config.worker_base_url, config.admin_token,
                                    account.id, f"provider unsupported: {provider}", state=state)
@@ -205,17 +206,20 @@ def run_once(config_path: str) -> dict:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, None, state=state)
         except Exception as e:
             results[account.id] = {"error": str(e)}
+            kind = classify_error(e)
             retry_at = quota_retry_at(e)
             if retry_at is not None:
                 now = time.time()
-                state.record_rate_limit_backoff(account.id, backoff_sec=max(1, retry_at - now), now=now)
+                state.record_rate_limit_backoff(account.id, backoff_sec=max(1, retry_at - now),
+                                                now=now, error=str(e), error_kind=kind)
                 log.warning("sync %s database quota exhausted; paused until UTC epoch %.0f", account.id, retry_at)
             elif is_rate_limit_error(e):
                 log.warning("sync %s rate limited by server: %s (backing off 1800s)", account.id, e)
-                state.record_rate_limit_backoff(account.id, backoff_sec=1800)
+                state.record_rate_limit_backoff(account.id, backoff_sec=1800,
+                                                error=str(e), error_kind=kind)
             else:
                 log.error("sync %s failed: %s", account.id, e)
-                state.record_failure(account.id)
+                state.record_failure(account.id, error=str(e), error_kind=kind)
             if is_user and retry_at is None:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e), state=state)
             time.sleep(min(1 + random.random(), 3))
@@ -242,8 +246,10 @@ def _poll_pass(config, state, now: float | None = None) -> None:
     # 3. 对非纯 IMAP 或未被 IDLE 托管的账号（如 POP3 163 / graph 等）按独立周期执行轮询
     for account in accounts:
         # 若已有存活的 IDLE worker 正在托管该账号，无需在主循环频繁重复同步，
-        # IDLE 线程自会处理实时事件及保底刷新；
-        if is_idle_worker_active(account.id):
+        # IDLE 线程自会处理实时事件及保底刷新；但 worker 连接反复失败进入重试
+        # 冷却时它已不再实时可靠，主循环必须接管兜底轮询，把真实失败写进
+        # SyncState（否则健康页对失联账号永远显示正常）。
+        if is_idle_worker_active(account.id) and not is_idle_worker_degraded(account.id):
             # IDLE 线程正在全实时监听，跳过主线程重复轮询
             _ACCOUNT_LAST_POLL.pop(account.id, None)
             continue
@@ -277,17 +283,20 @@ def _poll_pass(config, state, now: float | None = None) -> None:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, warning, state=state)
             _ACCOUNT_LAST_POLL[account.id] = now_ts
         except Exception as e:
+            kind = classify_error(e)
             retry_at = quota_retry_at(e)
             if retry_at is not None:
                 now = time.time()
-                state.record_rate_limit_backoff(account.id, backoff_sec=max(1, retry_at - now), now=now)
+                state.record_rate_limit_backoff(account.id, backoff_sec=max(1, retry_at - now),
+                                                now=now, error=str(e), error_kind=kind)
                 log.warning("poll sync %s database quota exhausted; paused until UTC epoch %.0f", account.id, retry_at)
             elif is_rate_limit_error(e):
                 log.warning("poll sync %s rate limited by server: %s (backing off 1800s)", account.id, e)
-                state.record_rate_limit_backoff(account.id, backoff_sec=1800)
+                state.record_rate_limit_backoff(account.id, backoff_sec=1800,
+                                                error=str(e), error_kind=kind)
             else:
                 log.warning("poll sync %s error: %s", account.id, e)
-                state.record_failure(account.id)
+                state.record_failure(account.id, error=str(e), error_kind=kind)
             _ACCOUNT_LAST_POLL[account.id] = now_ts
             if is_user and retry_at is None:
                 report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e), state=state)

@@ -180,7 +180,8 @@ def report_sync_status(worker_base_url: str, admin_token: str,
         now = time.time()
         quota = database_quota_error(r, now)
         if quota is not None and state is not None:
-            state.record_rate_limit_backoff(account_id, backoff_sec=quota.retry_at - now, now=now)
+            state.record_rate_limit_backoff(account_id, backoff_sec=quota.retry_at - now, now=now,
+                                            error=str(quota), error_kind="quota")
             log.warning("sync status account=%s: %s", account_id, quota)
             return
         if r.status_code not in (200, 404):

@@ -88,10 +88,11 @@ export async function collectDeploymentChecks(env: Bindings): Promise<Deployment
         : { name: "ai", state: "manual", detail: "AI binding absent; extraction disabled" });
 
     // Aggregator liveness now has a durable signal: the daemon heartbeat table
-    // written by POST /admin/account_health every <=15min. Before that existed
-    // the check could only say "manual"; treat a >10min-old heartbeat as a
-    // warning so a silent aggregator outage shows up in /admin/deployment_check.
-    const AGGREGATOR_HEARTBEAT_STALE_MS = 10 * 60 * 1000;
+    // written by POST /admin/account_health every <=15min. Threshold must be
+    // strictly wider than the heartbeat interval (10min < 15min flagged healthy
+    // daemons as stale on every check); 30min = 2 missed heartbeats, aligned
+    // with account_health_api.ts HEARTBEAT_STALE_MS.
+    const AGGREGATOR_HEARTBEAT_STALE_MS = 30 * 60 * 1000;
     if (!env.DB) {
         checks.push({ name: "aggregator", state: "manual", detail: "DB binding absent; heartbeat unavailable" });
     } else {
