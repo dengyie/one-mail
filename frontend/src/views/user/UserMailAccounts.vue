@@ -40,6 +40,9 @@ const sourceOptions = computed(() => ([
     { label: 'iCloud Mail', value: 'icloud', source: 'imap_custom', host: 'imap.mail.me.com', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
     { label: 'Yahoo Mail', value: 'yahoo', source: 'imap_custom', host: 'imap.mail.yahoo.com', port: 993, pop3Host: 'pop.mail.yahoo.com', pop3Port: 995, protocol: 'imap' },
     { label: t('custom'), value: 'custom', source: 'imap_custom', host: '', port: 993, pop3Host: '', pop3Port: 995, protocol: 'imap' },
+    // Agent 邮箱（agent.qq.com）：纯 REST + OAuth，无 IMAP/POP3 端点。refresh_token
+    // 来自官方 `agently-cli auth login`（设备流），见下方 isAgently 分支与 AGENTLY_CLIENT_ID 注释。
+    { label: t('agentMail') || 'Agent 邮箱 (agent.qq.com)', value: 'agent', source: 'agently', host: 'api.agent.qq.com', port: 443, pop3Host: '', pop3Port: 995, protocol: 'imap' },
 ]))
 const protocolOptions = computed(() => ([
     { label: t('auto') || '自动', value: 'auto' },
@@ -84,6 +87,12 @@ function emptyForm() {
 const showImap = computed(() => true)
 const showPop3 = computed(() => form.value.protocol !== 'imap')
 const isOutlook = computed(() => form.value.provider === 'outlook')
+// Agent 邮箱走 OAuth refresh_token（不是密码）。RT 与签发它的客户端绑定：只有
+// `agently-cli auth login` 签发的 RT 能用 CLI 的 client_id 兑换（实测混用报
+// invalid_grant，docs/external-mailbox-pipeline-upgrade.md §3A.2），所以这里的
+// client_id 必须与 CLI 内嵌值一致，用户只需粘贴 RT。
+const AGENTLY_CLIENT_ID = 'cli_002e8cd1a3bd2eb8'
+const isAgently = computed(() => form.value.provider === 'agent')
 
 const validPort = (value) => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535
 const OUTLOOK_OAUTH_PROVIDERS = new Set(['msa', 'hotmail', 'outlook_personal', 'outlook'])
@@ -106,6 +115,14 @@ const parseOutlookOauth = (raw) => {
     // Organizational Outlook/M365 uses the confidential-client path in oauth.py.
     if (provider === 'outlook' && !String(value.client_secret || '').trim()) return null
     return { text: JSON.stringify({ ...value, provider }), provider }
+}
+
+// Agent 邮箱接入凭据 = 用户粘贴的 refresh_token（单行字符串）。client_id 由前端
+// 固定注入，避免用户抄错导致聚合器每轮兑换 401 断链。
+const parseAgentlyRefreshToken = (raw) => {
+    const rt = String(raw || '').trim()
+    // CLI 签发的 RT 实测 128 字符；只做形状兜底校验，长度交给服务端/聚合器判。
+    return rt.length >= 32 && /^[\w-]+$/.test(rt) ? rt : null
 }
 
 const onSourceChange = (v) => {
@@ -233,9 +250,24 @@ const submit = async () => {
         return
     }
 
+    // Agent 邮箱：username 必须是 @agent.qq.com 地址，凭据 = refresh_token。
+    const agentlyRt = isAgently.value ? parseAgentlyRefreshToken(f.oauth_json) : null
+    if (isAgently.value) {
+        if (!/@agent\.qq\.com$/i.test(f.username.trim())) {
+            message.error(t('agentMailUsernameHint') || 'Agent 邮箱地址须为 xxx@agent.qq.com')
+            return
+        }
+        if (!agentlyRt) {
+            message.error(t('agentMailRtRequired') || '请粘贴 agently-cli auth login 获得的 refresh_token')
+            return
+        }
+    }
+
     const imapValid = effectiveHost && validPort(effectivePort)
     const pop3Valid = f.protocol !== 'pop3' || (effectivePop3Host && validPort(effectivePop3Port))
-    const effectiveCred = outlookOauth ? OAUTH_CRED_PLACEHOLDER : f.cred
+    const oauthPayload = outlookOauth?.text
+        || (agentlyRt ? JSON.stringify({ provider: 'agently', client_id: AGENTLY_CLIENT_ID, refresh_token: agentlyRt }) : null)
+    const effectiveCred = oauthPayload ? OAUTH_CRED_PLACEHOLDER : f.cred
     if (!f.username || !effectiveCred || !imapValid || !pop3Valid) {
         message.error(t('invalidServerConfig'))
         return
@@ -255,7 +287,7 @@ const submit = async () => {
             label: f.label, source: f.source, host: effectiveHost, port: Number(effectivePort), use_ssl: f.use_ssl,
             pop3_host: effectivePop3Host || null, pop3_port: effectivePop3Port ? Number(effectivePop3Port) : null,
             pop3_ssl: f.pop3_ssl, pop3_use_stls: f.pop3_use_stls, username: f.username, cred: effectiveCred,
-            protocol: f.protocol, folders, oauth: outlookOauth?.text,
+            protocol: f.protocol, folders, oauth: oauthPayload,
             smtp_host: f.smtp_host ? f.smtp_host.trim() : null,
             smtp_port: f.smtp_port ? Number(f.smtp_port) : null,
             smtp_ssl: f.smtp_ssl ?? true,
@@ -476,7 +508,7 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                         <n-select v-model:value="form.provider" :options="sourceOptions" @update:value="onSourceChange" class="rounded-xl" />
                     </n-form-item>
                     <n-form-item :label="t('protocol') || '协议'">
-                        <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook" @update:value="onProtocolChange" class="rounded-xl" />
+                        <n-select v-model:value="form.protocol" :options="protocolOptions" :disabled="isOutlook || isAgently" @update:value="onProtocolChange" class="rounded-xl" />
                     </n-form-item>
                     <n-form-item :label="t('customLabel') || '自定义标签（选填）'">
                         <n-input v-model:value="form.label" :placeholder="t('labelPlaceholderManual')" class="rounded-xl" />
@@ -494,6 +526,20 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                                 type="password"
                                 show-password-on="click"
                                 placeholder='{"provider":"msa","client_id":"...","refresh_token":"..."}'
+                                class="rounded-xl"
+                            />
+                        </n-form-item>
+                    </template>
+                    <template v-else-if="isAgently">
+                        <n-alert type="info" :show-icon="false" class="rounded-xl">
+                            {{ t('agentMailIntro') || 'Agent 邮箱（agent.qq.com）无密码，使用 OAuth 接入：在终端运行 agently-cli auth login 并完成浏览器授权后，把输出中保存的 refresh_token 粘贴到下方。授权一次后由系统自动续期，无需重复操作。' }}
+                        </n-alert>
+                        <n-form-item :label="t('agentMailRtLabel') || 'OAuth refresh_token'">
+                            <n-input
+                                v-model:value="form.oauth_json"
+                                type="password"
+                                show-password-on="click"
+                                placeholder="粘贴 agently-cli 授权获得的 refresh_token"
                                 class="rounded-xl"
                             />
                         </n-form-item>
