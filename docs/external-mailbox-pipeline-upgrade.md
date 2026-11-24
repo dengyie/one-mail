@@ -142,8 +142,8 @@ RT 轮换链是**滑动续期**：每次兑换发新 RT + 新 1 小时窗口。�
 唯一会断链的场景：**聚合器停机超过 1 小时**（RT 自然过期，服务端无法自救；device flow 需浏览器人工确认，自研发起被 `unsupported client` 拒绝）。恢复步骤已写入 `AgentlyAuthError` 文案并落到「我的邮箱」页 `last_error`：重新 `agently-cli auth login` → 把新 refresh_token 更新到账号配置即可。
 
 可用性加固（同日）：
-1. token 兑换 POST 复用 `call_with_transport_retry`——代理抖动丢失响应只重试一次，**绝不把传输停顿误判为 RT 失效**（否则会诱导无意义的重新授权）。
-2. `classify_error` 把 `AgentlyAuthError` 归入 `auth` 类（消息含 "refresh_token" 字样，此前会误归 `persist`）。
+1. token 兑换 POST 复用 `call_with_transport_retry`——connect 阶段抖动（TLS 卡死、ConnectionError，请求未到达服务端）可重试一次吸收；**但 single-use 语义决定：若服务端已处理兑换而响应丢失，链上新 RT 在丢失的响应里、旧 RT 已死，重试必然 401 断链**，此时按 `last_error` 指引重新授权恢复（不应把传输停顿笼统归类为 RT 失效，但也不能指望重试兜住一切）。
+2. `classify_error` 把 `AgentlyAuthError` 归入 `auth` 类（Exception 与 str 两条路径都已覆盖；此前消息含 "refresh_token" 字样会误归 `persist`）。主循环上报 `last_error` 现在直接传已算好的 `error_kind`，不再依赖文本反推。
 3. 运维纪律：**one-mail 独占该邮箱的 RT 轮换链**。用 agently-cli 碰同一邮箱会把 one-mail 的 RT 作废（single-use 互踢），下一轮同步 `last_error` 会给出上述恢复指引。
 
 ---
