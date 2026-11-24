@@ -17,10 +17,7 @@ import { validateMailAccountCreateTarget } from "./mail_target_policy";
 // 见 utils.ts getMaxMailAccountCount；缺失/负数回退此默认值。
 
 // source 白名单：前端下拉的预设 + 自定义。host/port 由用户填，这里只校验 source 枚举。
-// graph_outlook：Graph-only 卡（RT 只有 Graph Mail.Read scope，无 IMAP scope），
-// 聚合器侧走 graph_source.py（REST 拉信），2026-09-11 新增。
-// agently：agent.qq.com Agent 邮箱（纯 REST + device flow，无 IMAP/POP3/SMTP），
-// 聚合器侧走 agently_source.py，2026-11-24 新增。
+// graph_outlook / agently：REST-only source（graph_source.py / agently_source.py）。
 const ALLOWED_SOURCES = new Set([
     "imap_gmail", "imap_outlook", "imap_qq", "imap_163", "imap_custom", "graph_outlook",
     "agently",
@@ -30,8 +27,7 @@ const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
 // OAuth provider 白名单（review W1-3）。唯一依据 = aggregator
 // `aggregator/src/one_mail_agg/oauth.py` 的 `_TOKEN_FN` 支持集：gmail / outlook
 // （组织） / msa（个人 Hotmail/Outlook.com，含别名 hotmail / outlook_personal）。
-// graph：Graph-only 卡走 `graph_source.py`（不进 _TOKEN_FN），2026-09-11 新增。
-// agently：走 `agently_source.py`（device flow refresh_token 直兑，不进 _TOKEN_FN）。
+// graph / agently 不进 _TOKEN_FN，各走 graph_source.py / agently_source.py。
 // 其它 provider 在 `oauth_client_factory` 里 `_TOKEN_FN[provider]` 会直接 KeyError，
 // 冻结整轮聚合器同步（unknown provider 在 main.py 已做账号级隔离，但落库前仍 400）。
 // config 侧 provider 字符串由聚合器定义，聚合器侧 normalize_provider 会把
