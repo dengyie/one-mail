@@ -153,6 +153,9 @@ def test_agently_auth_error_classified_as_auth():
     err = AgentlyAuthError("agently API returned 401; RT 已过期或被其他客户端轮换作废——"
                            "重新执行 `agently-cli auth login` …")
     assert classify_error(err) == "auth"
+    # last_error is reported as a plain string via report_sync_status → the
+    # str branch must bucket the same copy as 'auth' too.
+    assert classify_error(str(err)) == "auth"
 
 
 # --- alias / pagination ------------------------------------------------------

@@ -150,9 +150,9 @@ def _envelope(response: requests.Response) -> dict:
     data = payload.get("data")
     if isinstance(data, dict):
         return data
-    # List endpoints (/v1/me callers' siblings like messages listing) return
-    # {"data": [...]} with a list payload — verified live 2026-11-24 against
-    # api.agent.qq.com: GET .../messages?dir=inbox returns a JSON array here.
+    # Defensive: a {"data": [...]} list payload has not been observed live
+    # (messages listing returns data as a dict with data+pagination), but a
+    # bare array would still fit the sync caller's data.get("data") contract.
     if isinstance(data, list):
         return {"data": data}
     # Send (and possibly other mutation) responses are bare objects like
