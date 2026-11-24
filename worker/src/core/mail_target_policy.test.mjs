@@ -145,3 +145,31 @@ test("raw create-account gate preserves valid presets and rejects endpoint tampe
     smtp_port: 465,
   }), false);
 });
+
+test("oauth REST sources bypass the preset-endpoint policy", () => {
+  // agently / graph_outlook have no IMAP endpoint to bind; the aggregator dials
+  // their REST API itself. Any host/port pair is accepted here — auth is gated
+  // by the OAUTH_PROVIDERS whitelist in mail_accounts.ts instead.
+  for (const source of ["agently", "graph_outlook"]) {
+    assert.equal(validateMailAccountCreateTarget({
+      source,
+      protocol: "auto",
+      host: "api.agent.qq.com",
+      port: 443,
+    }), true);
+  }
+  // The bypass must not widen the source whitelist itself.
+  assert.equal(validateMailAccountCreateTarget({
+    source: "smtp",
+    protocol: "auto",
+    host: "smtp.example.com",
+    port: 465,
+  }), false);
+  // Non-OAuth sources keep preset binding enforcement.
+  assert.equal(validateMailAccountCreateTarget({
+    source: "imap_qq",
+    protocol: "auto",
+    host: "api.agent.qq.com",
+    port: 443,
+  }), false);
+});

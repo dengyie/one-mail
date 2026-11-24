@@ -59,6 +59,8 @@ def classify_error(error: Exception | str | None) -> str:
             return "policy"
         if "authenticationfailed" in text or "login fail" in text or "password" in text:
             return "auth"
+        if "agently refresh_token rejected" in text or "agently api returned 401" in text:
+            return "auth"
         if "connection refused" in text or "socks5" in text or "tunnel" in text:
             return "proxy"
         if "timeout" in text or "connection" in text or "broken pipe" in text:
@@ -75,6 +77,8 @@ def classify_error(error: Exception | str | None) -> str:
             return "proxy"
         if isinstance(error, PermissionError) or "network policy" in text:
             return "policy"
+        if "agentlyautherror" in name or "re-auth required" in text:
+            return "auth"
         if "refresh_token" in text or "tokenpersist" in name:
             return "persist"
         if "timeout" in text or "timed out" in text or "connection" in text or "broken pipe" in text:
