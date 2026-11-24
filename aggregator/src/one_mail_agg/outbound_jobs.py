@@ -194,6 +194,10 @@ def execute_outbound(config: Config, account: AccountConfig, job: dict) -> dict 
     elif source == "graph_outlook":
         # Graph-only account: OAuth (Microsoft Graph sendMail) is mandatory.
         provider_id = send_oauth_with_reconcile(account, payload, config)
+    elif source == "agently":
+        # agent.qq.com REST send with Sent-dir reconciliation on ambiguity.
+        from .agently_source import send_agently_with_reconcile
+        provider_id = send_agently_with_reconcile(account, payload, config)
     else:
         raise OutboundUnsupported(
             f"unknown outbound provider for account {account.id} (source={source})")

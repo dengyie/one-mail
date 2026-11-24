@@ -11,7 +11,7 @@ const senderName = computed(() => {
   return value.includes('<') ? value.split('<')[0].replace(/^"|"$/g, '').trim() || value : value.split('@')[0]
 })
 const tone = computed(() => [...String(props.email.from_addr || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 5)
-const sources = { imap_gmail: 'Gmail', imap_outlook: 'Outlook', graph_outlook: 'Outlook', imap_qq: 'QQ', imap_163: '163', cloudflare: 'Cloudflare', cf_routing: 'Cloudflare' }
+const sources = { imap_gmail: 'Gmail', imap_outlook: 'Outlook', graph_outlook: 'Outlook', imap_qq: 'QQ', imap_163: '163', agently: 'Agent', cloudflare: 'Cloudflare', cf_routing: 'Cloudflare' }
 </script>
 
 <template>

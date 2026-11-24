@@ -20,6 +20,7 @@ export const OUTBOUND_PROVIDERS = [
     "imap_outlook",
     "graph_outlook",
     "imap_custom",
+    "agently",
 ] as const;
 
 export type OutboundProvider = (typeof OUTBOUND_PROVIDERS)[number];

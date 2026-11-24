@@ -492,7 +492,7 @@ def ensure_idle_workers(config: Config, state: SyncState, accounts: list[Account
                     active.stop()
                 _active_idle_folders.pop(acc.id, None)
                 continue
-            if acc.source == "graph_outlook" or acc.protocol == "pop3":
+            if acc.source in ("graph_outlook", "agently") or acc.protocol == "pop3":
                 continue
             # 自愈修复：若为 Gmail / QQ / Outlook / 海外邮箱且历史曾被误 pinned 到 POP3，立即解除 pin 恢复实时推送
             if (acc.source in ("imap_gmail", "imap_qq", "imap_outlook")

@@ -66,6 +66,7 @@ const provider = computed(() => {
   const source = String(props.email?.source || '').trim().toLowerCase()
   if (source === 'cf_routing' || source === 'cloudflare') return 'native'
   if (source === 'graph_outlook') return 'graph'
+  if (source === 'agently') return 'agently'
   if (source.startsWith('imap_')) return 'imap'
   if (source.startsWith('pop3_')) return 'pop3'
   return 'unknown'
