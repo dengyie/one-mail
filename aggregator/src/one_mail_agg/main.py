@@ -9,6 +9,7 @@ from .state import SyncState
 from .sync import sync_account, sync_warning, default_client_factory
 from .oauth import oauth_client_factory, normalize_provider
 from .graph_source import sync_graph
+from .agently_source import sync_agently
 from .mutation_jobs import process_mutation_jobs
 from .outbound_jobs import process_outbound_jobs, OutboundBatchError
 from .remote_accounts import fetch_user_accounts, report_sync_status
@@ -72,7 +73,7 @@ def get_account_poll_interval(account, state: SyncState, default_poll_interval: 
                 or is_overseas_imap_host(getattr(account, "host", ""))):
             return max(default_poll_interval, 60)
         return 600
-    if (getattr(account, "source", "") in ("graph_outlook", "imap_163")
+    if (getattr(account, "source", "") in ("graph_outlook", "imap_163", "agently")
             or str(getattr(account, "host", "")).lower() in ("imap.163.com", "imap.126.com")):
         return 300
     return max(default_poll_interval, 60)
@@ -178,7 +179,7 @@ def run_once(config_path: str) -> dict:
             continue
         try:
             factory = default_client_factory
-            if account.source != "graph_outlook" and account.oauth is not None:
+            if (account.source not in ("graph_outlook", "agently") and account.oauth is not None):
                 factory = oauth_client_factory(account, config)
         except (KeyError, AttributeError, TypeError):
             provider = normalize_provider(
@@ -197,6 +198,7 @@ def run_once(config_path: str) -> dict:
             continue
         try:
             results[account.id] = (sync_graph(account, config, state) if account.source == "graph_outlook"
+                                   else sync_agently(account, config, state) if account.source == "agently"
                                    else sync_account(factory, config, account, state))
             r = results[account.id]
             log.info("synced %s: protocol=%s synced=%d dropped=%d",
@@ -267,6 +269,8 @@ def _poll_pass(config, state, now: float | None = None) -> None:
         try:
             if account.source == "graph_outlook":
                 r = sync_graph(account, config, state)
+            elif account.source == "agently":
+                r = sync_agently(account, config, state)
             else:
                 factory = oauth_client_factory(account, config) if account.oauth is not None else default_client_factory
                 r = sync_account(factory, config, account, state)

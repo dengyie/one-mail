@@ -32,6 +32,7 @@ test("provider and status constants are exhaustive", () => {
     "imap_outlook",
     "graph_outlook",
     "imap_custom",
+    "agently",
   ]);
   // "superseded" belongs to mail_mutation_jobs, not to the outbound queue, so it
   // is deliberately absent here: an outbound job never leaves a superseded row.
