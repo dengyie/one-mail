@@ -170,6 +170,13 @@ const switchToOutlookOauth = () => {
     if (smartForm.value.email) form.value.username = smartForm.value.email
 }
 
+const switchToAgentOauth = () => {
+    setConnectMode('manual')
+    form.value.provider = 'agent'
+    onSourceChange('agent')
+    if (smartForm.value.email) form.value.username = smartForm.value.email
+}
+
 const fetchData = async () => {
     loading.value = true
     try {
@@ -428,6 +435,11 @@ const goToLogin = () => router.push(getRouterPathWithLang('/user', locale.value)
                             <div v-if="providerHint.providerKey === 'outlook'" class="pt-2">
                                 <n-button size="small" type="warning" dashed @click="switchToOutlookOauth" class="rounded-lg text-xs">
                                     {{ t('switchToOauth') }}
+                                </n-button>
+                            </div>
+                            <div v-else-if="providerHint.providerKey === 'agent'" class="pt-2">
+                                <n-button size="small" type="warning" dashed @click="switchToAgentOauth" class="rounded-lg text-xs">
+                                    {{ t('switchToAgent') || '切换至 Agent 邮箱接入' }}
                                 </n-button>
                             </div>
                         </div>
