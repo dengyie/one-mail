@@ -46,6 +46,12 @@ const PRESET_TARGETS: Record<string, PresetTarget> = {
 const ALLOWED_SOURCES = new Set([...Object.keys(PRESET_TARGETS), "imap_custom"]);
 const ALLOWED_PROTOCOLS = new Set(["auto", "imap", "pop3"]);
 
+// REST-only OAuth sources (agently_source.py / graph_source.py): they have no
+// IMAP/POP3 endpoint to bind and never touch the aggregator's host/port dial
+// path, so the preset-endpoint policy below does not apply. Their security
+// gate lives in mail_accounts.ts's OAUTH_PROVIDERS whitelist instead.
+const OAUTH_TARGET_SOURCES = new Set(["agently", "graph_outlook"]);
+
 const normalizeHost = (value: string): string =>
     value.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
 
@@ -155,7 +161,12 @@ export const validateMailAccountCreateTarget = (value: unknown): boolean => {
     const body = value as Record<string, unknown>;
     const source = typeof body.source === "string" ? body.source.trim() : "";
     const protocol = typeof body.protocol === "string" ? body.protocol.trim() : "auto";
-    if (!ALLOWED_SOURCES.has(source) || !ALLOWED_PROTOCOLS.has(protocol)) return false;
+    if (!ALLOWED_SOURCES.has(source) && !OAUTH_TARGET_SOURCES.has(source)) return false;
+    if (!ALLOWED_PROTOCOLS.has(protocol)) return false;
+
+    // OAuth REST sources carry no dialable endpoint: skip the host/port policy,
+    // but still keep a sane username present (mail_accounts.ts enforces the rest).
+    if (OAUTH_TARGET_SOURCES.has(source)) return true;
 
     const requestedPop3Host = body.pop3_host == null
         ? null

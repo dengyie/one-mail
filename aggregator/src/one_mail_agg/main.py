@@ -223,7 +223,8 @@ def run_once(config_path: str) -> dict:
                 log.error("sync %s failed: %s", account.id, e)
                 state.record_failure(account.id, error=str(e), error_kind=kind)
             if is_user and retry_at is None:
-                report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e), state=state)
+                report_sync_status(config.worker_base_url, config.admin_token,
+                                   account.id, str(e), state=state, error_kind=kind)
             time.sleep(min(1 + random.random(), 3))
     return results
 
@@ -303,7 +304,8 @@ def _poll_pass(config, state, now: float | None = None) -> None:
                 state.record_failure(account.id, error=str(e), error_kind=kind)
             _ACCOUNT_LAST_POLL[account.id] = now_ts
             if is_user and retry_at is None:
-                report_sync_status(config.worker_base_url, config.admin_token, account.id, str(e), state=state)
+                report_sync_status(config.worker_base_url, config.admin_token,
+                                   account.id, str(e), state=state, error_kind=kind)
 
     # 4. 每轮轮询末尾上报账号健康快照 + daemon 心跳（变化驱动 + 15min 心跳节流，
     #    失败仅 warning——状态页挂了不能影响收信）。

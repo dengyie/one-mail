@@ -108,7 +108,8 @@ def test_envelope_401_is_auth_error():
 def test_rotated_token_via_on_rotated_callback(monkeypatch):
     import one_mail_agg.agently_source as gas
     captured = {}
-    monkeypatch.setattr(gas.requests, "post", lambda url, data=None, timeout=None: _FakeResp(
+    monkeypatch.setattr(gas.requests, "post",
+                        lambda url, data=None, timeout=None, proxies=None: _FakeResp(
         {"access_token": "AT", "refresh_token": "RT-NEW"}))
     oauth = {"refresh_token": "RT-OLD"}
     token = agently_access_token(oauth, lambda rt: captured.setdefault("rt", rt))
@@ -121,8 +122,37 @@ def test_rejected_refresh_is_auth_error(monkeypatch):
     import one_mail_agg.agently_source as gas
     monkeypatch.setattr(gas.requests, "post", lambda *a, **k: _FakeResp({}, status=400))
     from one_mail_agg.agently_source import AgentlyAuthError
-    with pytest.raises(AgentlyAuthError):
+    with pytest.raises(AgentlyAuthError, match="agently-cli auth login"):
         agently_access_token({"refresh_token": "BAD"})
+
+
+def test_token_exchange_retries_transport_jitter(monkeypatch):
+    """A lost/timeout token POST must be retried once, NOT classified as a dead
+    refresh_token — otherwise a proxy hiccup would demand manual re-auth."""
+    import one_mail_agg.agently_source as gas
+    import requests as _requests
+    calls = {"n": 0}
+
+    def flaky_post(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _requests.exceptions.ReadTimeout("proxy stall")
+        return _FakeResp({"access_token": "AT-2"})
+
+    monkeypatch.setattr(gas.requests, "post", flaky_post)
+    token = agently_access_token({"refresh_token": "RT", "client_id": "cli_x"})
+    assert token == "AT-2"
+    assert calls["n"] == 2
+
+
+def test_agently_auth_error_classified_as_auth():
+    """classify_error must bucket AgentlyAuthError as 'auth' (not 'persist' —
+    the message contains 'refresh_token' but this is a login-state failure)."""
+    from one_mail_agg.agently_source import AgentlyAuthError
+    from one_mail_agg.health_report import classify_error
+    err = AgentlyAuthError("agently API returned 401; RT 已过期或被其他客户端轮换作废——"
+                           "重新执行 `agently-cli auth login` …")
+    assert classify_error(err) == "auth"
 
 
 # --- alias / pagination ------------------------------------------------------
@@ -256,7 +286,7 @@ def test_send_agently_success(monkeypatch, tmp_path):
 
     bodies = []
 
-    def fake_post(url, headers=None, json=None, timeout=None):
+    def fake_post(url, headers=None, json=None, timeout=None, proxies=None):
         bodies.append(json)
         return _FakeResp({"ok": True, "data": {"message_id": "msg-out-1"}})
 
@@ -271,6 +301,26 @@ def test_send_agently_success(monkeypatch, tmp_path):
     assert provider_id == "msg-out-1"
     assert bodies[0]["body_format"] == "PLAIN"
     assert bodies[0]["skip_confirmation"] is True
+
+
+def test_send_agently_bare_queued_response(monkeypatch, tmp_path):
+    """Live-verified 2026-11-24: POST .../send returns a bare {"queued": true,
+    "_hints": {...}} object — no {ok,data} envelope. The send must still be
+    treated as accepted (send_graph parity: accepted-but-no-id → None)."""
+    import one_mail_agg.agently_source as gas
+    from one_mail_agg.config import Config
+    acc = _account()
+    config = Config(worker_base_url="https://w.example", admin_token="t",
+                    accounts=[acc], state_path=str(tmp_path / "s.json"), config_path=None)
+    monkeypatch.setattr(gas, "agently_access_token", lambda *a, **k: "AT")
+    monkeypatch.setattr(gas, "_api_get", lambda token, path, params=None: {
+        "aliases": [{"alias_id": "alias_x", "is_primary": True}]})
+    monkeypatch.setattr(gas.requests, "post", lambda *a, **k: _FakeResp(
+        {"queued": True, "_hints": {"self": "POST .../messages/send"}}))
+    provider_id = send_agently(acc, {
+        "to_addr": "to@example.com", "subject": "s", "body_text": "hi",
+    }, config)
+    assert provider_id is None
 
 
 def test_send_agently_classifies_errors(monkeypatch, tmp_path):

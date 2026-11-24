@@ -108,6 +108,46 @@
 
 ---
 
+## 3A. agent.qq.com（agently）REST 源实弹验证 (2026-11-24)
+
+`agently` 源为 Agent 原生邮箱（`@agent.qq.com`）提供纯 REST + OAuth device flow 接入，无 IMAP/SMTP 端点。以下契约均已**真实端到端验证**（非推测）：
+
+| 项 | 事实 |
+|---|---|
+| token 兑换 | `POST https://auth.agent.qq.com/oauth/token`，form-encoded `grant_type=refresh_token&refresh_token=<rt>&client_id=cli_002e8cd1a3bd2eb8`；用 `app_id` 代替 `client_id` 会返回 `invalid_request`。 |
+| RT 轮换 | **每次兑换后 RT 立即 single-use 轮换**，同时使同批 access token 失效。轮换结果必须在同一次调用中原子持久化（`token_store.make_rotated_callback` + `redemption_lock`），否则 CLI/聚合器本地状态会失配。 |
+| access token TTL | 1 小时；RT 也随签发批次在约 1 小时后失效。聚合器 5 分钟增量轮询可自然保活，长时间不运行后需重新 `agently-cli auth login`。 |
+| send 响应 | **不是** `{ok,data}` envelope，而是裸 JSON：`{"queued": true, "_hints": {...}}`。`agently_source._envelope` 已兼容；`message_id` 不回显时返回 `None`，由 reconcile 阶段在 Sent 目录按主题+时间窗对账。 |
+| 别名 ID | `GET /v1/me` → `data.aliases[].alias_id`；账号 `username`（如 `mangoqwq@agent.qq.com`）仅作显示/授权，不是 wire 标识。 |
+| 代理 | CLI 和自研 REST 客户端都必须直连（`proxies=_AGENTLY_DIRECT_PROXIES`），避免企业代理/ mitm 导致 TLS 不信任或 token 泄漏。 |
+| 响应信封 | `/v1/me` 类单对象端点 → `{"data": {dict}}`；消息列表 → `{"data": [list]}`；send → 裸 `{"queued": true}`。`_envelope` 对三种形态分别处理：dict 原样、list 包装回 `{"data": data}`、无 `data`/`ok` 键视为裸响应透传。 |
+| 目标策略 | Worker `mail_target_policy.ts`：OAuth REST 源（`agently`/`graph_outlook`）经 `OAUTH_TARGET_SOURCES` 旁路 preset 端点绑定校验——它们无可绑定的 IMAP/POP3 端点，凭据安全由 `mail_accounts.ts` 的 `OAUTH_PROVIDERS` 白名单把守。 |
+
+实弹结果：`send_agently_with_reconcile` 发出的测试邮件 `one-mail agently E2E 实弹 2026-11-24` 已在 Sent 目录确认（message_id `msg_nV-mgm-...`）；修复裸响应解析后再发的 `one-mail E2E raw probe` 亦确认入 Sent（message_id `msg_yupb-gr...`）。全量聚合器测试 863 passed。
+
+### 3A.2 生产接入实录（2026-11-24 首日排障）
+
+`agently-main` 生产上线过程中三个真实故障及修复（全部已回归）：
+
+1. **env 代理劫持**：daemon 进程环境带 `HTTPS_PROXY=http://127.0.0.1:7897`，requests `trust_env` 默认吃掉它，agent.qq.com 响应被代理改写成非 JSON 异常体（`no data object` 报错的根因之一）。修复：`_AGENTLY_DIRECT_PROXIES = {"http": None, "https": None}` 应用于全部三处 HTTP 调用。教训：**IMAP 侧的 `should_use_proxy`/SOCKS5 决策管不到 requests 的 env 代理**，REST 客户端必须逐调用显式置空。
+2. **列表信封误判**：`_envelope` 假定 `data` 必为 dict，消息列表端点实返 `{"data": [...]}`，首轮同步必然失败。修复：list 分支包装回 `{"data": data}`。
+3. **RT 轮换链纪律**：RT 是 single-use 轮换型，**绝不用手动 curl 兑换做验证**（每烧一次即断链，曾连续烧掉 2 条 RT）。验证一律用只读方式（现有 AT 调 `/v1/me`），兑换只交给 daemon 自动做（`persist_rotated_refresh_token` 会把轮换结果写回 config）。接入新凭据的正确姿势：停 daemon → 写 RT + client_id 到 config → 清熔断 → 起 daemon → 看 `rotated refresh_token persisted` 日志即成功。
+
+另两个账号事实：设备流签发的 RT 只能用 `cli_002e8cd19b6d8ed0` 兑换，CLI（keychain 存量）签发的只能用 `cli_002e8cd1a3bd2eb8`——RT 与签发批次的 client_id 绑定，混用报 `invalid_grant`。
+
+### 3A.1 登录态可用性模型（无需人工保活）
+
+RT 轮换链是**滑动续期**：每次兑换发新 RT + 新 1 小时窗口。聚合器每轮同步开头都会兑换一次 token（5 分钟周期 ≈ 每天 288 次），链条自然不断——**正常运行永不掉线，无需人工续期**。每小时 200 请求限额只占 12 次。
+
+唯一会断链的场景：**聚合器停机超过 1 小时**（RT 自然过期，服务端无法自救；device flow 需浏览器人工确认，自研发起被 `unsupported client` 拒绝）。恢复步骤已写入 `AgentlyAuthError` 文案并落到「我的邮箱」页 `last_error`：重新 `agently-cli auth login` → 把新 refresh_token 更新到账号配置即可。
+
+可用性加固（同日）：
+1. token 兑换 POST 复用 `call_with_transport_retry`——代理抖动丢失响应只重试一次，**绝不把传输停顿误判为 RT 失效**（否则会诱导无意义的重新授权）。
+2. `classify_error` 把 `AgentlyAuthError` 归入 `auth` 类（消息含 "refresh_token" 字样，此前会误归 `persist`）。
+3. 运维纪律：**one-mail 独占该邮箱的 RT 轮换链**。用 agently-cli 碰同一邮箱会把 one-mail 的 RT 作废（single-use 互踢），下一轮同步 `last_error` 会给出上述恢复指引。
+
+---
+
 ## 4. 三级阶梯全自动配置发现引擎 (Three-Tier Auto-Discovery Engine)
 
 为达成“只填邮箱地址即可自动推导服务器配置”的目标，系统在接入后端构建三级发现瀑布流：

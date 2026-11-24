@@ -40,6 +40,11 @@ AGENTLY_TOKEN_URL = "https://auth.agent.qq.com/oauth/token"
 _AGENTLY_PAGE_LIMIT = 50          # API hard cap per +list page
 _MAX_AGENTLY_MESSAGE_SCAN = 5000  # same stranding guard as graph_source
 _DEFAULT_ALIAS = "__primary__"    # placeholder resolved once per sync via /v1/me
+# 国内 API：daemon 进程环境带的 HTTPS_PROXY（7897）会把 agent.qq.com 响应改写成
+# 非 JSON/envelope 异常体（"no data object" 事故根因），requests 默认 trust_env
+# 会吃掉它。IMAP 侧的 should_use_proxy/SOCKS5 决策管不到 requests 的 env 代理，
+# 必须在每次 HTTP 调用显式置空。
+_AGENTLY_DIRECT_PROXIES = {"http": None, "https": None}
 
 _BODY_FORMAT_PLAIN = "PLAIN"
 _BODY_FORMAT_HTML = "HTML"
@@ -67,17 +72,29 @@ def agently_access_token(oauth: dict, on_rotated=None) -> str:
 
     Mirrors graph_access_token: rotated RTs are written back through on_rotated
     immediately (token_store persistence failure aborts the redemption).
+    Transport-layer jitter on the token POST is retried once via
+    call_with_transport_retry — a lost response must NOT be classified as a
+    dead refresh_token (that would demand manual re-auth for nothing).
     """
+    from .transport_retry import call_with_transport_retry
+
     payload = {
         "grant_type": "refresh_token",
         "refresh_token": oauth["refresh_token"],
     }
     if oauth.get("client_id"):
         payload["client_id"] = oauth["client_id"]
-    r = requests.post(AGENTLY_TOKEN_URL, data=payload, timeout=30)
+
+    def _post() -> requests.Response:
+        return requests.post(AGENTLY_TOKEN_URL, data=payload, timeout=30,
+                             proxies=_AGENTLY_DIRECT_PROXIES)
+
+    r = call_with_transport_retry(_post)
     if r.status_code in (400, 401, 403):
         raise AgentlyAuthError(
-            f"agently refresh_token rejected (HTTP {r.status_code}); re-auth required")
+            "agently refresh_token rejected (HTTP "
+            f"{r.status_code}); RT 已过期或被其他客户端轮换作废——重新执行 "
+            "`agently-cli auth login` 并将新 refresh_token 更新到该账号配置后即可恢复（无需其他操作）")
     r.raise_for_status()
     data = r.json()
     new_rt = data.get("refresh_token")
@@ -111,7 +128,9 @@ def agently_access_token_locked(account: AccountConfig, config: Config | None) -
 def _envelope(response: requests.Response) -> dict:
     """Parse the {ok,data,error} envelope; raise classified errors."""
     if response.status_code == 401:
-        raise AgentlyAuthError("agently API returned 401; re-auth required")
+        raise AgentlyAuthError(
+            "agently API returned 401; RT 已过期或被其他客户端轮换作废——重新执行 "
+            "`agently-cli auth login` 并将新 refresh_token 更新到该账号配置后即可恢复（无需其他操作）")
     if response.status_code == 429:
         retry_after = response.headers.get("Retry-After")
         raise AgentlyError(
@@ -129,9 +148,19 @@ def _envelope(response: requests.Response) -> dict:
         message = err.get("message") or response.text[:200]
         raise AgentlyError(f"agently API error code={code}: {message}")
     data = payload.get("data")
-    if not isinstance(data, dict):
-        raise AgentlyError("agently API envelope has no data object")
-    return data
+    if isinstance(data, dict):
+        return data
+    # List endpoints (/v1/me callers' siblings like messages listing) return
+    # {"data": [...]} with a list payload — verified live 2026-11-24 against
+    # api.agent.qq.com: GET .../messages?dir=inbox returns a JSON array here.
+    if isinstance(data, list):
+        return {"data": data}
+    # Send (and possibly other mutation) responses are bare objects like
+    # {"queued": true, "_hints": {...}} — no {ok,data} envelope. Verified live
+    # 2026-11-24: POST .../messages/send returns 200 with this shape.
+    if "data" not in payload and "ok" not in payload:
+        return payload
+    raise AgentlyError("agently API envelope has no data object")
 
 
 def _api_get(access_token: str, path: str, params: dict | None = None) -> dict:
@@ -140,6 +169,7 @@ def _api_get(access_token: str, path: str, params: dict | None = None) -> dict:
         headers={"Authorization": f"Bearer {access_token}"},
         params=params,
         timeout=30,
+        proxies=_AGENTLY_DIRECT_PROXIES,
     )
     return _envelope(r)
 
@@ -504,6 +534,7 @@ def send_agently(account: AccountConfig, payload: dict, config) -> str | None:
             headers=_send_headers(access_token),
             json=body,
             timeout=30,
+            proxies=_AGENTLY_DIRECT_PROXIES,
         ))
     except AgentlyAuthError as error:
         raise OutboundUnsupported(f"agently send unauthorized: {error}") from error
