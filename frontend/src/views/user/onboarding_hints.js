@@ -43,6 +43,14 @@ export const PROVIDER_CONTEXT_HINTS = [
         badgeKey: "feishu.badge",
         warningKey: "feishu.warning",
     },
+    {
+        // Agent 邮箱无 IMAP/POP3 端点，smart 模式（自动发现）必然失败——提示
+        // 用户走手动配置的 Agent 邮箱预设粘贴 refresh_token。
+        match: /@agent\.qq\.com$/i,
+        providerKey: "agent",
+        badgeKey: "agent.badge",
+        warningKey: "agent.warning",
+    },
 ];
 
 export function getProviderContextHint(email) {

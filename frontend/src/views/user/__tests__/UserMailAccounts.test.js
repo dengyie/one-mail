@@ -45,6 +45,9 @@ describe('external mailbox provider form contract', () => {
         expect(view).toContain('buildAgentlyOauth(agentlyRt)')
         expect(view).toContain('/@agent\\.qq\\.com$/i.test(f.username.trim())')
         expect(view).toContain("t('agentMailIntro') || AGENTLY_INTRO_FALLBACK")
+        // smart 模式识别 @agent.qq.com 后给出手动接入引导按钮
+        expect(view).toContain("providerHint.providerKey === 'agent'")
+        expect(view).toContain('const switchToAgentOauth = () => {')
     })
 
     it('keeps the Outlook OAuth guidance in the source-locale copy', () => {
