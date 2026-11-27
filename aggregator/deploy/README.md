@@ -1,6 +1,6 @@
-# VPS 部署（supervisord 托管）
+# VPS 部署（systemd 托管 · tencent-lh）
 
-pxed 这台 VPS 不以 systemd 为 PID 1、也不开 cron，聚合器由 **supervisord** 托管常驻进程。`agg-loop.sh` 直接 `exec one_mail_agg.main --daemon`，单进程单写者完成三件事：
+tencent-lh（212.64.10.215，Debian 13）以 systemd 为 PID 1，聚合器由 **systemd** 托管常驻进程。`agg-loop.sh` 直接 `exec one_mail_agg.main --daemon`，单进程单写者完成三件事：
 
 - **IMAP IDLE**：为支持的账号拉起常驻监听线程，服务端有新邮件即秒级同步（实时收信）；
 - **60s 兜底增量拉取**：POP3 / graph / 新增用户账号 / IDLE 降级账号走轮询；
@@ -35,26 +35,27 @@ df -h /opt/one-mail-attachments
 
 ## D1 逻辑备份（不使用 R2）
 
-生产没有开通 R2，Worker 的定时备份保持休眠。部署包还包含一个常驻的 D1 备份进程：
+生产没有开通 R2，Worker 的定时备份保持休眠。部署包还包含一个常驻的 D1 备份进程（systemd `one-mail-d1-backup.service`）：
 直接调用 D1 export API（`POST` + `current_bookmark` 轮询），把 dump 流式 gzip 到
 `/opt/one-mail-backups`，按 7 daily / 4 weekly / 6 monthly 保留。详见
 [`docs/d1-backup.md`](../docs/d1-backup.md)。
 
 1. GitHub Secret `D1_BACKUP_API_TOKEN` 由部署 workflow 写入 `/opt/one-mail-agg/d1-backup.token`（`0600`）；token 只需 `D1:Edit`。
 2. `/opt/one-mail-agg/d1-backup.json` 保存账户 ID、库 ID 与保留策略，一次性创建（模板 `deploy/d1-backup.example.json`）。
-3. 只有 token 与配置都存在时，部署才安装 `d1-backup.sh` 并把 `one-mail-d1-backup` program 追加进 `supervisor-one-mail-agg.conf`；缺任一项会跳过且不使部署失败。
-4. 首次启动立即补跑当天备份，之后每天按配置的**宿主本地时间**执行（pxed 是 CST/UTC+8，默认 `03:10` 即北京时间凌晨）；失败 30 分钟后重试。
-5. 进程以 `nice -n 19` + `ionice -c 3` 启动，dump 是流式 gzip（内存基本恒定），不与收发信抢 CPU 与磁盘。
+3. 只有 token 与配置都存在时，部署才安装 `d1-backup.sh` 并 `systemctl enable --now one-mail-d1-backup`（unit 模板 `deploy/one-mail-d1-backup.service`）；缺任一项会跳过且不使部署失败。
+4. 首次启动立即补跑当天备份，之后每天按配置的**宿主本地时间**执行（tencent-lh 是 Asia/Shanghai/UTC+8，默认 `03:10` 即北京时间凌晨）；失败 30 分钟后重试。
+5. 进程以 unit 的 `Nice=19` + `IOSchedulingClass=idle`（d1-backup.sh 内部还有第二道 nice/ionice）启动，dump 是流式 gzip（内存基本恒定），不与收发信抢 CPU 与磁盘。
 
 检查：
 
 ```bash
-supervisorctl -c /personal/pxed/supervisord.conf status one-mail-d1-backup
-tail -n 50 /opt/one-mail-agg/d1-backup.supervisor.err.log
+systemctl status one-mail-d1-backup
+tail -n 20 /opt/one-mail-backups/runs.jsonl
 ls -lh /opt/one-mail-backups/daily
 ```
 
-> 仓库内曾误存 `one-mail-agg.service`/`one-mail-agg.timer`（systemd unit），但 pxed 从未用 systemd 跑过它们（已 `disabled` 并删除），仅 supervisord 路径是真实生效的。unit 文件已从仓库移除，勿再用 systemd 部署。
+> 历史注记：pxed 时代用 supervisord program（`one-mail-d1-backup.supervisor.conf`）托管；
+> 该文件与 supervisord 链路已随 pxed 报废移除，tencent-lh 只走 systemd unit。
 
 凭据安全：`config.json` 含授权码/refresh_token，`chmod 600`，绝不写入 D1、绝不提交。
 

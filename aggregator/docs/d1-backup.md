@@ -1,7 +1,7 @@
 # VPS 本地 D1 逻辑备份（不使用 R2）
 
 生产账户没有开通 R2，Worker 的定时备份路径因此保持休眠。本模块把同一个 D1
-数据库备份到已经付费、长期在线的 pxed VPS 上：调用 Cloudflare D1 export API，
+数据库备份到已经付费、长期在线的 tencent-lh VPS 上：调用 Cloudflare D1 export API，
 按真实协议轮询（`POST` + `current_bookmark`，下载地址在 `result.result.signed_url`），
 把 dump 流式 gzip 到本地磁盘，再按 daily / weekly / monthly 分层保留。
 
@@ -73,22 +73,23 @@ GitHub Secret `D1_BACKUP_API_TOKEN` 写入。token 只要求 **D1:Edit**（导�
    ```
 
 4. 触发一次 `Deploy Aggregator`。部署会安装 `d1-backup.sh`、写入 token，并在
-   token 与配置文件都存在时把 `one-mail-d1-backup` program 追加进
-   `/opt/one-mail-agg/supervisor-one-mail-agg.conf`。两者缺一时会打印提示并
+   token 与配置文件都存在时安装 `deploy/one-mail-d1-backup.service` 并
+   `systemctl enable --now one-mail-d1-backup`。两者缺一时会打印提示并
    保持备份不启用，部署不会因此失败。
 
 检查：
 
 ```bash
-supervisorctl -c /personal/pxed/supervisord.conf status one-mail-d1-backup
-tail -n 50 /opt/one-mail-agg/d1-backup.supervisor.err.log
+systemctl status one-mail-d1-backup
+journalctl -u one-mail-d1-backup -n 50 --no-pager
+tail -n 20 /opt/one-mail-backups/runs.jsonl
 ls -lh /opt/one-mail-backups/daily
 df -h /opt/one-mail-backups
 ```
 
 首次启动会立即补跑当天缺失的备份，之后每天在配置的**宿主本地时间**执行；失败后
-30 分钟重试，成功则回到每日计划。`hour`/`minute` 用的是进程所见的时区（pxed 为
-CST/UTC+8），不是 UTC：默认 `03:10` 即北京时间凌晨 3 点。
+30 分钟重试，成功则回到每日计划。`hour`/`minute` 用的是进程所见的时区（tencent-lh
+为 Asia/Shanghai/UTC+8），不是 UTC：默认 `03:10` 即北京时间凌晨 3 点。
 
 ## 运行开销
 
@@ -96,7 +97,9 @@ CST/UTC+8），不是 UTC：默认 `03:10` 即北京时间凌晨 3 点。
 - **CPU/磁盘**：169 MiB 原始 SQL 在几个 CPU 秒内压到约 25–35 MiB，之后只是
   一次顺序写加一次 `sha256` 读。进程用 `nice -n 19` + `ionice -c 3` 启动，
   永远让位给聚合器的 IMAP IDLE 线程和 60s 兜底轮询。
-- **网络**：一次约 169 MiB 的 HTTPS 下载，走 supervisord 里配置的 Mihomo 代理。
+- **网络**：一次约 169 MiB 的 HTTPS 下载。tencent-lh 直连 api.cloudflare.com 可达
+  （2026-11-28 实测），unit 不设代理变量；若未来直连受限，给 unit 加
+  `Environment=HTTPS_PROXY=...` 即可，模块 `trust_env=True` 会自动继承。
 - **峰值磁盘**：先写 `.part`、校验、再 `os.replace`，并**在下载成功后才清理**
   过期档，所以最坏情况是「旧的全套 + 新的一份」同时存在（约 0.6–0.8 GiB）。
   可用空间低于 `min_free_bytes`（默认 2 GiB）时直接拒绝运行，不会写到撑爆。

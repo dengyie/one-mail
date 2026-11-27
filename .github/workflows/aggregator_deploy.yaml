@@ -91,6 +91,7 @@ jobs:
           LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
           LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
           ATTACHMENT_STORAGE_TOKEN: ${{ secrets.ATTACHMENT_STORAGE_TOKEN }}
+          D1_BACKUP_API_TOKEN: ${{ secrets.D1_BACKUP_API_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${ATTACHMENT_STORAGE_TOKEN:-}" ] || [ "${#ATTACHMENT_STORAGE_TOKEN}" -lt 32 ]; then
@@ -119,6 +120,20 @@ jobs:
           printf '%s' "$ATTACHMENT_STORAGE_TOKEN" | \
             ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" \
             "umask 077; cat > '$REMOTE_STAGE/attachment-storage.token'; chmod 0600 '$REMOTE_STAGE/attachment-storage.token'"
+
+          # The D1 backup program is optional: no token means no unit.
+          if [ -n "${D1_BACKUP_API_TOKEN:-}" ]; then
+            if [ "${#D1_BACKUP_API_TOKEN}" -lt 20 ]; then
+              echo "::error::D1_BACKUP_API_TOKEN is shorter than 20 characters."
+              exit 1
+            fi
+            # shellcheck disable=SC2029
+            printf '%s' "$D1_BACKUP_API_TOKEN" | \
+              ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" \
+              "umask 077; cat > '$REMOTE_STAGE/d1-backup.token'; chmod 0600 '$REMOTE_STAGE/d1-backup.token'"
+          else
+            echo "D1_BACKUP_API_TOKEN is not set; the D1 backup program stays disabled"
+          fi
 
           # shellcheck disable=SC2029
           ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
@@ -224,6 +239,9 @@ jobs:
           test -d "$STAGE/src/one_mail_agg"
           test -f "$STAGE/deploy/agg-loop.sh"
           test -f "$STAGE/deploy/attachment-storage.sh"
+          test -f "$STAGE/deploy/d1-backup-install.sh"
+          test -f "$STAGE/deploy/d1-backup.sh"
+          test -f "$STAGE/deploy/one-mail-d1-backup.service"
           PYTHONPATH="$STAGE/src" "$AGG/.venv/bin/python" -c \
             'import one_mail_agg.d1_backup, one_mail_agg.mutation_jobs, one_mail_agg.mutation_main, one_mail_agg.storage_server; print("staged aggregator import OK")'
 
@@ -270,6 +288,12 @@ jobs:
             echo "attachment storage did not reach active (state: $STORAGE_STATE)" >&2
             exit 1
           fi
+
+          # D1 logical backups (no R2): optional, token-driven, never gates
+          # the mail deployment. Installs the systemd unit when both the
+          # staged token and the operator config exist.
+          BASE="$BASE" AGG="$AGG" STAGE="$REMOTE_STAGE" \
+            bash "$AGG/deploy/d1-backup-install.sh" install
 
           rm -rf "$REMOTE_STAGE"
           trap - EXIT
@@ -382,6 +406,10 @@ jobs:
           # Recent aggregator heartbeat, informational only.
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" \
             'tail -n 20 /opt/one-mail-agg/agg-loop.log' || true
+
+          # The D1 backup program is auxiliary: report it, never gate on it.
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" \
+            'BASE=/opt/one-mail-agg bash /opt/one-mail-agg/aggregator/deploy/d1-backup-install.sh status' || true
 
       - name: Roll back failed deployment
         if: failure()

@@ -38,29 +38,33 @@ def test_worker_cors_exposes_attachment_filename_header_for_browser_downloads():
     assert text.count("exposeHeaders: ['Content-Disposition']") == 2
 
 
-def test_d1_backup_is_not_a_ci_dependency_and_installer_stays_guarded():
+def test_d1_backup_is_optional_and_ci_managed():
     workflow = (ROOT / ".github/workflows/aggregator_deploy.yaml").read_text(encoding="utf-8")
     installer = (ROOT / "aggregator/deploy/d1-backup-install.sh").read_text(encoding="utf-8")
-    # d1-backup is not rebuilt on tencent-lh yet (tracked as a separate
-    # follow-up): CI deploys the aggregator without touching it, so a missing
-    # token or installer can never fail the mail deployment.
-    assert "d1-backup-install.sh" not in workflow
-    assert "D1_BACKUP_API_TOKEN" not in workflow
-    # The standalone installer keeps its optional-and-guarded contract for the
-    # day the backup program is reinstated on the new host.
+    # The workflow stays under its line budget by delegating to the installer.
+    assert "d1-backup-install.sh\" install" in workflow
+    assert "d1-backup-install.sh status" in workflow
+    assert "D1_BACKUP_API_TOKEN is not set" in workflow
+    # The backup program must never become a hard deploy dependency: it is
+    # installed only when both the staged token and the operator config exist.
     assert 'if [ ! -f "${STAGE:-/nonexistent}/d1-backup.token" ]' in installer
     assert 'if [ ! -f "$BASE/d1-backup.json" ]' in installer
-    assert 'grep -q "^\\[program:one-mail-d1-backup\\]$"' in installer
-    # A crash-looping backup must not fail the mail deployment.
+    # tencent-lh is systemd-native: the installer drives one-mail-d1-backup.service.
+    assert "systemctl enable --now" in installer
+    assert "one-mail-d1-backup.service" in installer
+    # A missing or stopped backup must not fail the mail deployment.
     assert "::warning::D1 backup is not running" in installer
+    unit = (ROOT / "aggregator/deploy/one-mail-d1-backup.service").read_text(encoding="utf-8")
+    assert "ExecStart=/opt/one-mail-agg/d1-backup.sh" in unit
+    assert "Nice=19" in unit
 
 
-def test_d1_backup_supervisor_program_uses_the_aggregator_proxy():
-    text = (ROOT / "aggregator/deploy/one-mail-d1-backup.supervisor.conf").read_text(encoding="utf-8")
-    assert "[program:one-mail-d1-backup]" in text
-    # api.cloudflare.com is only reachable through the same Mihomo proxy.
-    assert "HTTPS_PROXY" in text
-    assert "/opt/one-mail-agg/d1-backup.sh" in text
+def test_d1_backup_unit_yields_cpu_and_io_to_mail_delivery():
+    text = (ROOT / "aggregator/deploy/one-mail-d1-backup.service").read_text(encoding="utf-8")
+    # The nightly dump must never compete with IMAP IDLE / the 60s poll.
+    assert "Nice=19" in text
+    assert "IOSchedulingClass=idle" in text
+    assert "Restart=always" in text
 
 
 def test_d1_backup_yields_cpu_and_io_to_mail_delivery():

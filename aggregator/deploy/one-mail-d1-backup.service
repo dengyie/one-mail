@@ -1,0 +1,28 @@
+# one-mail D1 逻辑备份（tencent-lh systemd 托管，替代 pxed 时代的 supervisord
+# program）。只有 /opt/one-mail-agg/d1-backup.json 与 d1-backup.token 都存在时
+# 部署才会安装本 unit；否则保持不启用。首次备份在进程启动时立即补跑，之后每天
+# 在配置的时刻执行（宿主本地时间；tencent-lh 为 Asia/Shanghai/UTC+8）。
+#
+# api.cloudflare.com 从该宿主直连可达（2026-11-28 实测）；与聚合器 unit 一致，
+# 不设 HTTP(S)_PROXY。d1-backup.sh 内部自带 nice -n 19 + ionice -c 3，这里的
+# Nice/IOSchedulingClass 是第二道保险。
+[Unit]
+Description=one-mail D1 logical backup (daily export to local disk)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/one-mail-agg/d1-backup.sh
+WorkingDirectory=/opt/one-mail-agg/aggregator
+Environment=PYTHONUNBUFFERED=1
+Environment=NO_PROXY=127.0.0.1,localhost
+Restart=always
+RestartSec=30s
+Nice=19
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
