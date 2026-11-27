@@ -1,12 +1,21 @@
-name: Deploy Aggregator
+name: Deploy Aggregator (tencent-lh)
+
+# aggregator/** 变更推送到 main 时，把聚合器源码部署到 tencent-lh
+# （212.64.10.215）：systemd `one-mail-agg.service` + `one-mail-attachment-storage.service`，
+# 代码根 /opt/one-mail-agg（agg-loop.sh / attachment-storage.sh / attachment-storage.token
+# 为受管文件，config.json 与 venv 为节点本地资产，CI 从不触碰）。
+# pxed（supervisord + 私有 nginx 形态）已于 2026-11-25/26 报废；本 workflow 已改写为
+# systemd 语义：stage/backup/swap + venv 导入探针 + 附件存储先启 + backend 部署顺序门
+# （同 SHA 的 backend_deploy.yaml 成功后才重启聚合器）+ 失败自动回滚。
+# D1 备份程序不随 CI 部署（pxed 时代为 supervisord program，新宿主尚未重建，独立待办）。
 
 on:
   push:
     branches:
       - main
     paths:
-      - "aggregator/**"
-      - ".github/workflows/aggregator_deploy.yaml"
+      - aggregator/**
+      - .github/workflows/aggregator_deploy.yaml
   workflow_dispatch:
 
 concurrency:
@@ -15,7 +24,9 @@ concurrency:
 
 jobs:
   deploy:
+    name: Deploy Aggregator to tencent-lh
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       contents: read
       actions: read
@@ -38,65 +49,64 @@ jobs:
       - name: Configure pinned SSH key
         shell: bash
         env:
-          PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_KNOWN_HOSTS: ${{ secrets.PXED_SSH_KNOWN_HOSTS }}
+          LH_SSH_KEY: ${{ secrets.LH_SSH_KEY }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_KNOWN_HOSTS: ${{ secrets.LH_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          if [ -z "${PXED_SSH_KEY:-}" ] || [ -z "${PXED_SSH_HOST:-}" ]; then
-            echo "::error::Missing PXED_SSH_KEY or PXED_SSH_HOST; refusing aggregator deploy."
+          if [ -z "${LH_SSH_KEY:-}" ] || [ -z "${LH_SSH_HOST:-}" ]; then
+            echo "::error::Missing LH_SSH_KEY or LH_SSH_HOST; refusing aggregator deploy."
             exit 1
           fi
-          if [ -z "${PXED_SSH_KNOWN_HOSTS:-}" ]; then
-            echo "::error::Missing PXED_SSH_KNOWN_HOSTS; refusing deploy without a pinned host key."
+          if [ -z "${LH_SSH_KNOWN_HOSTS:-}" ]; then
+            echo "::error::Missing LH_SSH_KNOWN_HOSTS; refusing deploy without a pinned host key."
             exit 1
           fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$LH_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          KEY_LINE=$(printf '%s\n' "$PXED_SSH_KNOWN_HOSTS" | awk 'NF>=2 {line=$(NF-1)" "$NF} END{print line}')
+          KEY_LINE=$(printf '%s\n' "$LH_SSH_KNOWN_HOSTS" | awk 'NF>=2 {line=$(NF-1)" "$NF} END{print line}')
           if [ -z "$KEY_LINE" ]; then
-            echo "::error::PXED_SSH_KNOWN_HOSTS contains no SSH public key."
+            echo "::error::LH_SSH_KNOWN_HOSTS contains no SSH public key."
             exit 1
           fi
           printf '%s\n' "$KEY_LINE" > /tmp/pinned_key
           if ! ssh-keygen -lf /tmp/pinned_key >/dev/null 2>&1; then
-            echo "::error::PXED_SSH_KNOWN_HOSTS does not end with a valid SSH public key."
+            echo "::error::LH_SSH_KNOWN_HOSTS does not end with a valid SSH public key."
             exit 1
           fi
           rm -f /tmp/pinned_key
           {
-            printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "${PXED_SSH_PORT:-22}" "$KEY_LINE"
-            printf '%s %s\n' "$PXED_SSH_HOST" "$KEY_LINE"
+            printf '[%s]:%s %s\n' "$LH_SSH_HOST" "${LH_SSH_PORT:-22}" "$KEY_LINE"
+            printf '%s %s\n' "$LH_SSH_HOST" "$KEY_LINE"
           } > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Install aggregator and attachment storage
         shell: bash
         env:
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
           ATTACHMENT_STORAGE_TOKEN: ${{ secrets.ATTACHMENT_STORAGE_TOKEN }}
-          D1_BACKUP_API_TOKEN: ${{ secrets.D1_BACKUP_API_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${ATTACHMENT_STORAGE_TOKEN:-}" ] || [ "${#ATTACHMENT_STORAGE_TOKEN}" -lt 32 ]; then
             echo "::error::Missing ATTACHMENT_STORAGE_TOKEN or token is shorter than 32 characters."
             exit 1
           fi
-          PORT="${PXED_SSH_PORT:-22}"
-          USER="${PXED_SSH_USER:-root}"
+          PORT="${LH_SSH_PORT:-22}"
+          USER="${LH_SSH_USER:-root}"
           SCP_OPTS=(-O -P "$PORT" -o StrictHostKeyChecking=yes)
           SSH_OPTS=(-p "$PORT" -o StrictHostKeyChecking=yes)
 
-          REMOTE_STAGE=$(ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
+          REMOTE_STAGE=$(ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
           cleanup_remote_stage() {
             if [ -n "${REMOTE_STAGE:-}" ]; then
               # shellcheck disable=SC2029 # Expand the mktemp path locally, then pass it as a literal to the pinned host.
-              ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
+              ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
             fi
           }
           trap cleanup_remote_stage EXIT
@@ -104,50 +114,21 @@ jobs:
           # scp destination; the remote shell receives it as a literal path.
           # shellcheck disable=SC2029
           scp "${SCP_OPTS[@]}" /tmp/one-mail-aggregator.tgz \
-            "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/aggregator.tgz"
-          # shellcheck disable=SC2029
-          scp "${SCP_OPTS[@]}" deploy/nginx/one-mail-frontend.conf \
-            "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/one-mail-frontend.conf"
-          # shellcheck disable=SC2029
-          scp "${SCP_OPTS[@]}" deploy/pxed-local-config.sh \
-            "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/pxed-local-config.sh"
+            "$USER@$LH_SSH_HOST:$REMOTE_STAGE/aggregator.tgz"
           # shellcheck disable=SC2029
           printf '%s' "$ATTACHMENT_STORAGE_TOKEN" | \
-            ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" \
+            ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" \
             "umask 077; cat > '$REMOTE_STAGE/attachment-storage.token'; chmod 0600 '$REMOTE_STAGE/attachment-storage.token'"
 
-          # The D1 backup program is optional: no token means no program.
-          if [ -n "${D1_BACKUP_API_TOKEN:-}" ]; then
-            if [ "${#D1_BACKUP_API_TOKEN}" -lt 20 ]; then
-              echo "::error::D1_BACKUP_API_TOKEN is shorter than 20 characters."
-              exit 1
-            fi
-            # shellcheck disable=SC2029
-            printf '%s' "$D1_BACKUP_API_TOKEN" | \
-              ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" \
-              "umask 077; cat > '$REMOTE_STAGE/d1-backup.token'; chmod 0600 '$REMOTE_STAGE/d1-backup.token'"
-          else
-            echo "D1_BACKUP_API_TOKEN is not set; the D1 backup program stays disabled"
-          fi
-
           # shellcheck disable=SC2029
-          ssh "${SSH_OPTS[@]}" "$USER@$PXED_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
+          ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
           set -euo pipefail
           trap 'rm -rf "$REMOTE_STAGE"' EXIT
-          source "$REMOTE_STAGE/pxed-local-config.sh"
           BASE=/opt/one-mail-agg
           AGG="$BASE/aggregator"
-          HELPER="$BASE/.pxed-local-config.sh"
           STAGE="$BASE/.aggregator-stage.$$"
           BACKUP="$BASE/.aggregator-backup-current"
-          SUPERVISOR=/personal/pxed/supervisord.conf
-          SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
-          SUPERVISOR_AGG_CONF_LOCAL="$BASE/supervisor-one-mail-agg.conf"
-          NGINX_MAIN=/personal/pxed/nginx/nginx.conf
-          NGINX_PREFIX=/personal/pxed/nginx/
-          NGINX_CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
-          NGINX_CONF_LOCAL=/opt/one-mail-frontend/one-mail-frontend.conf
-          exec 9>/tmp/one-mail-nginx-deploy.lock
+          exec 9>/tmp/one-mail-agg-deploy.lock
           flock 9
 
           save_runtime_file() {
@@ -155,15 +136,6 @@ jobs:
             source=$2
             if [ -e "$source" ] || [ -L "$source" ]; then
               mv "$source" "$BACKUP/runtime/$name"
-              : > "$BACKUP/runtime/$name.present"
-            fi
-          }
-
-          save_runtime_copy() {
-            name=$1
-            source=$2
-            if [ -e "$source" ] || [ -L "$source" ]; then
-              cp -L -p "$source" "$BACKUP/runtime/$name"
               : > "$BACKUP/runtime/$name.present"
             fi
           }
@@ -176,24 +148,6 @@ jobs:
             else
               rm -f "$target"
             fi
-          }
-
-          restore_managed_config() {
-            name=$1
-            target=$2
-            if [ -f "$BACKUP/runtime/$name.present" ]; then
-              pxed_restore_local_config "$BACKUP/runtime/$name" "$target" 0644
-            else
-              pxed_atomic_install_local_config /dev/null "$target" 0644
-            fi
-          }
-
-          restore_supervisor_config() {
-            restore_managed_config supervisor-one-mail-agg.conf "$SUPERVISOR_AGG_CONF_LOCAL"
-          }
-
-          restore_nginx_config() {
-            restore_managed_config nginx-frontend.conf "$NGINX_CONF_LOCAL"
           }
 
           restore_previous() {
@@ -218,28 +172,18 @@ jobs:
             done
             if [ -f "$BACKUP/runtime/snapshot-complete" ]; then
               restore_runtime_file agg-loop.sh "$BASE/agg-loop.sh" || rollback_failed=1
+              # Until the matching backend deploy is confirmed, roll the storage
+              # side back too so the host returns to its exact prior state.
               if [ ! -f "$BACKUP/runtime/backend-ready" ]; then
                 restore_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh" || rollback_failed=1
                 restore_runtime_file attachment-storage.token "$BASE/attachment-storage.token" || rollback_failed=1
-                if [ -f "$BACKUP/runtime/d1-managed" ]; then
-                  restore_runtime_file d1-backup.sh "$BASE/d1-backup.sh" || rollback_failed=1
-                  restore_runtime_file d1-backup.token "$BASE/d1-backup.token" || rollback_failed=1
-                fi
-                restore_supervisor_config || rollback_failed=1
-                if [ -f "$BACKUP/runtime/nginx-config-update-started" ]; then
-                  restore_nginx_config || rollback_failed=1
-                  nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX" || rollback_failed=1
-                  nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX" || rollback_failed=1
+                if [ "$(cat "$BACKUP/runtime/storage-was-running" 2>/dev/null)" = "yes" ]; then
+                  systemctl restart one-mail-attachment-storage || rollback_failed=1
                 fi
               fi
-              supervisorctl -c "$SUPERVISOR" reread || rollback_failed=1
-              supervisorctl -c "$SUPERVISOR" update || rollback_failed=1
               if [ -f "$BACKUP/runtime/agg-restart-attempted" ] \
                 && [ "$(cat "$BACKUP/runtime/agg-was-running" 2>/dev/null)" = "yes" ]; then
-                supervisorctl -c "$SUPERVISOR" restart one-mail-agg || rollback_failed=1
-              fi
-              if [ ! -f "$BACKUP/runtime/backend-ready" ] && [ "$(cat "$BACKUP/runtime/storage-was-running" 2>/dev/null)" = "yes" ]; then
-                supervisorctl -c "$SUPERVISOR" restart one-mail-attachment-storage || rollback_failed=1
+                systemctl restart one-mail-agg || rollback_failed=1
               fi
             fi
             if [ "$rollback_failed" -eq 0 ]; then
@@ -254,7 +198,6 @@ jobs:
 
           test -f "$BASE/config.json"
           test -x "$AGG/.venv/bin/python"
-          test -f "$SUPERVISOR"
 
           # Stage and validate the complete archive before touching the live
           # source. Preserve local runtime state and the existing venv.
@@ -262,35 +205,25 @@ jobs:
             echo "An unfinished deployment backup exists; refusing to overwrite it" >&2
             exit 1
           fi
-          install -m 0700 "$REMOTE_STAGE/pxed-local-config.sh" "$HELPER"
           rm -rf "$STAGE"
           mkdir -p "$STAGE" "$BACKUP"
           chmod 0700 "$BACKUP"
           mkdir -m 0700 "$BACKUP/runtime"
-          if [ "$(supervisorctl -c "$SUPERVISOR" status one-mail-agg | awk '{print $2}' || true)" = "RUNNING" ]; then
+          if [ "$(systemctl is-active one-mail-agg 2>/dev/null || true)" = "active" ]; then
             printf yes > "$BACKUP/runtime/agg-was-running"
           fi
-          if [ "$(supervisorctl -c "$SUPERVISOR" status one-mail-attachment-storage | awk '{print $2}' || true)" = "RUNNING" ]; then
+          if [ "$(systemctl is-active one-mail-attachment-storage 2>/dev/null || true)" = "active" ]; then
             printf yes > "$BACKUP/runtime/storage-was-running"
           fi
           save_runtime_file agg-loop.sh "$BASE/agg-loop.sh"
           save_runtime_file attachment-storage.sh "$BASE/attachment-storage.sh"
           save_runtime_file attachment-storage.token "$BASE/attachment-storage.token"
-          # Snapshot the D1 files only when this deploy replaces them; moving
-          # them aside without reinstalling would silently disable backups.
-          if [ -f "$REMOTE_STAGE/d1-backup.token" ]; then
-            save_runtime_file d1-backup.sh "$BASE/d1-backup.sh"
-            save_runtime_file d1-backup.token "$BASE/d1-backup.token"
-            : > "$BACKUP/runtime/d1-managed"
-          fi
-          save_runtime_copy supervisor-one-mail-agg.conf "$SUPERVISOR_AGG_CONF"
-          save_runtime_copy nginx-frontend.conf "$NGINX_CONF"
           : > "$BACKUP/runtime/snapshot-complete"
           tar xzf "$REMOTE_STAGE/aggregator.tgz" -C "$STAGE"
           test -f "$STAGE/pyproject.toml"
           test -d "$STAGE/src/one_mail_agg"
+          test -f "$STAGE/deploy/agg-loop.sh"
           test -f "$STAGE/deploy/attachment-storage.sh"
-          test -f "$STAGE/deploy/d1-backup.sh"
           PYTHONPATH="$STAGE/src" "$AGG/.venv/bin/python" -c \
             'import one_mail_agg.d1_backup, one_mail_agg.mutation_jobs, one_mail_agg.mutation_main, one_mail_agg.storage_server; print("staged aggregator import OK")'
 
@@ -317,56 +250,25 @@ jobs:
 
           install -m 0600 "$REMOTE_STAGE/attachment-storage.token" "$BASE/attachment-storage.token"
           install -m 0755 "$AGG/deploy/attachment-storage.sh" "$BASE/attachment-storage.sh"
-          pxed_ensure_local_config_link "$SUPERVISOR_AGG_CONF" "$SUPERVISOR_AGG_CONF_LOCAL" 0644
-          if ! grep -q '^\[program:one-mail-attachment-storage\]$' "$SUPERVISOR_AGG_CONF_LOCAL" 2>/dev/null; then
-            SUPERVISOR_STAGE="$SUPERVISOR_AGG_CONF_LOCAL.deploy.$$"
-            cp "$SUPERVISOR_AGG_CONF_LOCAL" "$SUPERVISOR_STAGE"
-            printf '\n' >> "$SUPERVISOR_STAGE"
-            cat "$AGG/deploy/one-mail-attachment-storage.supervisor.conf" >> "$SUPERVISOR_STAGE"
-            chmod 0644 "$SUPERVISOR_STAGE"
-            mv -f "$SUPERVISOR_STAGE" "$SUPERVISOR_AGG_CONF_LOCAL"
-          fi
-          chmod 0644 "$SUPERVISOR_AGG_CONF_LOCAL"
           install -d -m 0700 /opt/one-mail-attachments
 
-          # D1 logical backups (no R2): optional, see deploy/d1-backup-install.sh.
-          BASE="$BASE" AGG="$AGG" STAGE="$REMOTE_STAGE" SUPERVISOR_CONF="$SUPERVISOR_AGG_CONF_LOCAL" \
-            bash "$AGG/deploy/d1-backup-install.sh" install
-
-          test -f "$REMOTE_STAGE/one-mail-frontend.conf"
-          pxed_ensure_local_config_link "$NGINX_CONF" "$NGINX_CONF_LOCAL" 0644
-          : > "$BACKUP/runtime/nginx-config-update-started"
-          pxed_atomic_install_local_config "$REMOTE_STAGE/one-mail-frontend.conf" "$NGINX_CONF_LOCAL" 0644
-          nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
-          : > "$BACKUP/runtime/nginx-reload-attempted"
-          nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
-          supervisorctl -c "$SUPERVISOR" reread
-          supervisorctl -c "$SUPERVISOR" update
-          STORAGE_STATUS=""
+          systemctl restart one-mail-attachment-storage
+          STORAGE_STATE=""
           for attempt in $(seq 1 15); do
-            STORAGE_STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-attachment-storage || true)
-            printf 'attachment storage readiness %s/15: %s\n' "$attempt" "$STORAGE_STATUS"
-            case "$STORAGE_STATUS" in
-              *RUNNING*) break ;;
-              *FATAL*|*EXITED*|*UNKNOWN*)
-                echo "attachment storage failed to start" >&2
-                tail -n 80 /opt/one-mail-agg/attachment-storage.supervisor.err.log >&2 || true
-                exit 1
-                ;;
-            esac
+            STORAGE_STATE=$(systemctl is-active one-mail-attachment-storage 2>/dev/null || true)
+            printf 'attachment storage readiness %s/15: %s\n' "$attempt" "$STORAGE_STATE"
+            if [ "$STORAGE_STATE" = "active" ]; then
+              break
+            fi
+            if [ "$STORAGE_STATE" = "failed" ]; then
+              break
+            fi
             sleep 1
           done
-          case "$STORAGE_STATUS" in
-            *RUNNING*) ;;
-            *)
-              echo "attachment storage did not reach RUNNING within 15 seconds" >&2
-              tail -n 80 /opt/one-mail-agg/attachment-storage.supervisor.err.log >&2 || true
-              exit 1
-              ;;
-          esac
-
-          if grep -q '^\[program:one-mail-d1-backup\]$' "$SUPERVISOR_AGG_CONF_LOCAL" 2>/dev/null; then
-            supervisorctl -c "$SUPERVISOR" status one-mail-d1-backup || true
+          if [ "$STORAGE_STATE" != "active" ]; then
+            journalctl -u one-mail-attachment-storage -n 80 --no-pager >&2 || true
+            echo "attachment storage did not reach active (state: $STORAGE_STATE)" >&2
+            exit 1
           fi
 
           rm -rf "$REMOTE_STAGE"
@@ -377,9 +279,9 @@ jobs:
       - name: Wait for matching backend deployment before restarting aggregator
         env:
           GH_TOKEN: ${{ github.token }}
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" != "push" ]; then
@@ -400,9 +302,9 @@ jobs:
             conclusion=$(printf '%s' "$run" | cut -f2)
             case "$status:$conclusion" in
               completed:success)
-                PORT="${PXED_SSH_PORT:-22}"
-                USER="${PXED_SSH_USER:-root}"
-                ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
+                PORT="${LH_SSH_PORT:-22}"
+                USER="${LH_SSH_USER:-root}"
+                ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" \
                   'touch /opt/one-mail-agg/.aggregator-backup-current/runtime/backend-ready'
                 echo "Matching backend deployment succeeded; continuing"
                 exit 0
@@ -426,173 +328,139 @@ jobs:
       - name: Restart aggregator after backend is ready
         shell: bash
         env:
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
         run: |
           set -euo pipefail
-          PORT="${PXED_SSH_PORT:-22}"
-          USER="${PXED_SSH_USER:-root}"
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" 'bash -s' <<'REMOTE'
+          PORT="${LH_SSH_PORT:-22}"
+          USER="${LH_SSH_USER:-root}"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
-          SUPERVISOR=/personal/pxed/supervisord.conf
-          PRE_STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg | awk '{print $2}' || echo UNKNOWN)
+          PRE_STATUS=$(systemctl is-active one-mail-agg 2>/dev/null || true)
           echo "pre-deploy status: $PRE_STATUS"
-          if [ "$PRE_STATUS" = "RUNNING" ]; then
+          if [ "$PRE_STATUS" = "active" ]; then
             touch /opt/one-mail-agg/.aggregator-backup-current/runtime/agg-restart-attempted
-            supervisorctl -c "$SUPERVISOR" restart one-mail-agg
+            systemctl restart one-mail-agg
             sleep 2
-            STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg)
-            printf '%s\n' "$STATUS"
-            case "$STATUS" in
-              *RUNNING*) ;;
-              *) echo "aggregator failed to reach RUNNING" >&2; exit 1 ;;
-            esac
+            STATUS=$(systemctl is-active one-mail-agg 2>/dev/null || true)
+            echo "post-restart status: $STATUS"
+            if [ "$STATUS" != "active" ]; then
+              journalctl -u one-mail-agg -n 40 --no-pager >&2 || true
+              echo "aggregator failed to reach active" >&2
+              exit 1
+            fi
           else
-            supervisorctl -c "$SUPERVISOR" update
-            STATUS=$(supervisorctl -c "$SUPERVISOR" status one-mail-agg)
-            printf 'leaving stopped as configured: %s\n' "$STATUS"
+            echo "leaving stopped as configured"
           fi
           REMOTE
 
-      - name: Verify supervisor state
+      - name: Verify systemd state
         shell: bash
         env:
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
         run: |
           set -euo pipefail
           sleep 5
-          PORT="${PXED_SSH_PORT:-22}"
-          USER="${PXED_SSH_USER:-root}"
-          AGG_STATUS=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
-            'supervisorctl -c /personal/pxed/supervisord.conf status one-mail-agg')
-          STORAGE_STATUS=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
-            'supervisorctl -c /personal/pxed/supervisord.conf status one-mail-attachment-storage')
+          PORT="${LH_SSH_PORT:-22}"
+          USER="${LH_SSH_USER:-root}"
+          AGG_STATUS=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" \
+            'systemctl is-active one-mail-agg')
+          STORAGE_STATUS=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" \
+            'systemctl is-active one-mail-attachment-storage')
           printf '%s\n%s\n' "$AGG_STATUS" "$STORAGE_STATUS"
           case "$AGG_STATUS" in
-            *RUNNING*|*STOPPED*) ;;
+            active|inactive) ;;
             *) echo "::error::Aggregator in unexpected state after deploy: $AGG_STATUS"; exit 1 ;;
           esac
           case "$STORAGE_STATUS" in
-            *RUNNING*) ;;
+            active) ;;
             *) echo "::error::Attachment storage in unexpected state after deploy: $STORAGE_STATUS"; exit 1 ;;
           esac
-
-          # The D1 backup program is auxiliary: report it, never gate on it.
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" \
-            'bash /opt/one-mail-agg/aggregator/deploy/d1-backup-install.sh status' || true
+          # Recent aggregator heartbeat, informational only.
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" \
+            'tail -n 20 /opt/one-mail-agg/agg-loop.log' || true
 
       - name: Roll back failed deployment
         if: failure()
         shell: bash
         env:
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
         run: |
           set -euo pipefail
-          PORT="${PXED_SSH_PORT:-22}"
-          USER="${PXED_SSH_USER:-root}"
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" 'bash -s' <<'REMOTE'
+          PORT="${LH_SSH_PORT:-22}"
+          USER="${LH_SSH_USER:-root}"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
           BASE=/opt/one-mail-agg
           AGG="$BASE/aggregator"
           BACKUP="$BASE/.aggregator-backup-current"
-          HELPER="$BASE/.pxed-local-config.sh"
-          SUPERVISOR=/personal/pxed/supervisord.conf
-          SUPERVISOR_AGG_CONF=/personal/pxed/supervisor-one-mail-agg.conf
-          SUPERVISOR_AGG_CONF_LOCAL="$BASE/supervisor-one-mail-agg.conf"
-          NGINX_MAIN=/personal/pxed/nginx/nginx.conf
-          NGINX_PREFIX=/personal/pxed/nginx/
           if [ ! -d "$BACKUP" ]; then
             echo "No staged deployment backup; the install step already restored its source"
-            rm -f "$HELPER"
             exit 0
           fi
-          source "$HELPER"
+          restore_file() {
+            name=$1
+            target=$2
+            if [ -f "$BACKUP/runtime/$name.present" ]; then
+              mv "$BACKUP/runtime/$name" "$target"
+            else
+              rm -f "$target"
+            fi
+          }
+          rollback_failed=0
           for path in src tests deploy pyproject.toml README.md; do
             marker_path=${path//\//_}
             if [ -f "$BACKUP/runtime/managed-$marker_path.touched" ]; then
               if [ -e "$AGG/$path" ] || [ -L "$AGG/$path" ]; then
-                rm -rf "$AGG/$path"
+                rm -rf "$AGG/$path" || rollback_failed=1
               fi
               if [ -e "$BACKUP/$path" ] || [ -L "$BACKUP/$path" ]; then
-                mv "$BACKUP/$path" "$AGG/$path"
+                mv "$BACKUP/$path" "$AGG/$path" || rollback_failed=1
               fi
             fi
           done
           if [ -f "$BACKUP/runtime/snapshot-complete" ]; then
-            for name in agg-loop.sh attachment-storage.sh attachment-storage.token; do
-              case "$name" in
-                agg-loop.sh) target="$BASE/agg-loop.sh" ;;
-                attachment-storage.sh) target="$BASE/attachment-storage.sh" ;;
-                attachment-storage.token) target="$BASE/attachment-storage.token" ;;
-              esac
-              if [ ! -f "$BACKUP/runtime/backend-ready" ] || [ "$name" = "agg-loop.sh" ]; then
-                if [ -f "$BACKUP/runtime/$name.present" ]; then
-                  mv "$BACKUP/runtime/$name" "$target"
-                else
-                  rm -f "$target"
-                fi
-              fi
-            done
-            if [ -f "$BACKUP/runtime/d1-managed" ]; then
-              for name in d1-backup.sh d1-backup.token; do
-                case "$name" in
-                  d1-backup.sh) target="$BASE/d1-backup.sh" ;;
-                  d1-backup.token) target="$BASE/d1-backup.token" ;;
-                esac
-                if [ -f "$BACKUP/runtime/$name.present" ]; then
-                  mv "$BACKUP/runtime/$name" "$target"
-                else
-                  rm -f "$target"
-                fi
-              done
-            fi
+            restore_file agg-loop.sh "$BASE/agg-loop.sh" || rollback_failed=1
             if [ ! -f "$BACKUP/runtime/backend-ready" ]; then
-              if [ -f "$BACKUP/runtime/supervisor-one-mail-agg.conf.present" ]; then
-                pxed_restore_local_config "$BACKUP/runtime/supervisor-one-mail-agg.conf" "$SUPERVISOR_AGG_CONF_LOCAL" 0644
-              else
-                pxed_atomic_install_local_config /dev/null "$SUPERVISOR_AGG_CONF_LOCAL" 0644
-              fi
-              if [ -f "$BACKUP/runtime/nginx-config-update-started" ]; then
-                if [ -f "$BACKUP/runtime/nginx-frontend.conf.present" ]; then
-                  pxed_restore_local_config "$BACKUP/runtime/nginx-frontend.conf" /opt/one-mail-frontend/one-mail-frontend.conf 0644
-                else
-                  pxed_atomic_install_local_config /dev/null /opt/one-mail-frontend/one-mail-frontend.conf 0644
-                fi
-                nginx -t -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
-                nginx -s reload -c "$NGINX_MAIN" -p "$NGINX_PREFIX"
-              fi
+              restore_file attachment-storage.sh "$BASE/attachment-storage.sh" || rollback_failed=1
+              restore_file attachment-storage.token "$BASE/attachment-storage.token" || rollback_failed=1
             fi
-            supervisorctl -c "$SUPERVISOR" reread
-            supervisorctl -c "$SUPERVISOR" update
+            # Re-register the restored source in the existing venv.
+            "$AGG/.venv/bin/pip" install --no-deps -e "$AGG" || rollback_failed=1
+            if [ ! -f "$BACKUP/runtime/backend-ready" ] \
+              && [ "$(cat "$BACKUP/runtime/storage-was-running" 2>/dev/null)" = "yes" ]; then
+              systemctl restart one-mail-attachment-storage || rollback_failed=1
+            fi
             if [ -f "$BACKUP/runtime/agg-restart-attempted" ] \
               && [ "$(cat "$BACKUP/runtime/agg-was-running" 2>/dev/null)" = "yes" ]; then
-              supervisorctl -c "$SUPERVISOR" restart one-mail-agg
-            fi
-            if [ ! -f "$BACKUP/runtime/backend-ready" ] && [ "$(cat "$BACKUP/runtime/storage-was-running" 2>/dev/null)" = "yes" ]; then
-              supervisorctl -c "$SUPERVISOR" restart one-mail-attachment-storage
+              systemctl restart one-mail-agg || rollback_failed=1
             fi
           fi
-          rm -rf "$BACKUP"
-          rm -f "$HELPER"
+          if [ "$rollback_failed" -eq 0 ]; then
+            rm -rf "$BACKUP"
+          else
+            echo "Rollback was incomplete; preserving $BACKUP for recovery" >&2
+            exit 1
+          fi
           REMOTE
 
       - name: Finalize successful deployment
         if: success()
         shell: bash
         env:
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
         run: |
           set -euo pipefail
-          PORT="${PXED_SSH_PORT:-22}"
-          USER="${PXED_SSH_USER:-root}"
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" 'bash -s' <<'REMOTE'
+          PORT="${LH_SSH_PORT:-22}"
+          USER="${LH_SSH_USER:-root}"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" 'bash -s' <<'REMOTE'
           rm -rf /opt/one-mail-agg/.aggregator-backup-current
-          rm -f /opt/one-mail-agg/.pxed-local-config.sh
+          rm -rf /opt/one-mail-agg/.aggregator-stage.*
           REMOTE
