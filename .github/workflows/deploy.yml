@@ -225,6 +225,7 @@ jobs:
           REMOTE_STAGE=$(remote_ssh 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
           cleanup_remote_stage() {
             if [ -n "${REMOTE_STAGE:-}" ]; then
+              # shellcheck disable=SC2029 # Intentional: expand the mktemp path on the runner, pass it as a literal to the pinned host.
               remote_ssh "rm -rf -- '$REMOTE_STAGE'" || true
             fi
           }
