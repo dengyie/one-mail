@@ -1,19 +1,21 @@
 from pathlib import Path
-import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_frontend_sparse_checkout_includes_local_config_helper():
+def test_frontend_deploy_ships_local_config_helper():
     text = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
-    match = re.search(
-        r"sparse-checkout:\s*(.*?)\n\s*sparse-checkout-cone:",
-        text,
-        re.S,
-    )
-    assert match, "deploy-pxed sparse checkout block is missing"
-    assert "deploy/pxed-local-config.sh" in match.group(1)
+    # The deploy job ships the helper to the host and drives the nginx config
+    # through it (symlink pinning + atomic install + restore on rollback).
+    assert "deploy/pxed-local-config.sh" in text
+    assert "pxed_ensure_local_config_link" in text
+    assert "pxed_atomic_install_local_config" in text
+    # tencent-lh runs Debian nginx with the stock conf.d include: the managed
+    # path is the symlink target under /opt/one-mail-frontend, reload is plain
+    # systemctl (no custom -c/-p prefix like on the old pxed host).
+    assert "CONF=/etc/nginx/conf.d/one-mail-frontend.conf" in text
+    assert "systemctl reload nginx" in text
 
 
 def test_aggregator_remote_stage_cleanup_survives_rollback_trap():
@@ -36,15 +38,16 @@ def test_worker_cors_exposes_attachment_filename_header_for_browser_downloads():
     assert text.count("exposeHeaders: ['Content-Disposition']") == 2
 
 
-def test_d1_backup_install_is_optional_and_guarded():
+def test_d1_backup_is_not_a_ci_dependency_and_installer_stays_guarded():
     workflow = (ROOT / ".github/workflows/aggregator_deploy.yaml").read_text(encoding="utf-8")
     installer = (ROOT / "aggregator/deploy/d1-backup-install.sh").read_text(encoding="utf-8")
-    # The workflow stays under its line budget by delegating to the installer.
-    assert "d1-backup-install.sh\" install" in workflow
-    assert "d1-backup-install.sh status" in workflow
-    assert "D1_BACKUP_API_TOKEN is not set" in workflow
-    # The backup program must never become a hard deploy dependency: it is
-    # installed only when both the staged token and the operator config exist.
+    # d1-backup is not rebuilt on tencent-lh yet (tracked as a separate
+    # follow-up): CI deploys the aggregator without touching it, so a missing
+    # token or installer can never fail the mail deployment.
+    assert "d1-backup-install.sh" not in workflow
+    assert "D1_BACKUP_API_TOKEN" not in workflow
+    # The standalone installer keeps its optional-and-guarded contract for the
+    # day the backup program is reinstated on the new host.
     assert 'if [ ! -f "${STAGE:-/nonexistent}/d1-backup.token" ]' in installer
     assert 'if [ ! -f "$BASE/d1-backup.json" ]' in installer
     assert 'grep -q "^\\[program:one-mail-d1-backup\\]$"' in installer

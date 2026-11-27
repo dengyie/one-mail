@@ -1,6 +1,9 @@
-name: CI and Deploy pxed
+name: CI and Deploy (tencent-lh)
 
-# push 到 main / PR 触发全套单测与构建；push main 时自动构建并部署前端至 pxed。
+# push 到 main / PR 触发全套单测与构建；push main 时在测试通过后把前端 dist
+# 与 nginx 配置自动部署到 tencent-lh（212.64.10.215，nginx :3301）。
+# pxed 已于 2026-11-25/26 报废，部署目标为 systemd 形态的 tencent-lh；
+# 聚合器部署走 aggregator_deploy.yaml（systemd one-mail-agg.service）。
 
 on:
   push:
@@ -105,6 +108,11 @@ jobs:
       - name: Prepare Frontend env
         run: |
           cd frontend
+          # .env.prod is what `vite build -m prod` reads; without it the dist
+          # ships an empty VITE_API_BASE and every API call falls back to a
+          # relative path against the frontend nginx (405 login failures,
+          # 2026-11-27 incident). .env.pages feeds build:pages the same way.
+          echo "VITE_API_BASE=https://mail-api.mangoqwq.com" > .env.prod
           echo "VITE_API_BASE=https://mail-api.mangoqwq.com" > .env.pages
           echo "VITE_API_BASE=https://mail-api.mangoqwq.com" > .env.production
 
@@ -127,20 +135,15 @@ jobs:
           path: /tmp/fe-dist/one-mail-fe-dist.tgz
           retention-days: 7
 
-  deploy-pxed:
-    name: Deploy Frontend to pxed (nginx :3301)
+  deploy-lh:
+    name: Deploy Frontend to tencent-lh (nginx :3301)
     needs: test-and-build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout nginx configuration
+      - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v6
-        with:
-          sparse-checkout: |
-            deploy/nginx/one-mail-frontend.conf
-            deploy/pxed-local-config.sh
-          sparse-checkout-cone: false
 
       - name: Download Frontend Artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -150,71 +153,73 @@ jobs:
 
       - name: Configure SSH Key
         env:
-          PXED_SSH_KEY: ${{ secrets.PXED_SSH_KEY }}
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
-          PXED_SSH_KNOWN_HOSTS: ${{ secrets.PXED_SSH_KNOWN_HOSTS }}
+          LH_SSH_KEY: ${{ secrets.LH_SSH_KEY }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
+          LH_SSH_KNOWN_HOSTS: ${{ secrets.LH_SSH_KNOWN_HOSTS }}
         run: |
-          if [ -z "$PXED_SSH_KEY" ] || [ -z "$PXED_SSH_HOST" ]; then
-            echo "::error::Missing PXED_SSH_KEY or PXED_SSH_HOST; refusing to report a successful deploy."
+          if [ -z "$LH_SSH_KEY" ] || [ -z "$LH_SSH_HOST" ]; then
+            echo "::error::Missing LH_SSH_KEY or LH_SSH_HOST; refusing to report a successful deploy."
             exit 1
           fi
-          if [ -z "$PXED_SSH_KNOWN_HOSTS" ]; then
-            echo "::error::Missing PXED_SSH_KNOWN_HOSTS; refusing to deploy without a pinned SSH host key."
+          if [ -z "$LH_SSH_KNOWN_HOSTS" ]; then
+            echo "::error::Missing LH_SSH_KNOWN_HOSTS; refusing to deploy without a pinned SSH host key."
             exit 1
           fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "$PXED_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$LH_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           # Pin the host key from the secret for exactly the host:port CI uses.
           # No runtime ssh-keyscan: a server presenting any other key fails closed.
           # The secret may be a bare key ("ssh-ed25519 AAAA...") or full
           # known_hosts line(s); take the key type + body from its last line.
-          KEY_LINE=$(printf '%s\n' "$PXED_SSH_KNOWN_HOSTS" | awk 'NF>=2 {line=$(NF-1)" "$NF} END{print line}')
+          KEY_LINE=$(printf '%s\n' "$LH_SSH_KNOWN_HOSTS" | awk 'NF>=2 {line=$(NF-1)" "$NF} END{print line}')
           if [ -z "$KEY_LINE" ]; then
-            echo "::error::PXED_SSH_KNOWN_HOSTS contains no SSH public key; refusing to deploy."
+            echo "::error::LH_SSH_KNOWN_HOSTS contains no SSH public key; refusing to deploy."
             exit 1
           fi
           printf '%s\n' "$KEY_LINE" > /tmp/pinned_key
           if ! ssh-keygen -lf /tmp/pinned_key >/dev/null 2>&1; then
-            echo "::error::PXED_SSH_KNOWN_HOSTS does not end with a valid SSH public key; refusing to deploy."
+            echo "::error::LH_SSH_KNOWN_HOSTS does not end with a valid SSH public key; refusing to deploy."
             exit 1
           fi
           rm -f /tmp/pinned_key
           {
-            printf '[%s]:%s %s\n' "$PXED_SSH_HOST" "${PXED_SSH_PORT:-22}" "$KEY_LINE"
-            printf '%s %s\n' "$PXED_SSH_HOST" "$KEY_LINE"
+            printf '[%s]:%s %s\n' "$LH_SSH_HOST" "${LH_SSH_PORT:-22}" "$KEY_LINE"
+            printf '%s %s\n' "$LH_SSH_HOST" "$KEY_LINE"
           } > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Upload frontend and nginx configuration on pxed
+      - name: Upload frontend and nginx configuration on tencent-lh
         env:
-          PXED_SSH_HOST: ${{ secrets.PXED_SSH_HOST }}
-          PXED_SSH_PORT: ${{ secrets.PXED_SSH_PORT }}
-          PXED_SSH_USER: ${{ secrets.PXED_SSH_USER }}
+          LH_SSH_HOST: ${{ secrets.LH_SSH_HOST }}
+          LH_SSH_PORT: ${{ secrets.LH_SSH_PORT }}
+          LH_SSH_USER: ${{ secrets.LH_SSH_USER }}
         run: |
-          PORT="${PXED_SSH_PORT:-22}"
-          USER="${PXED_SSH_USER:-root}"
-          REMOTE_STAGE=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
+          PORT="${LH_SSH_PORT:-22}"
+          USER="${LH_SSH_USER:-root}"
+          REMOTE_STAGE=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
           cleanup_remote_stage() {
             if [ -n "${REMOTE_STAGE:-}" ]; then
-              ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
+              ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
             fi
           }
           trap cleanup_remote_stage EXIT
-          scp -O -P "$PORT" -o StrictHostKeyChecking=yes /tmp/one-mail-fe-dist.tgz "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/frontend.tgz"
-          scp -O -P "$PORT" -o StrictHostKeyChecking=yes deploy/nginx/one-mail-frontend.conf "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/one-mail-frontend.conf"
-          scp -O -P "$PORT" -o StrictHostKeyChecking=yes deploy/pxed-local-config.sh "$USER@$PXED_SSH_HOST:$REMOTE_STAGE/pxed-local-config.sh"
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$PXED_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
+          scp -O -P "$PORT" -o StrictHostKeyChecking=yes /tmp/one-mail-fe-dist.tgz "$USER@$LH_SSH_HOST:$REMOTE_STAGE/frontend.tgz"
+          scp -O -P "$PORT" -o StrictHostKeyChecking=yes deploy/nginx/one-mail-frontend.conf "$USER@$LH_SSH_HOST:$REMOTE_STAGE/one-mail-frontend.conf"
+          scp -O -P "$PORT" -o StrictHostKeyChecking=yes deploy/pxed-local-config.sh "$USER@$LH_SSH_HOST:$REMOTE_STAGE/pxed-local-config.sh"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" "REMOTE_STAGE='$REMOTE_STAGE' bash -s" <<'REMOTE'
           set -euo pipefail
           source "$REMOTE_STAGE/pxed-local-config.sh"
           FRONTEND=/opt/one-mail-frontend
           DIST="$FRONTEND/dist"
           STAGE="$FRONTEND/.dist.deploy.$$"
           DIST_BACKUP="$FRONTEND/.dist.before-last-deploy.$$"
-          CONF=/personal/pxed/nginx/conf.d/one-mail-frontend.conf
+          # Debian nginx includes /etc/nginx/conf.d/*.conf; on tencent-lh the
+          # include path is a symlink to the managed local config below.
+          CONF=/etc/nginx/conf.d/one-mail-frontend.conf
           CONF_LOCAL="$FRONTEND/one-mail-frontend.conf"
           CONF_BACKUP="$FRONTEND/.one-mail-frontend.conf.before-last-deploy.$$"
           CONF_PROMOTED=0
@@ -241,10 +246,10 @@ jobs:
           cp -p "$CONF_LOCAL" "$CONF_BACKUP"
           CONF_PROMOTED=1
           pxed_atomic_install_local_config "$REMOTE_STAGE/one-mail-frontend.conf" "$CONF_LOCAL" 0644
-          if ! nginx -t -c /personal/pxed/nginx/nginx.conf -p /personal/pxed/nginx/; then
+          if ! nginx -t; then
             exit 1
           fi
-          if ! nginx -s reload -c /personal/pxed/nginx/nginx.conf -p /personal/pxed/nginx/; then
+          if ! systemctl reload nginx; then
             exit 1
           fi
           rm -rf "$DIST_BACKUP" "$CONF_BACKUP"
