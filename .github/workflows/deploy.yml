@@ -200,10 +200,32 @@ jobs:
         run: |
           PORT="${LH_SSH_PORT:-22}"
           USER="${LH_SSH_USER:-root}"
-          REMOTE_STAGE=$(ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
+          SSH_OPTS=(-p "$PORT" -o StrictHostKeyChecking=yes)
+          # The host takes Internet-wide brute-force scans; sshd can drop new
+          # connections at kex when its pre-auth window saturates. Retry a few
+          # times before giving up — a dropped handshake is transient, a real
+          # auth/config failure is not.
+          remote_ssh() {
+            local attempt out
+            for attempt in 1 2 3 4; do
+              if out=$(ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" "$@" 2>&1); then
+                printf '%s\n' "$out"
+                return 0
+              fi
+              if ! printf '%s' "$out" | grep -qE 'kex_exchange_identification|Connection reset|Connection closed'; then
+                printf '%s\n' "$out" >&2
+                return 1
+              fi
+              echo "SSH attempt $attempt hit a reset handshake; retrying in $((attempt * 5))s"
+              sleep $((attempt * 5))
+            done
+            printf '%s\n' "$out" >&2
+            return 1
+          }
+          REMOTE_STAGE=$(remote_ssh 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
           cleanup_remote_stage() {
             if [ -n "${REMOTE_STAGE:-}" ]; then
-              ssh -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$LH_SSH_HOST" "rm -rf -- '$REMOTE_STAGE'" || true
+              remote_ssh "rm -rf -- '$REMOTE_STAGE'" || true
             fi
           }
           trap cleanup_remote_stage EXIT
