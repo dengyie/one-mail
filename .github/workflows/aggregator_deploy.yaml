@@ -109,6 +109,7 @@ jobs:
           remote_ssh() {
             local attempt out
             for attempt in 1 2 3 4; do
+              # shellcheck disable=SC2029 # "$@" is forwarded literally on purpose; the remote side re-expands by design.
               if out=$(ssh "${SSH_OPTS[@]}" "$USER@$LH_SSH_HOST" "$@" 2>&1); then
                 printf '%s\n' "$out"
                 return 0
@@ -127,7 +128,7 @@ jobs:
           REMOTE_STAGE=$(remote_ssh 'mktemp -d /tmp/one-mail-deploy.XXXXXXXXXX')
           cleanup_remote_stage() {
             if [ -n "${REMOTE_STAGE:-}" ]; then
-              # shellcheck disable=SC2029 # Expand the mktemp path locally, then pass it as a literal to the pinned host.
+              # shellcheck disable=SC2029 # Intentional: expand the mktemp path on the runner, pass it as a literal to the pinned host.
               remote_ssh "rm -rf -- '$REMOTE_STAGE'" || true
             fi
           }
